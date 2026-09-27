@@ -1,0 +1,84 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Zusammenfassung") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Zusammenfassung") }}</h1>
+<p class="leise">{{ _("Wer aus dem Transkript Recap und Bibel-Vorschläge schreibt. Die Spielleitung prüft beides vor dem Veröffentlichen.") }}</p>
+{% set k = llm.k %}
+<div class="karte">
+  <h2>{{ _("Stand") }}</h2>
+  {% if k.art == "api" %}
+    {% if k.api_key %}<p><span class="marke-status marke-status--gut">{{ _("Cloud-API") }}</span> {{ k.api_modell }} · {{ k.api_url }}</p>
+    {% else %}<p><span class="marke-status marke-status--fehler">{{ _("nicht aktiv") }}</span> {{ _("Es fehlt der API-Schlüssel.") }}</p>{% endif %}
+    {% if llm.je_session is not none %}<p>{{ _("Kosten etwa {cent} Cent pro 4-Stunden-Session.", cent="%.0f"|format(llm.je_session) if llm.je_session >= 1 else "%.1f"|format(llm.je_session)) }}</p>{% endif %}
+  {% elif k.art == "lokal" %}
+    {% if llm.worker_online %}<p><span class="marke-status marke-status--gut">{{ _("Lokales Modell") }}</span> {{ k.lokal_modell }}</p>
+    {% else %}<p><span class="marke-status marke-status--warten">{{ _("Lokales Modell") }}</span> {{ _("Zurzeit ist kein Worker mit Sprachmodell verbunden – Sessions warten.") }}</p>{% endif %}
+  {% elif k.art == "attrappe" %}
+    <p><span class="marke-status marke-status--warten">{{ _("Testmodus") }}</span> {{ _("Platzhaltertext statt echter Zusammenfassung (zum Testen).") }}</p>
+  {% else %}
+    <p><span class="marke-status marke-status--fehler">{{ _("aus") }}</span> {{ _("Sessions warten nach der Stimmzuordnung, bis die Zusammenfassung eingeschaltet wird.") }}</p>
+  {% endif %}
+</div>
+
+<div class="karte">
+  <h2>{{ _("Einstellungen") }}</h2>
+  <form class="formular" method="post" action="/verwaltung/zusammenfassung">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Wer fasst zusammen?") }}
+      <select name="art">
+        <option value="api" {% if k.art == "api" %}selected{% endif %}>{{ _("Cloud-API (externer Anbieter)") }}</option>
+        <option value="lokal" {% if k.art == "lokal" %}selected{% endif %}>{{ _("Lokales Modell (Ollama auf einem Worker)") }}</option>
+        <option value="attrappe" {% if k.art == "attrappe" %}selected{% endif %}>{{ _("Testmodus (Platzhaltertext)") }}</option>
+        <option value="aus" {% if k.art == "aus" %}selected{% endif %}>{{ _("Aus") }}</option>
+      </select></label>
+
+    <fieldset>
+      <legend>{{ _("Cloud-API") }}</legend>
+      <label>{{ _("Anbieter") }}
+        <select name="anbieter">
+          <option value="mistral" {% if llm.mistral %}selected{% endif %}>Mistral (EU)</option>
+          <option value="andere" {% if not llm.mistral %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
+        </select></label>
+      <label>{{ _("Adresse (nur bei „Anderer“)") }}
+        <input type="url" name="api_url" value="{{ '' if llm.mistral else k.api_url }}" placeholder="https://…/v1" maxlength="300"></label>
+      <label>{{ _("Modell") }} <input type="text" name="api_modell" value="{{ k.api_modell }}" maxlength="100" required>
+        <span class="hilfe">{{ _("Empfohlen: mistral-large-latest (gute Recaps, etwa 6 Cent pro Session).") }}</span></label>
+      <label>{{ _("API-Schlüssel") }}
+        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('von console.mistral.ai') }}">
+        <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
+      {% if k.eigener_key %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
+      <label>{{ _("Preis je 1 Mio. Tokens in Cent (ein / aus)") }}
+        <span class="zeile"><input type="text" name="cent_ein" value="{{ '%g'|format(k.cent_ein) if k.cent_ein is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[0]) if llm.preis else '' }}">
+        <input type="text" name="cent_aus" value="{{ '%g'|format(k.cent_aus) if k.cent_aus is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[1]) if llm.preis else '' }}"></span>
+        <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle.") }}</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>{{ _("Lokales Modell") }}</legend>
+      <label>{{ _("Modell in Ollama") }} <input type="text" name="lokal_modell" value="{{ k.lokal_modell }}" maxlength="100" required>
+        <span class="hilfe">{{ _("Für 8 GB Grafikspeicher: ministral-3:8b. Der Worker lädt es beim ersten Auftrag selbst herunter.") }}</span></label>
+      <label>{{ _("Kontextgröße (Tokens)") }} <input type="number" name="lokal_kontext" value="{{ k.lokal_kontext }}" min="4096" max="262144" step="1024"></label>
+    </fieldset>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+  </form>
+  <p class="hilfe">{{ _("Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.") }}</p>
+</div>
+
+<div class="karte tabelle-huelle">
+  <h2>{{ _("Worker mit Sprachmodell") }}</h2>
+  <table>
+    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Sprachmodell") }}</th></tr></thead>
+    <tbody>
+    {% for kn in llm.worker %}
+      <tr>
+        <td data-label="{{ _('Name') }}"><strong>{{ _("Lokaler Worker") if kn.w.local else kn.w.name }}</strong></td>
+        <td data-label="{{ _('Zustand') }}">{% if not kn.online %}<span class="marke-status">{{ _("nicht verbunden") }}</span>{% elif kn.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>{% else %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>{% endif %}</td>
+        <td data-label="{{ _('Sprachmodell') }}">{{ kn.info.llm }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="leise">{{ _("Noch kein Worker mit Ollama. Ollama auf dem Worker installieren und ihn neu starten (INSTALLATION.md Teil 11).") }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

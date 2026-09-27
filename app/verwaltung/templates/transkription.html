@@ -1,0 +1,150 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Transkription") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Transkription") }}</h1>
+<p class="leise">{{ _("Wer die Aufnahmen in Text verwandelt: eigene Worker und – als Ausweichlösung – ein externer Anbieter.") }}</p>
+{% if neuer_token %}
+<div class="karte">
+  <h2>{{ _("Zugangsschlüssel für „{name}“", name=neuer_name) }}</h2>
+  <p>{{ _("Jetzt kopieren – er wird nur dieses eine Mal angezeigt.") }}</p>
+  <div class="geheim"><code>{{ neuer_token }}</code></div>
+  <p class="hilfe">{{ _("Auf dem Worker in dessen .env eintragen: WORKER_TOKEN=… und WORKER_SERVER_URL=https://… (Adresse dieses Servers), dann „uv run chronik worker“ starten.") }}</p>
+</div>
+{% endif %}
+
+<div class="karte">
+  <h2>{{ _("Lokaler Worker (auf diesem Server)") }}</h2>
+  {% if lokal.laeuft %}
+    <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
+    <form method="post" action="/verwaltung/worker/lokal/stop"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Beenden") }}</button></form>
+    <p class="hilfe">{{ _("Ein laufender Auftrag wird zurückgegeben und später fortgesetzt.") }}</p>
+  {% else %}
+    {% if lokal.exitcode is not none and lokal.exitcode != 0 %}<p><span class="marke-status marke-status--fehler">{{ _("beendet mit Fehler") }}</span> {{ _("– siehe Protokoll unten.") }}</p>{% endif %}
+    <form class="formular" method="post" action="/verwaltung/worker/lokal/start">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>{{ _("Art") }}
+        <select name="modus">
+          <option value="echt" {% if not ki %}disabled{% endif %}>{{ _("Echte Transkription (Grafikkarte)") }}{% if not ki %} – {{ _("KI-Pakete fehlen") }}{% endif %}</option>
+          <option value="attrappe" {% if not ki %}selected{% endif %}>{{ _("Testmodus (Platzhaltertext)") }}</option>
+        </select></label>
+      <label class="haken"><input type="checkbox" name="autostart" value="1" {% if autostart != "aus" %}checked{% endif %}> {{ _("Beim Start des Servers automatisch mitstarten") }}</label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Starten") }}</button></div>
+    </form>
+    {% if not ki %}<p class="hilfe">{{ _("Für die echte Transkription: „uv sync --extra ki“ und den Zugang zum Sprechermodell (HF_TOKEN in der .env, INSTALLATION.md Teil 5), dann den Server neu starten.") }}</p>{% endif %}
+  {% endif %}
+  {% if log %}
+  <details {% if lokal.exitcode %}open{% endif %}><summary>{{ _("Protokoll (letzte Zeilen)") }}</summary><pre class="log">{{ log|join("\n") }}</pre></details>
+  {% endif %}
+</div>
+
+<div class="karte tabelle-huelle">
+  <h2>{{ _("Alle Worker") }}</h2>
+  <table>
+    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Gerät") }}</th><th>{{ _("Auftrag") }}</th><th>{{ _("Aktionen") }}</th></tr></thead>
+    <tbody>
+    {% for k in knechte %}
+      <tr>
+        <td data-label="{{ _('Name') }}"><strong>{{ _("Lokaler Worker") if k.w.local else k.w.name }}</strong><br><span class="leise">{{ _("angelegt {zeit}", zeit=zeit(k.w.created_at)) }}</span></td>
+        <td data-label="{{ _('Zustand') }}">
+          {% if k.w.revoked_at %}<span class="marke-status marke-status--fehler">{{ _("gesperrt") }}</span>
+          {% elif k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
+          {% elif k.online %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>
+          {% else %}<span class="marke-status">{{ _("nicht verbunden") }}</span>{% endif %}
+          <br><span class="leise">{{ _("zuletzt {zeit}", zeit=zeit(k.w.last_seen_at)) }}</span>
+        </td>
+        <td class="leise" data-label="{{ _('Gerät') }}">{% if k.info.gpu %}{{ k.info.gpu }}{% if k.info.modell %}<br>{{ k.info.modell }}{% endif %}{% if k.info.modelle %}{% for r, f in k.info.modelle.items() %}<br><span title="{{ r }}">{{ r.split('/')[-1] }} · {{ f[:7] if f else _("eigener Ordner") }}</span>{% endfor %}{% endif %}{% elif k.info.modus %}{{ _("Testmodus") }}{% else %}–{% endif %}</td>
+        <td data-label="{{ _('Auftrag') }}">{% if k.job %}{% if k.sitzung %}{{ k.kampagne.title if k.kampagne else "" }} · {{ _("Kapitel {n}", n=k.sitzung.number) }}{% else %}{{ _("Stimmprofil") }}{% endif %}<br><span class="leise">{{ ((k.job.progress or 0) * 100)|round|int }} %</span>{% else %}<span class="leise">–</span>{% endif %}</td>
+        <td><div class="aktionen">
+          {% if not k.w.revoked_at %}
+            {% if k.w.paused %}
+            <form method="post" action="/verwaltung/worker/{{ k.w.id }}/fortsetzen"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="tw-btn tw-btn--secondary tw-btn--klein" type="submit">{{ _("Fortsetzen") }}</button></form>
+            {% else %}
+            <form method="post" action="/verwaltung/worker/{{ k.w.id }}/pause"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="tw-btn tw-btn--secondary tw-btn--klein" type="submit">{{ _("Pausieren") }}</button></form>
+            {% endif %}
+            {% if not k.w.local %}
+            <form method="post" action="/verwaltung/worker/{{ k.w.id }}/sperren"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="tw-btn tw-btn--quiet tw-btn--klein" type="submit">{{ _("Schlüssel sperren") }}</button></form>
+            {% endif %}
+          {% endif %}
+        </div></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="leise">{{ _("Noch keine Worker.") }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hilfe"><a href="/verwaltung/transkription">{{ _("Aktualisieren") }}</a> · {{ _("Pausieren: Der Worker bleibt verbunden, nimmt aber keine neuen Aufträge an (z. B. während du spielst).") }}</p>
+</div>
+
+<div class="karte" id="koppeln">
+  <h2>{{ _("Weiteren Worker anbinden") }}</h2>
+  {% if koppel %}
+  <p>{{ _("Auf dem lokalen Server einmal ausführen:") }}</p>
+  <div class="geheim"><code>uv run chronik worker --koppeln {{ koppel[0] }} --server {{ server_url }}</code></div>
+  <p class="hilfe">{{ _("Der Code gilt bis {zeit} und nur einmal. Schlüssel und Adresse trägt der Worker selbst ein.", zeit=zeit(koppel[1])) }}</p>
+  {% else %}
+  <form method="post" action="/verwaltung/assistent/koppeln"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="weiter" value="/verwaltung/transkription">
+    <button class="tw-btn tw-btn--primary" type="submit">{{ _("Kopplungscode erzeugen") }}</button></form>
+  {% endif %}
+  <details><summary>{{ _("Stattdessen einen Zugangsschlüssel von Hand erzeugen") }}</summary>
+  <form class="formular formular--zeile" method="post" action="/verwaltung/worker">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Name") }} <input type="text" name="name" placeholder="{{ _('z. B. pc-von-lilio') }}" required maxlength="100"></label>
+    <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Zugangsschlüssel erzeugen") }}</button>
+  </form>
+  </details>
+  <p class="hilfe">{{ _("Der Worker verbindet sich von sich aus mit diesem Server – auf seiner Seite muss kein Port geöffnet werden. Über das Internet nur per HTTPS.") }}</p>
+</div>
+
+<div class="karte" id="hf">
+  <h2>{{ _("Sprechermodell") }}</h2>
+  {% if modell.stand %}
+  <p><span class="marke-status marke-status--gut">{{ _("auf dem Server") }}</span> {{ _("Fassung {fassung}, {mb} MB, Quelle: {quelle}", fassung=modell.stand.fassung[:12], mb="%.0f"|format(modell.mb), quelle=_("Taleward-Spiegel") if modell.stand.quelle == "spiegel" else "Hugging Face") }}</p>
+  <p class="hilfe">{{ _("Eure Worker laden das Modell vom Server. Sie brauchen dafür kein Hugging-Face-Konto, und alle nutzen dieselbe Fassung.") }}</p>
+  {% else %}
+  <p><span class="marke-status{% if modell.fehler %} marke-status--fehler{% endif %}">{{ _("noch nicht auf dem Server") }}</span>{% if modell.fehler %} {{ modell.fehler }}{% endif %}</p>
+  <p class="hilfe">{{ _("Der Server lädt das Sprechermodell einmal und gibt es an eure Worker weiter. Dafür braucht er einmalig einen Hugging-Face-Zugang – oder den Taleward-Spiegel, sobald es ihn gibt.") }}{% if modell.spiegel %} {{ _("Der Taleward-Spiegel ist eingetragen.") }}{% endif %}</p>
+  {% if hf_ende or modell.spiegel %}
+  <form method="post" action="/verwaltung/transkription/modell"><input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Jetzt auf den Server laden") }}</button></form>
+  {% endif %}
+  {% endif %}
+  <h3>{{ _("Zugang zu Hugging Face") }}</h3>
+  <p>{% if hf_ende %}<span class="marke-status marke-status--gut">{{ _("hinterlegt") }}</span> {{ _("endet auf …{ende}", ende=hf_ende) }}{% else %}<span class="marke-status">{{ _("nicht hinterlegt") }}</span>{% endif %}</p>
+  <form class="formular" method="post" action="/verwaltung/transkription/hf">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Zugangsschlüssel") }} <input type="password" name="hf_token" autocomplete="off" placeholder="hf_…">
+      <span class="hilfe">{{ _("Bleibt auf dem Server. Damit lädt er das Sprechermodell und neue Fassungen nach Updates.") }}</span></label>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Prüfen und speichern") }}</button></div>
+  </form>
+  <p class="hilfe">{{ _("Das Modell: pyannote speaker-diarization-community-1 von pyannoteAI, Lizenz CC-BY-4.0, unverändert weitergegeben.") }}</p>
+</div>
+
+<div class="karte" id="extern">
+  <h2>{{ _("Externe Transkription (Ausweichlösung)") }}</h2>
+  {% if ext.anbieter %}
+  <p><span class="marke-status marke-status--warten">{{ _("freigegeben") }}</span> {{ ext.anbieter_name }}</p>
+  {% elif ext.gewaehlt %}
+  <p><span class="marke-status marke-status--fehler">{{ _("nicht aktiv") }}</span> {{ _("Es fehlt der API-Schlüssel.") }}</p>
+  {% else %}
+  <p><span class="marke-status">{{ _("aus") }}</span> {{ _("Aufnahmen werden nur von eigenen Workern transkribiert.") }}</p>
+  {% endif %}
+  <p>{{ _("Greift nur, wenn eine Session länger als die Wartezeit wartet, in dieser Zeit kein Worker erreichbar war und die SL es für die Kampagne erlaubt hat ({n} Kampagne(n) erlauben es). Kosten etwa {cent} Cent pro Stunde Aufnahme.", n=ext.kampagnen, cent="%.0f"|format(ext.cent * 60)) }}</p>
+  <form class="formular" method="post" action="/verwaltung/transkription/extern">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Anbieter") }}
+      <select name="anbieter">
+        <option value="" {% if not ext.gewaehlt %}selected{% endif %}>{{ _("Aus") }}</option>
+        <option value="mistral" {% if ext.gewaehlt == "mistral" %}selected{% endif %}>Mistral (Voxtral)</option>
+      </select></label>
+    <label>{{ _("API-Schlüssel") }}
+      <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=ext.key_ende) if ext.key_ende else _('von console.mistral.ai') }}">
+      <span class="hilfe">{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
+    {% if ext.key_ende %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
+    <label>{{ _("Wartezeit in Stunden") }} <input type="number" name="stunden" value="{{ "%g"|format(ext.stunden) }}" min="0" max="720" step="0.5">
+      <span class="hilfe">{{ _("0 = sofort (Betriebsart „Nur Cloud“).") }}</span></label>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+  </form>
+  <p class="hilfe">{{ _("Das Audio geht dann an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis.") }}</p>
+</div>
+{% endblock %}

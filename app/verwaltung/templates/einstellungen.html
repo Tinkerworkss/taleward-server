@@ -1,0 +1,101 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Einstellungen") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Einstellungen") }}</h1>
+<form method="post" action="/verwaltung/einstellungen">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<div class="karte">
+  <h2>{{ _("Angaben für die App") }}</h2>
+  <p class="leise">{{ _("Die App zeigt sie beim Hinzufügen des Servers (Betreiber, Kontakt, Datenschutzhinweis).") }}</p>
+  <div class="formular">
+    <label>{{ _("Name des Servers") }} <input type="text" name="server_name" value="{{ angaben.server_name }}" required maxlength="100"></label>
+    <label>{{ _("Betreiber") }} <input type="text" name="server_operator" value="{{ angaben.server_operator }}" required maxlength="200"></label>
+    <label>{{ _("Kontakt") }} <input type="text" name="server_contact" value="{{ angaben.server_contact or '' }}" maxlength="200">
+      <span class="hilfe">{{ _("E-Mail-Adresse oder Webseite für Fragen zum Datenschutz.") }}</span></label>
+    <label>{{ _("Link zum Datenschutzhinweis") }} <input type="url" name="privacy_policy_url" value="{{ angaben.privacy_policy_url or '' }}" maxlength="500" placeholder="https://…"></label>
+    <label>{{ _("Öffentliche Adresse des Servers") }} <input type="url" name="public_url" value="{{ angaben.public_url or '' }}" maxlength="300" placeholder="https://taleward.meinverein.de">
+      <span class="hilfe">{{ _("Für Links in E-Mails und für Anmeldedienste. Leer = die Adresse, unter der die Verwaltung gerade aufgerufen wird.") }}</span></label>
+    <label>{{ _("Mindestalter") }} <input type="number" name="min_age" value="{{ angaben.min_age }}" min="0" max="99"></label>
+    {% if orgs|length == 1 %}
+    <label>{{ _("Name der Organisation (Verein)") }} <input type="text" name="org_name" value="{{ orgs[0].name }}" maxlength="200"></label>
+    {% endif %}
+  </div>
+</div>
+<div class="karte">
+  <h2>{{ _("Neue Konten") }}</h2>
+  <div class="formular">
+    <label>{{ _("Registrierung") }}
+      <select name="registrierung">
+        <option value="invite_only" {% if registrierung == "invite_only" %}selected{% endif %}>{{ _("Mit Einladungscode – wer einen Einladungslink hat, legt sein Konto selbst an") }}</option>
+        <option value="closed" {% if registrierung == "closed" %}selected{% endif %}>{{ _("Geschlossen – Konten legt nur die Verwaltung an") }}</option>
+      </select>
+      <span class="hilfe">{{ _("Bei der Registrierung bestätigt jede Person den Datenschutzhinweis und das Mindestalter; beides wird mit Zeitpunkt gespeichert.") }}</span></label>
+  </div>
+</div>
+<div class="karte" id="kosten">
+  <h2>{{ _("Kosten") }}</h2>
+  <div class="formular">
+    <label>{{ _("Monatliches Kostenlimit (Euro)") }} <input type="number" name="limit_euro" value="{{ '%g'|format(limit_euro) }}" min="0" max="10000" step="1">
+      <span class="hilfe">{{ _("Gilt für Cloud-Transkription und Cloud-Sprachmodell zusammen. Ist es erreicht, warten Aufträge bis zum nächsten Monat. 0 = ohne Limit.") }}</span></label>
+  </div>
+</div>
+<div class="karte">
+  <h2>{{ _("App-Versionen") }}</h2>
+  <p class="leise">{{ _("Die App fragt das ab: bei neuerer Version zeigt sie „Neue Version“, bei zu alter Version sperrt sie diesen Server bis zum Update.") }}</p>
+  <div class="formular">
+    <label>{{ _("Mindestversion der App") }} <input type="text" name="app_min_version" value="{{ angaben.app_min_version or '' }}" maxlength="20" placeholder="0.9.0" pattern="[0-9]+(\.[0-9]+)*">
+      <span class="hilfe">{{ _("Leer = keine Grenze. Ältere Apps bekommen dann keinen Zugang mehr (426).") }}</span></label>
+    <label>{{ _("Neueste Version") }} <input type="text" name="app_latest_version" value="{{ angaben.app_latest_version or '' }}" maxlength="20" placeholder="0.9.1" pattern="[0-9]+(\.[0-9]+)*"></label>
+    <label>{{ _("Download-Link") }} <input type="url" name="app_download_url" value="{{ angaben.app_download_url or '' }}" maxlength="500" placeholder="https://…">
+      <span class="hilfe">{{ _("APK- oder Store-Link. Erscheint auch auf der Einladungsseite („App herunterladen“).") }}</span></label>
+    <label>{{ _("Was ist neu") }} <textarea name="app_release_notes" rows="3" maxlength="1000">{{ angaben.app_release_notes or '' }}</textarea></label>
+  </div>
+</div>
+<div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+</form>
+<form method="post" action="/verwaltung/benachrichtigungen">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<div class="karte" id="benachrichtigungen">
+  <h2>{{ _("Benachrichtigungen") }}</h2>
+  <p class="leise">{{ _("Der Server meldet sich, wenn Aufträge lange auf einen Worker warten, Aufträge fehlschlagen, das Kostenlimit zu 80 % erreicht ist, eine Sicherung fehlschlägt oder der Speicher knapp wird. Inhalte aus Kampagnen stehen nie in den Meldungen.") }}</p>
+  <h3>{{ _("Per ntfy (Handy-App, ohne Konto)") }}</h3>
+  <p class="hilfe">{{ _("App „ntfy“ installieren, ein schwer zu erratendes Thema abonnieren (z. B. mein-verein-taleward-7k2q) und hier dieselbe Adresse eintragen.") }}</p>
+  <div class="formular">
+    <label>{{ _("ntfy-Adresse") }} <input type="url" name="ntfy_url" value="{{ melden.ntfy_url }}" maxlength="500" placeholder="https://ntfy.sh/mein-verein-taleward-7k2q"></label>
+    <label>{{ _("Zugangstoken (nur bei eigenem ntfy-Server mit Anmeldung)") }} <input type="password" name="ntfy_token" autocomplete="off" placeholder="{{ _('gespeichert – leer lassen, um ihn zu behalten') if melden.ntfy_token else '' }}"></label>
+  </div>
+  <h3>{{ _("E-Mail-Versand") }}</h3>
+  <p class="hilfe">{{ _("Derselbe Mailserver verschickt Benachrichtigungen an dich und – für Mitglieder, die freiwillig eine Adresse hinterlegen – Links für „Passwort vergessen“.") }}</p>
+  <div class="formular">
+    <label>{{ _("Mailserver (SMTP)") }} <input type="text" name="smtp_host" value="{{ melden.smtp_host }}" maxlength="200" placeholder="smtp.example.org"></label>
+    <label>{{ _("Port") }} <input type="number" name="smtp_port" value="{{ melden.smtp_port }}" min="1" max="65535"></label>
+    <label>{{ _("Verschlüsselung") }}
+      <select name="smtp_tls">
+        <option value="starttls" {% if melden.smtp_tls == "starttls" %}selected{% endif %}>STARTTLS (587)</option>
+        <option value="ssl" {% if melden.smtp_tls == "ssl" %}selected{% endif %}>SSL/TLS (465)</option>
+        <option value="aus" {% if melden.smtp_tls == "aus" %}selected{% endif %}>{{ _("Keine (nur im eigenen Netz)") }}</option>
+      </select></label>
+    <label>{{ _("Benutzername") }} <input type="text" name="smtp_user" value="{{ melden.smtp_user }}" maxlength="200" autocomplete="off"></label>
+    <label>{{ _("Passwort") }} <input type="password" name="smtp_pass" autocomplete="new-password" placeholder="{{ _('gespeichert – leer lassen, um es zu behalten') if melden.smtp_pass else '' }}"></label>
+    <label>{{ _("Absender") }} <input type="email" name="email_von" value="{{ melden.email_von }}" maxlength="200"></label>
+    <label>{{ _("Empfänger der Benachrichtigungen") }} <input type="email" name="email_an" value="{{ melden.email_an }}" maxlength="200">
+      <span class="hilfe">{{ _("Leer = keine Benachrichtigungen per E-Mail.") }}</span></label>
+  </div>
+  <h3>{{ _("Allgemein") }}</h3>
+  <div class="formular">
+    <label>{{ _("Sprache der Meldungen") }}
+      <select name="sprache">
+        <option value="de" {% if melden.sprache == "de" %}selected{% endif %}>Deutsch</option>
+        <option value="en" {% if melden.sprache == "en" %}selected{% endif %}>English</option>
+      </select></label>
+    <label>{{ _("Melden, wenn Aufträge so viele Stunden ohne Worker warten") }} <input type="number" name="stunden" value="{{ melden.stunden }}" min="1" max="168"></label>
+    {% if melden.ntfy_token or melden.smtp_pass %}<label class="haken"><input type="checkbox" name="zugang_loeschen" value="1"> {{ _("Gespeicherten Token und Passwort löschen") }}</label>{% endif %}
+  </div>
+  <div class="knopfzeile">
+    <button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button>
+    <button class="tw-btn tw-btn--secondary" type="submit" name="aktion" value="test">{{ _("Speichern und Testnachricht senden") }}</button>
+  </div>
+</div>
+</form>
+<p class="hilfe"><a href="/verwaltung/uebergabe">{{ _("Auftragsverarbeitung und Übergabe der Verwaltung") }} →</a></p>
+{% endblock %}

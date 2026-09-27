@@ -1,0 +1,207 @@
+/* Taleward – Verwaltung. Tokens und Komponenten aus dem Markenhandbuch (taleward-tokens.css, taleward-komponenten.css).
+   Schriften: Alegreya / Alegreya Sans aus static/fonts (OFL, siehe OFL.txt). */
+/* Schriften lokal (OFL, aus @fontsource wie in der App) – kein Abruf bei Google */
+@font-face { font-family:"Alegreya"; font-style:normal; font-weight:400 900; font-display:swap;
+  src:url("fonts/alegreya-latin-wght-normal.woff2") format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Alegreya"; font-style:normal; font-weight:400 900; font-display:swap;
+  src:url("fonts/alegreya-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family:"Alegreya"; font-style:italic; font-weight:400 900; font-display:swap;
+  src:url("fonts/alegreya-latin-wght-italic.woff2") format("woff2"); }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:400; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:400; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1E00-1E9F,U+2020,U+20A0-20AB,U+2113,U+A720-A7FF; }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:500; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:500; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-ext-500-normal.woff2") format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1E00-1E9F,U+2020,U+20A0-20AB,U+2113,U+A720-A7FF; }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:700; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family:"Alegreya Sans"; font-style:normal; font-weight:700; font-display:swap;
+  src:url("fonts/alegreya-sans-latin-ext-700-normal.woff2") format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1E00-1E9F,U+2020,U+20A0-20AB,U+2113,U+A720-A7FF; }
+:root, [data-theme="light"] {
+  /* Thema „Pergament“ (App-Stand 27.09.2026, Abweichung vom Markenhandbuch v1 – Kontraste ≥ 4,5:1) */
+  --paper:#F2E8D5; --paper-raised:#FBF6EA; --paper-sunken:#E9DDC4; --line:#D9C9A8; --line-strong:#8A7654;
+  --ink:#2A2118; --ink-muted:#5E4B36; --tinte:#17313b; --on-tinte:#f3f3ee; --siegel:#9e2a3a; --on-siegel:#ffffff;
+  --siegel-soft:#F3DCDC; --siegel-text:#9e2a3a; --messing:#c49235; --salbei:#3d6a48; --focus-ring:var(--siegel);
+  --shadow-card:0 1px 0 rgba(42,33,24,0.08), 0 6px 18px -10px rgba(42,33,24,0.35); color-scheme:light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:#121d22; --paper-raised:#1a2930; --paper-sunken:#0c1518; --line:#2e424b; --line-strong:#6f838b;
+    --ink:#e9ece6; --ink-muted:#a2aeb2; --tinte:#2c5361; --on-tinte:#f3f3ee; --siegel:#d4596c; --on-siegel:#1a0f12;
+    --siegel-soft:#3b1c23; --siegel-text:#ec8a9a; --messing:#d9ad55; --salbei:#8cc096; --focus-ring:var(--siegel);
+    --shadow-card:0 1px 0 rgba(0,0,0,0.45), 0 8px 20px -10px rgba(0,0,0,0.7); color-scheme:dark;
+  }
+}
+:root {
+  --font-serif:"Alegreya", Georgia, "Times New Roman", serif;
+  --font-sans:"Alegreya Sans", system-ui, "Segoe UI", sans-serif;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px; --space-12:48px;
+  --radius-sm:4px; --radius-md:10px; --radius-lg:18px; --radius-pill:999px;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; background:var(--paper); color:var(--ink); font:400 16px/24px var(--font-sans); }
+a { color:var(--tinte); text-underline-offset:3px; }
+@media (prefers-color-scheme: dark) { a { color:var(--ink); } }
+h1 { font:700 30px/36px var(--font-serif); margin:0 0 var(--space-6); }
+h2 { font:700 22px/28px var(--font-serif); margin:0 0 var(--space-3); }
+p { margin:0 0 var(--space-3); }
+code, .mono { font-family:ui-monospace, "Cascadia Mono", Consolas, monospace; font-size:14px; }
+
+/* Kopf und Navigation */
+.kopf { background:var(--tinte); color:var(--on-tinte); }
+.kopf__innen { max-width:1100px; margin:0 auto; padding:var(--space-3) var(--space-4) 0; display:grid;
+  grid-template-columns:1fr auto; gap:var(--space-2) var(--space-4); align-items:center; }
+
+.marke { font:800 22px/28px var(--font-serif); letter-spacing:-0.01em; display:flex; gap:var(--space-2); align-items:center;
+  color:inherit; text-decoration:none; }
+.marke__lockup { height:30px; width:auto; flex:none; }
+.marke small { margin-left:var(--space-2); }
+.kopf__rechts { justify-self:end; display:flex; gap:var(--space-4); align-items:center; }
+.kopf .sprachen, .kopf .sprachen a { color:var(--on-tinte); }
+.sprachen { font:500 14px/20px var(--font-sans); }
+.sprachen [aria-current] { font-weight:700; }
+.marke small { font:500 14px/20px var(--font-sans); opacity:.8; }
+.nav { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:var(--space-1); padding-bottom:var(--space-3); margin-left:calc(-1 * var(--space-3)); }
+.nav a { color:var(--on-tinte); text-decoration:none; padding:var(--space-1) var(--space-3); border-radius:var(--radius-pill);
+  font:500 15px/22px var(--font-sans); }
+.nav a:hover { background:rgba(255,255,255,.12); }
+.nav a[aria-current="page"] { background:var(--paper); color:var(--tinte); }
+@media (prefers-color-scheme: dark) { .nav a[aria-current="page"] { background:var(--paper); color:var(--ink); } }
+.kopf form { margin:0; }
+.kopf .tw-btn--quiet { color:var(--on-tinte); }
+
+main { max-width:1100px; margin:0 auto; padding:var(--space-8) var(--space-4) var(--space-12); }
+
+/* Komponenten aus dem Markenhandbuch */
+.tw-btn { font:700 15px/22px var(--font-sans); border-radius:var(--radius-md); padding:var(--space-2) var(--space-4);
+  border:1.5px solid transparent; cursor:pointer; display:inline-flex; gap:var(--space-2); align-items:center;
+  text-decoration:none; }
+.tw-btn:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+.tw-btn--primary { background:var(--tinte); color:var(--on-tinte); }
+.tw-btn--secondary { background:var(--paper-raised); color:var(--ink); border-color:var(--line-strong); }
+.tw-btn--danger { background:var(--siegel); color:var(--on-siegel); }
+.tw-btn--quiet { background:none; color:var(--ink); text-decoration:underline; text-underline-offset:3px; padding-inline:var(--space-2); }
+.tw-btn--klein { padding:2px var(--space-3); font-size:14px; }
+.tw-btn[disabled] { opacity:.45; cursor:not-allowed; }
+
+.karte { background:var(--paper-raised); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:var(--space-6);
+  margin-bottom:var(--space-6); }
+.raster { display:grid; gap:var(--space-4); grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); margin-bottom:var(--space-6); }
+.zahl { background:var(--paper-raised); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:var(--space-4); }
+.zahl__wert { font:800 36px/40px var(--font-serif); color:var(--tinte); }
+@media (prefers-color-scheme: dark) { .zahl__wert { color:var(--ink); } }
+.zahl__text { font:500 14px/20px var(--font-sans); color:var(--ink-muted); }
+.zahl--warnung .zahl__wert { color:var(--siegel-text); }
+
+.marke-status { display:inline-flex; align-items:center; gap:var(--space-1); font:500 13px/18px var(--font-sans);
+  border-radius:var(--radius-pill); padding:1px var(--space-2); border:1px solid var(--line-strong); white-space:nowrap; }
+.marke-status::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--line-strong); }
+.marke-status--gut::before { background:var(--salbei); }
+.marke-status--warten::before { background:var(--messing); }
+.marke-status--fehler { color:var(--siegel-text); background:var(--siegel-soft); border-color:transparent; }
+.marke-status--fehler::before { background:var(--siegel); }
+
+.meldung { border-radius:var(--radius-md); padding:var(--space-3) var(--space-4); margin-bottom:var(--space-6);
+  background:var(--paper-sunken); border-left:4px solid var(--salbei); }
+.meldung--fehler { background:var(--siegel-soft); border-left-color:var(--siegel); }
+.geheim { background:var(--siegel-soft); border-radius:var(--radius-sm); padding:var(--space-3) var(--space-4); }
+.geheim code { word-break:break-all; font-size:15px; }
+
+/* Tabellen */
+.tabelle-huelle { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:15px; }
+th { text-align:left; font:500 13px/18px var(--font-sans); color:var(--ink-muted); text-transform:uppercase; letter-spacing:.04em;
+  padding:var(--space-2) var(--space-3); border-bottom:1.5px solid var(--line-strong); }
+td { padding:var(--space-3); border-bottom:1px solid var(--line); vertical-align:top; }
+tr:last-child td { border-bottom:none; }
+td form { display:inline; margin:0; }
+.leise { color:var(--ink-muted); font-size:14px; }
+.aktionen { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; }
+form + .hilfe, .formular + .hilfe, .formular--zeile + .hilfe { margin-top:var(--space-3); }
+
+/* Schmale Bildschirme: Tabellenzeilen als gestapelte Karten */
+@media (max-width: 720px) {
+  .marke small, .breit { display:none; }
+  table, tbody, tr, td { display:block; width:100%; }
+  thead { display:none; }
+  tr { border-bottom:1px solid var(--line); padding:var(--space-3) 0; }
+  tr:last-child { border-bottom:none; }
+  td { border:none; padding:var(--space-1) 0; }
+  td[data-label]::before { content:attr(data-label); display:block; font:500 12px/16px var(--font-sans);
+    color:var(--ink-muted); text-transform:uppercase; letter-spacing:.04em; }
+  .karte { padding:var(--space-4); }
+}
+
+/* Formulare */
+.formular { display:grid; gap:var(--space-4); max-width:560px; }
+.formular--zeile { display:flex; flex-wrap:wrap; gap:var(--space-3); align-items:end; max-width:none; }
+label { display:grid; gap:var(--space-1); font:500 14px/20px var(--font-sans); }
+label.haken { display:flex; gap:var(--space-2); align-items:center; font-weight:400; }
+input[type=text], input[type=password], input[type=url], input[type=number], input[type=email], input[type=date], select, textarea {
+  font:400 16px/24px var(--font-sans); color:var(--ink); background:var(--paper); border:1.5px solid var(--line-strong);
+  border-radius:var(--radius-sm); padding:var(--space-2) var(--space-3); min-width:0; }
+.hilfe { font:400 13px/18px var(--font-sans); color:var(--ink-muted); }
+details summary { cursor:pointer; color:var(--ink-muted); font-size:14px; }
+
+.log { background:var(--paper-sunken); border-radius:var(--radius-sm); padding:var(--space-3); max-height:320px; overflow:auto;
+  font:13px/19px ui-monospace, Consolas, monospace; white-space:pre-wrap; margin:var(--space-3) 0 0; }
+
+/* Anmeldung und Einladung */
+.anmeldung { max-width:420px; margin:var(--space-12) auto; }
+.anmeldung__kopf { text-align:center; margin-bottom:var(--space-6); }
+.anmeldung__lockup { width:190px; height:auto; }
+.anmeldung .marke { color:var(--tinte); font-size:44px; line-height:48px; justify-content:center; margin:var(--space-3) 0 var(--space-2); }
+.leitsatz { font:400 22px/28px var(--font-serif); color:var(--tinte); margin:0; }
+.anmeldung > .leise { text-align:center; }
+.einladung__code { display:block; font:700 28px/36px ui-monospace, Consolas, monospace; letter-spacing:.08em; text-align:center;
+  background:var(--paper-sunken); border-radius:var(--radius-md); padding:var(--space-4); margin:var(--space-4) 0; }
+@media (prefers-color-scheme: dark) { .anmeldung .marke, .leitsatz { color:var(--ink); } }
+
+.zentriert { text-align:center; }
+.einladung__qr { margin:var(--space-4) auto; text-align:center; }
+.einladung__qr figcaption { margin-top:var(--space-2); }
+#benachrichtigungen .knopfzeile, #av .knopfzeile { margin-top:var(--space-4); }
+.liste-av { list-style:none; padding:0; display:grid; gap:var(--space-4); }
+.liste-av li { display:grid; gap:var(--space-2); justify-items:start; }
+.liste-stand { padding-left:var(--space-6); display:grid; gap:var(--space-1); }
+.einladung__qr img { display:block; margin:0 auto; border-radius:var(--radius-md); max-width:100%; height:auto; }
+.knopfstapel { display:grid; gap:var(--space-3); margin:var(--space-4) 0; }
+.knopfstapel .tw-btn { justify-content:center; padding:var(--space-3) var(--space-4); font-size:16px; }
+.einladung__link { width:100%; font:14px/20px ui-monospace, Consolas, monospace; }
+.schritte { margin:var(--space-4) 0 0; padding-left:var(--space-6); color:var(--ink-muted); }
+textarea { resize:vertical; }
+.zentriert .sprachen { display:inline; }
+.formular fieldset { display:grid; gap:var(--space-4); margin:0; padding:var(--space-4); border:1px solid var(--line);
+  border-radius:var(--radius-md, 8px); min-width:0; }
+.formular legend { padding:0 var(--space-2); font-weight:700; color:var(--ink-muted); }
+.formular .zeile { display:flex; gap:var(--space-3); }
+.formular .zeile input { flex:1; min-width:0; }
+.liste { list-style:none; padding:0; margin:var(--space-3) 0; display:grid; gap:var(--space-1); }
+/* Einrichtungsassistent */
+.schrittleiste { list-style:none; padding:0; margin:0 0 var(--space-6); display:flex; flex-wrap:wrap; gap:var(--space-2); }
+.schrittleiste li a { display:inline-block; padding:var(--space-1) var(--space-3); border-radius:var(--radius-pill);
+  border:1px solid var(--line); color:var(--ink-muted); text-decoration:none; font-size:14px; }
+.schrittleiste li[aria-current="step"] a { background:var(--ink); color:var(--paper-raised); border-color:var(--ink); }
+.karten-wahl { display:grid; gap:var(--space-3); margin:var(--space-4) 0; }
+.wahl { display:grid; grid-template-columns:auto 1fr; gap:var(--space-1) var(--space-3); padding:var(--space-4);
+  border:1.5px solid var(--line); border-radius:var(--radius-md, 8px); background:var(--paper); cursor:pointer; font-weight:400; }
+.wahl:has(input:checked) { border-color:var(--ink); background:var(--paper-raised); }
+.wahl input { grid-row:span 3; margin-top:4px; }
+.wahl strong { font-size:17px; }
+.knopfzeile { display:flex; flex-wrap:wrap; gap:var(--space-3); align-items:center; }
+.checkliste { list-style:none; padding:0; display:grid; gap:var(--space-2); }
+.checkliste .erledigt { color:var(--ink-muted); }
+.checkliste .offen span { color:var(--siegel); }
+.formular--breit { max-width:none; }
+.formular--breit textarea { font:400 14px/21px ui-monospace, Consolas, monospace; }
+article.text { max-width:760px; margin:var(--space-8) auto; line-height:1.6; }
+article.text h2 { margin-top:var(--space-6); }
+.formular fieldset ol, .formular fieldset p { margin:0; }
+.formular fieldset ol { padding-left:1.4em; display:grid; gap:var(--space-1); }

@@ -1,0 +1,170 @@
+"""Sessions (Kapitel), Status, Neustart, Hörproben, Transkript und SL-Notiz.
+
+Stimmen bestätigen, Recap, Vorschläge und Veröffentlichen: routers/pruefung.py
+"""
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app import errors, queue, schemas, storage
+from app.access import current_user, load_session, load_session_gm, require_gm, require_member
+from app.db import get_db, utcnow
+from app.errors import sprache
+from app.models import GameSession, GmNote, SessionSeen, Speaker, TranscriptSegment, User
+from app.services import (
+    build_attendees, log_on_site_consents, next_session_number, processing_status,
+    session_out, session_summary_out,
+)
+
+router = APIRouter()
+
+
+# ---------- Sessions ----------
+@router.get("/campaigns/{campaignId}/sessions", tags=["Sessions"], response_model=list[schemas.SessionSummaryOut])
+def list_sessions(campaignId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    me = require_member(db, campaignId, user)
+    q = select(GameSession).where(GameSession.campaign_id == campaignId)
+    if me.role != "gm":
+        q = q.where(GameSession.state == "published")
+    sitzungen = list(db.scalars(q.order_by(GameSession.number)))
+    from app.routers.miteinander import ungelesene_kommentare
+
+    ungelesen = ungelesene_kommentare(db, me, sitzungen)
+    return [session_summary_out(s, ungelesen.get(s.id, 0)) for s in sitzungen]
+
+
+@router.post("/campaigns/{campaignId}/sessions", tags=["Sessions"], status_code=201, response_model=schemas.SessionOut,
+             response_model_exclude_unset=True)
+def create_session(
+    campaignId: str, body: schemas.SessionCreate, user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    me = require_member(db, campaignId, user)
+    require_gm(me)
+    s = GameSession(
+        campaign_id=campaignId, number=next_session_number(db, campaignId),
+        title=(body.title or "").strip() or None, played_at=body.played_at, state="created",
+    )
+    s.attendees = build_attendees(db, campaignId, body.attendees)
+    db.add(s)
+    db.flush()
+    log_on_site_consents(db, s, user)
+    db.commit()
+    db.refresh(s)
+    return session_out(s)
+
+
+@router.get("/sessions/{sessionId}", tags=["Sessions"], response_model=schemas.SessionOut,
+            response_model_exclude_unset=True)
+def get_session(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    acc = load_session(db, sessionId, user)
+    return session_out(acc.session, db, acc.member)
+
+
+@router.patch("/sessions/{sessionId}", tags=["Sessions"], response_model=schemas.SessionOut,
+              response_model_exclude_unset=True)
+def patch_session(
+    sessionId: str, body: schemas.SessionPatch, user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    s = load_session_gm(db, sessionId, user).session
+    fields = body.model_fields_set
+    if "attendees" in fields and body.attendees is not None:
+        if s.state != "created":
+            raise errors.conflict("attendees_locked")
+        neu = build_attendees(db, s.campaign_id, body.attendees)
+        s.attendees.clear()
+        db.flush()
+        s.attendees.extend(neu)
+        db.flush()
+        log_on_site_consents(db, s, user)
+    if "title" in fields:
+        s.title = (body.title or "").strip() or None
+    db.commit()
+    db.refresh(s)
+    return session_out(s)
+
+
+@router.get("/sessions/{sessionId}/status", tags=["Sessions"], response_model=schemas.ProcessingStatusOut)
+def get_status(sessionId: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return processing_status(db, load_session(db, sessionId, user).session, sprache(request))
+
+
+@router.post("/sessions/{sessionId}/retry", tags=["Sessions"], status_code=202, response_model=schemas.ProcessingStatusOut)
+def retry(sessionId: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = load_session_gm(db, sessionId, user).session
+    queue.neu_starten(db, s)
+    db.commit()
+    return processing_status(db, s, sprache(request))
+
+
+@router.post("/sessions/{sessionId}/seen", tags=["Kommentare"], status_code=204)
+def session_seen(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    acc = load_session(db, sessionId, user)
+    row = db.get(SessionSeen, (acc.member.id, acc.session.id))
+    if row is None:
+        db.add(SessionSeen(member_id=acc.member.id, session_id=acc.session.id, seen_at=utcnow()))
+    else:
+        row.seen_at = utcnow()
+    db.commit()
+    return Response(status_code=204)
+
+
+# ---------- Stimmen ----------
+@router.get("/sessions/{sessionId}/speakers", tags=["Stimmen"], response_model=list[schemas.SpeakerOut])
+def list_speakers(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = load_session_gm(db, sessionId, user).session
+    return [
+        schemas.SpeakerOut(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
+                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source)
+        for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position))
+    ]
+
+
+@router.get("/sessions/{sessionId}/speakers/{speakerId}/sample", tags=["Stimmen"])
+def speaker_sample(sessionId: str, speakerId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = load_session_gm(db, sessionId, user).session
+    sp = db.get(Speaker, speakerId)
+    if sp is None or sp.session_id != s.id:
+        raise errors.not_found()
+    pfad = storage.sample_path(s.id, sp.id)
+    if not pfad.exists():
+        raise errors.ApiError(410, "audio_deleted")  # seit 0.3.8 mit Fehlerkörper
+    return FileResponse(pfad, media_type="audio/ogg")
+
+
+@router.get("/sessions/{sessionId}/gm-note", tags=["Chronik"], response_model=schemas.GmNoteOut)
+def get_gm_note(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = load_session_gm(db, sessionId, user).session
+    note = db.get(GmNote, s.id)
+    if note is None:
+        return schemas.GmNoteOut(text="", updated_at=s.created_at)
+    return schemas.GmNoteOut(text=note.text, updated_at=note.updated_at)
+
+
+@router.put("/sessions/{sessionId}/gm-note", tags=["Chronik"], status_code=204)
+def put_gm_note(
+    sessionId: str, body: schemas.GmNoteIn, user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    s = load_session_gm(db, sessionId, user).session
+    note = db.get(GmNote, s.id)
+    if note is None:
+        note = GmNote(session_id=s.id)
+        db.add(note)
+    note.text = body.text
+    note.updated_at = utcnow()
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/sessions/{sessionId}/transcript", tags=["Chronik"], response_model=list[schemas.TranscriptLineOut])
+def get_transcript(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = load_session_gm(db, sessionId, user).session
+    sprecher = {sp.id: sp for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}
+    zeilen = []
+    for seg in db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id)
+                          .order_by(TranscriptSegment.position)):
+        sp = sprecher.get(seg.speaker_id)
+        zeilen.append(schemas.TranscriptLineOut(
+            start=seg.start, end=seg.end, speaker_id=seg.speaker_id or "", text=seg.text,
+            member_id=sp.assigned_member_id if sp else None))
+    return zeilen

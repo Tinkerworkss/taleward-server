@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="{{ sprache }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{% block titel %}{{ _("Verwaltung") }}{% endblock %} · {{ angaben.server_name }}</title>
+{% block kopfzeilen %}{% endblock %}
+<link rel="stylesheet" href="/verwaltung/static/verwaltung.css">
+<link rel="icon" href="/verwaltung/static/marke/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="/verwaltung/static/marke/taleward-app-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/verwaltung/static/marke/apple-touch-icon.png">
+<meta name="theme-color" content="#17313B">
+</head>
+<body>
+{% if user %}
+<header class="kopf"><div class="kopf__innen">
+  <a class="marke" href="/verwaltung/"><img class="marke__lockup" src="/verwaltung/static/marke/taleward-lockup-inverse.svg" alt="Taleward" width="132" height="32"><small>{{ _("Verwaltung") }} · {{ angaben.server_name }}</small></a>
+  <div class="kopf__rechts">
+    {% include "_sprachen.html" %}
+    <form method="post" action="/verwaltung/abmelden"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--quiet" type="submit"><span class="breit">{{ user.display_name }} </span>{{ _("abmelden") }}</button></form>
+  </div>
+  <nav class="nav" aria-label="{{ _('Bereiche') }}">
+    {% for ziel, text in [("uebersicht", _("Übersicht")), ("transkription", _("Transkription")), ("zusammenfassung", _("Zusammenfassung")), ("warteschlange", _("Warteschlange")), ("konten", _("Konten")), ("anmeldung", _("Anmeldung")), ("einstellungen", _("Einstellungen"))] %}
+    <a href="/verwaltung/{{ '' if ziel == 'uebersicht' else ziel }}" {% if aktiv == ziel %}aria-current="page"{% endif %}>{{ text }}</a>
+    {% endfor %}
+  </nav>
+</div></header>
+{% endif %}
+<main>
+{% if meldung %}<div class="meldung" role="status">{{ meldung }}</div>{% endif %}
+{% if fehler %}<div class="meldung meldung--fehler" role="alert">{{ fehler }}</div>{% endif %}
+{% block inhalt %}{% endblock %}
+</main>
+</body>
+</html>

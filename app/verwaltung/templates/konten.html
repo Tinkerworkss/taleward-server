@@ -1,0 +1,56 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Konten") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Konten") }}</h1>
+{% if neuer_link %}
+<div class="karte" id="passwort-link">
+  <h2>{{ _("Passwort-Link für {name}", name=neuer_link.name) }}</h2>
+  <p>{{ _("Gib diesen Link der Person weiter (Messenger, E-Mail oder zum Scannen). Er gilt einmal bis {zeit}. Er wird nur jetzt angezeigt.", zeit=zeit(neuer_link.bis)) }}</p>
+  <input class="einladung__link" type="text" readonly value="{{ neuer_link.link }}" aria-label="{{ _('Passwort-Link') }}">
+  <figure class="einladung__qr"><img src="{{ neuer_link.qr }}" width="222" height="222" alt="{{ _('QR-Code mit dem Passwort-Link') }}"></figure>
+</div>
+{% endif %}
+<div class="karte">
+  <h2>{{ _("Neues Konto") }}</h2>
+  <form class="formular formular--zeile" method="post" action="/verwaltung/konten">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Benutzername") }} <input type="text" name="username" autocomplete="off" required maxlength="64"></label>
+    <label>{{ _("Anzeigename") }} <input type="text" name="display_name" required maxlength="128"></label>
+    <label>{{ _("Startpasswort") }} <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+    <label class="haken"><input type="checkbox" name="admin" value="1"> {{ _("Verwalter") }}</label>
+    <button class="tw-btn tw-btn--primary" type="submit">{{ _("Anlegen") }}</button>
+  </form>
+  <p class="hilfe">{{ _("Das Startpasswort gibst du der Person persönlich weiter. Mitglieder einer Kampagne kommen über Einladungen der Spielleitung in der App dazu.") }} {{ _("Passwort vergessen? „Passwort-Link erstellen“ – die Person wählt ihr neues Passwort dann selbst.") }}</p>
+</div>
+<div class="karte tabelle-huelle">
+  <table>
+    <thead><tr><th>{{ _("Konto") }}</th><th>{{ _("Rolle") }}</th><th>{{ _("Zuletzt angemeldet") }}</th><th>{{ _("Aktionen") }}</th></tr></thead>
+    <tbody>
+    {% for k in konten %}
+      <tr>
+        <td data-label="{{ _('Konto') }}"><strong>{{ k.u.display_name }}</strong><br><span class="leise">{{ k.u.username }} · {{ _("seit {zeit}", zeit=zeit(k.u.created_at)) }}</span>
+          <br><span class="leise">{{ _("Anmeldung") }}: {% for m in k.u.auth_methods %}{{ _("Passwort") if m.kind == "password" else m.kind.split(":")[-1]|capitalize }}{% if not loop.last %}, {% endif %}{% endfor %}{% if k.u.email %} · {{ _("E-Mail bestätigt") }}{% endif %}</span></td>
+        <td data-label="{{ _('Rolle') }}">{% if k.verwalter %}<span class="marke-status marke-status--gut">{{ _("Verwalter") }}</span>{% else %}<span class="leise">{{ _("Mitglied") }}</span>{% endif %}</td>
+        <td class="leise" data-label="{{ _('Zuletzt angemeldet') }}">{{ zeit(k.zuletzt) }}</td>
+        <td>
+          <form method="post" action="/verwaltung/konten/{{ k.u.id }}/link"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="tw-btn tw-btn--secondary tw-btn--klein" type="submit">{{ _("Passwort-Link erstellen") }}</button></form>
+          <details><summary>{{ _("Passwort selbst setzen") }}</summary>
+            <form class="formular formular--zeile" method="post" action="/verwaltung/konten/{{ k.u.id }}/passwort">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <label>{{ _("Neues Passwort") }} <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+              <button class="tw-btn tw-btn--secondary tw-btn--klein" type="submit">{{ _("Setzen und überall abmelden") }}</button>
+            </form>
+          </details>
+          {% if k.u.id != user.id %}
+          <form method="post" action="/verwaltung/konten/{{ k.u.id }}/verwalter"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="tw-btn tw-btn--quiet tw-btn--klein" type="submit">{{ _("Verwalter-Recht entziehen") if k.verwalter else _("Zum Verwalter machen") }}</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="hilfe">{{ _("Seine Daten exportieren und das eigene Konto löschen kann jede Person selbst in der App.") }}</p>
+{% endblock %}

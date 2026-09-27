@@ -1,0 +1,32 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Warteschlange") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Warteschlange") }}</h1>
+<p class="leise">{{ _("{n} offen · die letzten 100 Aufträge", n=offen) }} · <a href="/verwaltung/warteschlange">{{ _("Aktualisieren") }}</a></p>
+<div class="karte tabelle-huelle">
+  <table>
+    <thead><tr><th>{{ _("Session") }}</th><th>{{ _("Art") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Bearbeitet von") }}</th><th>{{ _("Zeit") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for z in zeilen %}
+      <tr>
+        <td data-label="{{ _('Session') }}">{% if z.c %}<strong>{{ z.c.title }}</strong><br><span class="leise">{% if z.s %}{{ _("Kapitel {n}", n=z.s.number) }}{% else %}{{ z.dok.title }}{% endif %}</span>{% else %}<span class="leise">–</span>{% endif %}</td>
+        <td data-label="{{ _('Art') }}">{{ {"transcribe": _("Transkription"), "summarize": _("Zusammenfassung"), "voice_enroll": _("Stimmprofil"), "document": _("SL-Unterlage")}.get(z.j.type, z.j.type) }}{% if z.j.engine == "external" %} <span class="leise">({{ _("extern") }})</span>{% endif %}</td>
+        <td data-label="{{ _('Zustand') }}">
+          {% if z.j.state == "done" %}<span class="marke-status marke-status--gut">{{ _("fertig") }}</span>
+          {% elif z.haengt %}<span class="marke-status marke-status--warten">{{ _("Worker antwortet nicht") }}</span><br><span class="leise">{{ _("wird gleich neu eingereiht") }}</span>
+          {% elif z.j.state == "leased" %}<span class="marke-status marke-status--warten">{{ _("in Arbeit {p} %", p=((z.j.progress or 0) * 100)|round|int) }}</span>
+          {% elif z.j.state == "queued" %}<span class="marke-status">{{ _("wartet") }}</span>{% if z.j.attempts %} <span class="leise">({{ _("Versuch {n}", n=z.j.attempts + 1) }})</span>{% endif %}
+          {% else %}<span class="marke-status marke-status--fehler">{{ _("fehlgeschlagen") }}</span>{% endif %}
+          {% if z.j.error_message and z.j.state != "done" %}<br><span class="leise">{{ z.j.error_message }}</span>{% endif %}
+        </td>
+        <td class="leise" data-label="{{ _('Bearbeitet von') }}">{{ z.knecht or "–" }}</td>
+        <td class="leise" data-label="{{ _('Zeit') }}">{{ zeit(z.j.created_at) }}{% if z.j.finished_at %}<br>{{ _("bis {zeit}", zeit=zeit(z.j.finished_at, False)) }}{% endif %}</td>
+        <td>{% if z.neustart %}<form method="post" action="/verwaltung/sessions/{{ z.s.id }}/neustart"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="tw-btn tw-btn--secondary tw-btn--klein" type="submit">{{ _("Erneut versuchen") }}</button></form>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="leise">{{ _("Noch keine Aufträge.") }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

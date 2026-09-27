@@ -1,0 +1,77 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Übersicht") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Übersicht") }}</h1>
+{% set offen = punkte|selectattr("erledigt", "equalto", false)|list %}
+{% if offen %}
+<div class="karte karte--hinweis">
+  <h2>{{ _("Einrichtung: {n} von {m} erledigt", n=punkte|length - offen|length, m=punkte|length) }}</h2>
+  <ul class="checkliste">
+    {% for p in punkte %}<li class="{{ 'erledigt' if p.erledigt else 'offen' }}"><span aria-hidden="true">{{ "✓" if p.erledigt else "○" }}</span> {% if p.erledigt %}{{ _(p.titel) }}{% else %}<a href="{{ p.link }}">{{ _(p.titel) }}</a>{% endif %}</li>{% endfor %}
+  </ul>
+  <div class="knopfzeile"><a class="tw-btn tw-btn--primary" href="/verwaltung/assistent">{{ _("Einrichtung fortsetzen") }}</a>
+    <form method="post" action="/verwaltung/assistent/ausblenden"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--quiet" type="submit">{{ _("ausblenden") }}</button></form></div>
+</div>
+{% endif %}
+<div class="raster">
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.knechte_online }}<span class="leise"> / {{ zahlen.knechte }}</span></div><div class="zahl__text">{{ _("Worker bereit") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.wartend }}</div><div class="zahl__text">{{ _("Sessions in der Warteschlange") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.in_arbeit }}</div><div class="zahl__text">{{ _("in Verarbeitung") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.bei_sl }}</div><div class="zahl__text">{{ _("warten auf die Spielleitung") }}</div></div>
+  <div class="zahl {% if zahlen.fehlgeschlagen %}zahl--warnung{% endif %}"><div class="zahl__wert">{{ zahlen.fehlgeschlagen }}</div><div class="zahl__text">{{ _("fehlgeschlagen") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.veroeffentlicht }}</div><div class="zahl__text">{{ _("Kapitel veröffentlicht") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.kampagnen }}</div><div class="zahl__text">{{ _("Kampagnen") }}</div></div>
+  <div class="zahl"><div class="zahl__wert">{{ zahlen.konten }}</div><div class="zahl__text">{{ _("Konten") }}</div></div>
+</div>
+{% if zahlen.wartend and not zahlen.knechte_online %}
+<div class="meldung meldung--fehler">{{ _("Sessions warten, aber kein Worker ist bereit.") }} <a href="/verwaltung/transkription">{{ _("Worker starten") }}</a></div>
+{% endif %}
+<div class="karte">
+  <h2>{{ _("Lokaler Worker") }}</h2>
+  {% if knecht.laeuft %}
+  <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(knecht.gestartet)) }}{% if knecht.modus == "attrappe" %} ({{ _("Testmodus") }}){% endif %}</p>
+  {% else %}
+  <p><span class="marke-status">{{ _("aus") }}</span> <a href="/verwaltung/transkription">{{ _("Starten") }}</a></p>
+  {% endif %}
+</div>
+{% if kosten.limit or kosten.monat %}
+<div class="karte">
+  <h2>{{ _("Kosten für Cloud-Dienste") }}</h2>
+  <p>{{ _("Diesen Monat: {betrag} €", betrag="%.2f"|format(kosten.monat / 100)) }}{% if kosten.limit %} · {{ _("Limit: {betrag} €", betrag="%.2f"|format(kosten.limit / 100)) }}{% endif %}</p>
+  {% if kosten.limit and kosten.monat >= kosten.limit %}<div class="meldung meldung--fehler">{{ _("Das Limit ist erreicht – Cloud-Aufträge warten bis zum nächsten Monat.") }} <a href="/verwaltung/einstellungen#kosten">{{ _("Limit ändern") }}</a></div>{% endif %}
+</div>
+{% endif %}
+<div class="karte">
+  <h2>{{ _("Speicher") }}</h2>
+  <p>{{ _("Datenbank {a} · Bilder und Unterlagen {d} · Aufnahmen in Bearbeitung {b} · Hörproben {c}", a=groesse(speicher.datenbank), d=groesse(speicher.bilder), b=groesse(speicher.uploads), c=groesse(speicher.hoerproben)) }}</p>
+  <p class="leise">{{ _("Aufnahmen werden nach der Transkription gelöscht, spätestens nach 7 Tagen.") }}</p>
+</div>
+<div class="karte" id="sicherung">
+  <h2>{{ _("Sicherung") }}</h2>
+  {% if sicherungen %}
+  <p>{% if sicherung_einst.auto %}<span class="marke-status marke-status--gut">{{ _("automatisch") }}</span>{% else %}<span class="marke-status marke-status--warten">{{ _("nur von Hand") }}</span>{% endif %} {{ _("Letzte Sicherung: {zeit}", zeit=zeit(sicherungen[0].zeit)) }}</p>
+  {% else %}
+  <p><span class="marke-status marke-status--fehler">{{ _("noch keine") }}</span> {{ _("Es gibt noch keine Sicherung.") }}</p>
+  {% endif %}
+  <form method="post" action="/verwaltung/sicherung"><input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Jetzt sichern") }}</button></form>
+  {% if sicherungen %}
+  <ul class="liste">
+    {% for e in sicherungen %}<li><a href="/verwaltung/sicherungen/{{ e.name }}">{{ zeit(e.zeit) }}</a> <span class="leise">· {{ groesse(e.groesse) }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+  <details><summary>{{ _("Einstellungen zur Sicherung") }}</summary>
+  <form class="formular" method="post" action="/verwaltung/sicherung/einstellungen">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="haken"><input type="checkbox" name="auto" value="1" {% if sicherung_einst.auto %}checked{% endif %}> {{ _("Jede Nacht automatisch sichern") }}</label>
+    <label>{{ _("Aufbewahren (Tage)") }} <input type="number" name="tage" value="{{ sicherung_einst.tage }}" min="1" max="365"></label>
+    <label>{{ _("Zusätzlicher Ordner (optional)") }} <input type="text" name="ordner" value="{{ sicherung_einst.ordner or '' }}" placeholder="/mnt/storagebox/taleward">
+      <span class="hilfe">{{ _("Jede Sicherung wird zusätzlich dorthin kopiert, z. B. auf eine eingebundene Storage Box. So überlebt sie auch einen Ausfall dieses Servers.") }}</span></label>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+  </form>
+  </details>
+  <p class="hilfe">{{ _("Eine Sicherung enthält Datenbank, Bilder und SL-Unterlagen – also alle Inhalte, Konten und Einstellungen. Sicher aufbewahren. Wiederherstellen: Server beenden, dann „chronik wiederherstellen <Datei>“.") }}</p>
+</div>
+<p class="leise">{{ _("Schnittstelle") }} {{ api_version }} · {{ _("Datenbank") }} <code>{{ db_datei }}</code></p>
+{% endblock %}

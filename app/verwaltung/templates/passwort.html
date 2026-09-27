@@ -1,0 +1,26 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Neues Passwort") }}{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% include "_kopf_marke.html" %}
+  <div class="karte">
+    {% if fertig %}
+    <h2>{{ _("Passwort gespeichert") }}</h2>
+    <p>{{ _("Melde dich jetzt in der App mit deinem Benutzernamen „{name}“ und dem neuen Passwort an. Auf anderen Geräten bist du abgemeldet.", name=konto) }}</p>
+    {% elif gueltig %}
+    <h2>{{ _("Neues Passwort") }}</h2>
+    <p class="leise">{{ _("Für das Konto „{name}“ auf {server}.", name=konto, server=angaben.server_name) }}</p>
+    <form class="formular" method="post" action="/passwort/{{ token }}">
+      <input type="text" name="username" value="{{ konto }}" autocomplete="username" hidden>
+      <label>{{ _("Neues Passwort") }} <input type="password" name="password" autocomplete="new-password" required minlength="8" autofocus></label>
+      <label>{{ _("Passwort wiederholen") }} <input type="password" name="password2" autocomplete="new-password" required minlength="8"></label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Passwort speichern") }}</button></div>
+    </form>
+    {% else %}
+    <h2>{{ _("Dieser Link gilt nicht mehr") }}</h2>
+    <p>{{ _("Der Link ist abgelaufen, schon benutzt oder unbekannt. Bitte die Verwaltung eures Servers um einen neuen.") }}</p>
+    {% endif %}
+  </div>
+  <p class="zentriert">{% include "_sprachen.html" %}</p>
+</div>
+{% endblock %}

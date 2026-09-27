@@ -1,0 +1,33 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Ersteinrichtung") }}{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% set leitsatz = _("Willkommen! Lege deinen eigenen Verwalter an.") %}
+  {% include "_kopf_marke.html" %}
+  <div class="karte">
+    {% if code or alt %}
+    <p>{{ _("Schritt 1 von 7: dein Konto für die Verwaltung. Danach führt dich ein Assistent durch die Einrichtung.") }}</p>
+    <form class="formular" method="post" action="/verwaltung/einrichtung">
+      <input type="hidden" name="code" value="{{ code }}">
+      {% if alt %}<input type="hidden" name="csrf" value="{{ csrf_wert }}">{% endif %}
+      <label>{{ _("Benutzername") }} <input type="text" name="username" autocomplete="username" required maxlength="64" autofocus></label>
+      <label>{{ _("Anzeigename") }} <input type="text" name="display_name" required maxlength="128" placeholder="{{ _('z. B. Benjamin') }}"></label>
+      <label>{{ _("Passwort") }} <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+      <label>{{ _("Passwort wiederholen") }} <input type="password" name="password2" autocomplete="new-password" required minlength="8"></label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Verwalter anlegen und fortfahren") }}</button></div>
+    </form>
+    {% else %}
+    {% if code_falsch %}<div class="meldung meldung--fehler" role="alert">{{ _("Dieser Einrichtungscode stimmt nicht.") }}</div>{% endif %}
+    <p>{{ _("Dieser Server ist noch nicht eingerichtet. Du brauchst den Einrichtungscode – er steht in der Ausgabe beim ersten Start des Servers.") }}</p>
+    <ul class="liste">
+      <li>{{ _("Mit Docker:") }} <code>docker compose logs taleward | grep code=</code></li>
+      <li>{{ _("Ohne Docker:") }} <code>uv run chronik einrichtungscode</code></li>
+    </ul>
+    <form class="formular" method="get" action="/verwaltung/einrichtung">
+      <label>{{ _("Einrichtungscode") }} <input type="text" name="code" required maxlength="20" autocomplete="off" placeholder="ABCD-EFGH"></label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Weiter") }}</button></div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

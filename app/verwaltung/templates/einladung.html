@@ -1,0 +1,39 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Einladung zu Taleward") }}{% endblock %}
+{% block kopfzeilen %}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ _('Einladung zu Taleward') }}">
+<meta property="og:description" content="{{ _('Du bist zu einer Runde auf {name} eingeladen.', name=angaben.server_name) }}">
+<meta property="og:image" content="{{ og_bild }}">
+<meta property="og:url" content="{{ link }}">
+{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% include "_kopf_marke.html" %}
+  <div class="karte">
+    {% if gueltig %}
+    <h2>{{ _("Du bist eingeladen!") }}</h2>
+    <p class="leise">{{ _("Server: {name} · {betreiber}", name=angaben.server_name, betreiber=angaben.server_operator) }}</p>
+    <code class="einladung__code">{{ code }}</code>
+    <p class="leise zentriert">{{ _("gültig bis {zeit}", zeit=zeit(bis)) }}</p>
+    {% if qr %}<figure class="einladung__qr"><img src="{{ qr }}" width="222" height="222" alt="{{ _('QR-Code mit dem Einladungslink') }}">
+      <figcaption class="hilfe">{{ _("Am Tisch: mit der Handykamera scannen.") }}</figcaption></figure>{% endif %}
+    <div class="knopfstapel">
+      <a class="tw-btn tw-btn--primary" href="{{ app_link }}">{{ _("In Taleward öffnen") }}</a>
+      {% if angaben.app_download_url %}<a class="tw-btn tw-btn--secondary" href="{{ angaben.app_download_url }}" rel="noopener">{{ _("App herunterladen") }}</a>{% endif %}
+    </div>
+    {% if angaben.app_download_url and apk_hinweis %}<p class="hilfe">{{ _("Android fragt einmal, ob Installationen aus dieser Quelle erlaubt sind – das ist bei Apps außerhalb des Play Store normal.") }}</p>{% endif %}
+    <label>{{ _("Link zum Kopieren") }} <input class="einladung__link" type="text" readonly value="{{ link }}"></label>
+    <ol class="schritte">
+      <li>{{ _("App installieren") }}</li>
+      <li>{{ _("App öffnen") }}</li>
+      <li>{{ _("„Einladung annehmen“ → „Einfügen“") }}</li>
+    </ol>
+    {% else %}
+    <h2>{{ _("Diese Einladung gilt nicht mehr") }}</h2>
+    <p>{{ _("Der Link ist abgelaufen oder unbekannt. Frag deine Spielleitung nach einem neuen Link.") }}</p>
+    {% endif %}
+  </div>
+  <p class="leise zentriert">{% if angaben.privacy_policy_url %}<a href="{{ angaben.privacy_policy_url }}" rel="noopener">{{ _("Datenschutz") }}</a> · {% endif %}{% include "_sprachen.html" %}</p>
+</div>
+{% endblock %}

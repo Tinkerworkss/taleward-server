@@ -1,0 +1,42 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Auftragsverarbeitung und Übergabe") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Auftragsverarbeitung und Übergabe") }}</h1>
+<form method="post" action="/verwaltung/uebergabe/av">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<div class="karte" id="av">
+  <h2>{{ _("Verträge zur Auftragsverarbeitung") }}</h2>
+  <p class="leise">{{ _("Wer für den Verein Daten verarbeitet, braucht einen Vertrag nach Art. 28 DSGVO. Hier vermerkst du, wann er abgeschlossen wurde – das hilft auch deiner Nachfolge. Keine Rechtsberatung.") }}</p>
+  <ul class="liste-av">
+  {% for a in anbieter %}
+    <li>
+      <span><strong>{{ _(a.name) }}</strong>{% if not a.noetig %} <span class="leise">· {{ _("zurzeit nicht genutzt") }}</span>{% endif %}</span>
+      <span class="hilfe">{{ _(a.hilfe) }} <a href="{{ a.link }}" rel="noopener noreferrer" target="_blank">{{ _("Zum Vertrag") }}</a></span>
+      <label>{{ _("Abgeschlossen am") }} <input type="date" name="av_{{ a.schluessel }}" value="{{ a.datum }}" max="{{ heute }}"></label>
+      {% if a.noetig and not a.datum %}<span class="marke-status marke-status--warten">{{ _("offen") }}</span>{% elif a.datum %}<span class="marke-status marke-status--gut">{{ _("vermerkt") }}</span>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+</div>
+</form>
+<div class="karte" id="uebergabe">
+  <h2>{{ _("Verwaltung übergeben") }}</h2>
+  <p class="leise">{{ _("Wenn jemand anderes die Verwaltung übernimmt, geht ihr diese Liste gemeinsam durch.") }}</p>
+  <ol class="schritte">
+    <li>{{ _("Die neue Person bekommt ein Konto und das Verwalter-Recht.") }} <a href="/verwaltung/konten">{{ _("Konten") }}</a></li>
+    <li>{{ _("Zugang zum Server übergeben: Konto beim Hosting-Anbieter bzw. den lokalen Server im Verein, Domain, Zugang per SSH.") }}</li>
+    <li>{{ _("Konten bei Cloud-Diensten übergeben oder neu anlegen (Mistral, Hugging Face) und die Schlüssel hier neu eintragen.") }}</li>
+    <li>{{ _("Benachrichtigungen auf die neue Person umstellen (ntfy-Thema oder E-Mail).") }} <a href="/verwaltung/einstellungen#benachrichtigungen">{{ _("Einstellungen") }}</a></li>
+    <li>{{ _("Verantwortlichen und Kontakt im Datenschutzhinweis anpassen.") }} <a href="/verwaltung/assistent/datenschutz">{{ _("Datenschutzhinweis") }}</a></li>
+    <li>{{ _("Eine aktuelle Sicherung anlegen und zeigen, wo die Sicherungen liegen.") }} <a href="/verwaltung/#sicherung">{{ _("Sicherung") }}</a></li>
+    <li>{{ _("Zum Schluss gibt die bisherige Verwaltung ihr Verwalter-Recht ab (die neue Person entzieht es unter Konten).") }}</li>
+  </ol>
+  <h3>{{ _("Was zurzeit hinterlegt ist") }}</h3>
+  <ul class="liste-stand">
+    <li>{{ _("Verwalter") }}: {% for a in admins %}{{ a.display_name }} ({{ a.username }}){% if not loop.last %}, {% endif %}{% endfor %}</li>
+    {% for text, da in hinterlegt %}<li><span aria-hidden="true">{{ "✓" if da else "○" }}</span> {{ _(text) }}: {{ _("hinterlegt") if da else _("nicht hinterlegt") }}</li>{% endfor %}
+    <li>{{ _("Sicherungen liegen in") }} <code>{{ ablage }}</code>{% if sicherung_ordner %} {{ _("und zusätzlich in") }} <code>{{ sicherung_ordner }}</code>{% endif %}</li>
+  </ul>
+</div>
+{% endblock %}

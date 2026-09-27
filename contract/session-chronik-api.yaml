@@ -1,0 +1,2328 @@
+openapi: 3.1.0
+info:
+  title: Session-Chronik API
+  version: 0.4.0
+  description: |
+    Schnittstelle zwischen der Session-Chronik-App (Android/PWA) und dem Verarbeitungsserver.
+
+    Grundregeln:
+    - Alle Endpunkte außer /auth/login, /auth/register und /info erfordern ein Bearer-Token.
+    - Rollen gelten pro Kampagne: `gm` (Spielleitung) oder `player`.
+    - Der SERVER setzt den Spoilerschutz durch: Einträge mit `visibility: gm_only`,
+      offene Vorschläge, SL-Notizen und Transkripte werden an Spieler nie ausgeliefert
+      (auch nicht in Listen oder als Anzahl).
+    - Ein Upload wird nur angenommen, wenn alle Anwesenden der Session eingewilligt haben.
+    - Audio wird nach erfolgreicher Transkription gelöscht (siehe `audioDeletedAt`).
+    - Stimmprofile sind freiwillig. Speaker.source `voice_match` heißt: über ein Stimmprofil erkannt.
+    - Zeitangaben in ISO 8601 (UTC), IDs als UUID-Strings.
+    - Die App kann mit mehreren Servern gleichzeitig arbeiten. Jeder Server hat eigene Konten; Tokens sind an
+      ihren Server gebunden (JWT-`aud` = Server-ID) und werden von anderen Servern abgelehnt.
+      Datenmodell-Empfehlung: Konto getrennt von Anmeldearten (Passwort; später OpenID Connect eines zentralen
+      Anmeldedienstes; später Passkeys) – `GET /info` meldet sie in `authMethods`.
+    - Oberste Ebene ist die Organisation (Verein, Laden, Gruppe). Ein selbst betriebener Server hat meist genau eine.
+    - Der Server protokolliert pro Session und Unterlage Audiodauer, Rechenzeit, Tokens des Sprachmodells und
+      geschätzte Kosten. Abgerechnet würde beim Betreiber der Kampagne (SL) oder – falls übernommen – bei der
+      Organisation. Spieler verursachen nie Kosten.
+    - Die App schickt `Accept-Language: de` oder `en`. Der Server liefert `message` in dieser Sprache
+      (Standard und Rückfall: de). Inhalte (Recaps, Bibel) folgen dagegen `Campaign.language`.
+    - Einwilligung: Jede anwesende Person muss selbst zugestimmt haben – entweder dauerhaft in der eigenen App
+      (`consentSource: app`, gilt bis zum Widerruf) oder vor Ort selbst auf dem Gerät der SL (`on_site`, nur diese
+      Session; auch für Gäste ohne Konto). Es gibt keine Zustimmung durch die SL stellvertretend.
+    - Fehler kommen immer als `{code, message}`; `message` ist in der Sprache aus `Accept-Language` (de | en,
+      Standard de) und kann direkt angezeigt werden.
+      Die App sollte auch nicht aufgeführte Fehler generisch mit `message` anzeigen.
+    - Was ein Nutzer nicht sehen darf, liefert 404 statt 403, damit schon die Existenz nicht verraten wird.
+      403 gibt es nur, wenn die Existenz ohnehin bekannt ist (z. B. SL-Endpunkt einer veröffentlichten Session).
+
+    Änderungen gegenüber 0.2.0: Fehlercodes 400/401/404/409/413 ergänzt, neuer Endpunkt
+    `POST /sessions/{sessionId}/retry`, `GET /campaigns/{campaignId}` liefert 404 statt 403 für
+    Nicht-Mitglieder, optionaler Header `X-Chunk-SHA256` beim Hochladen eines Teils.
+    Änderungen in 0.3.1 (entspricht App-Stand 0.2.1): Bei source=table dürfen mehrere Dateien kommen –
+    aufeinanderfolgende Abschnitte einer Aufnahme, die der Server in Array-Reihenfolge zusammenfügt.
+    Änderungen in 0.3.2: `PATCH /campaigns/{campaignId}` (nur SL) für Titel, Kurzbeschreibung und
+    Welt-Hintergrund; neues Feld `worldInfo` in Campaign. Terminabstimmung (`/campaigns/{id}/date-poll`,
+    `/date-polls/...`) mit `nextSessionAt` und `datePollNeedsMyVote` in CampaignSummary.
+    Kommentare pro Kapitel (`/sessions/{id}/comments`, `/comments/{id}`), öffentlich oder privat.
+    Einwilligung: stehende Zustimmung pro Mitglied und Kampagne (`PUT /campaigns/{id}/recording-consent`,
+    `Member.recordingConsentAt`), Anwesende mit `consentSource` (app | on_site) und Gäste (`guestName`).
+    Sprache: Header `Accept-Language` (de | en) für `message`; `Campaign.language` für Transkription und Recaps.
+    Titelbild: `coverPreset` (mitgeliefertes Motiv) oder eigenes Bild (`/campaigns/{id}/cover-image`).
+    Ungelesen: `CampaignSummary.unread`, `SessionSummary.unreadComments`, Marker per `POST /campaigns/{id}/seen`
+    und `POST /sessions/{id}/seen`. Charakterbilder: `/campaigns/{id}/members/{memberId}/portrait`.
+    Charakter: `Member.characterSummary` (für alle) und `Member.characterBackstory` (nur Person selbst und SL).
+    Geteilte Bibeleinträge: `Entry.gmNotes` / `Proposal.gmNotes` (geheimer Teil, für Spieler weggelassen).
+    SL-Unterlagen: `/campaigns/{id}/documents`, `/documents/{id}` … – Auswertung zu Bibel-Vorschlägen.
+    Mehrere Server: öffentliches `GET /info`, `POST /auth/register` mit Einladungscode, Einladungslinks
+    `https://<server>/einladung/<CODE>`. Konto: `GET /me/export`, `DELETE /me`. Organisationen: `GET /organizations`,
+    `CampaignSummary.organization`. Verbrauch: `GET /campaigns/{id}/usage`.
+    Änderungen in 0.3.3: `Campaign.system` (GameSystem) und `Campaign.systemName`, setzbar per POST/PATCH
+    /campaigns; 409 bei POST /campaigns/{id}/sessions ergänzt; Grundregeln zu öffentlichen Endpunkten und zur
+    Sprache von `message` korrigiert.
+    Änderungen in 0.3.4: 400 bei GET /campaigns/{id}/usage (month muss YYYY-MM sein); externe Transkription:
+    `ServerInfo.externalTranscription`, `Campaign.allowExternalTranscription` (nur SL, per PATCH),
+    `Session.transcriptionEngine`.
+    Änderungen in 0.3.5: `Proposal.action` kennt zusätzlich `reveal` – ein geheimer Bibeleintrag ist am Tisch bekannt
+    geworden; die SL gibt ihn per Vorschlag frei. PATCH /entries/{id} mit visibility public verlangt einen
+    öffentlichen Text (400 sonst).
+    Änderungen in 0.3.6: `Entry.hiddenFromMemberIds` – öffentliche Einträge vor einzelnen Mitgliedern verbergen
+    („Wer weiß was“); Charakterbild mit gewähltem Ausschnitt (`cropX`, `cropY`, `cropSize` bei PUT …/portrait).
+    Änderungen in 0.3.7: `Proposal.hiddenFromMemberIds` – schon beim Prüfen festlegen, vor wem ein öffentlicher
+    Vorschlag verborgen ist (PATCH /proposals/{id}); wird beim Veröffentlichen/Übernehmen in den Eintrag übernommen.
+    Änderungen in 0.3.8 (Wunsch des Servers): 410 bei GET …/speakers/{speakerId}/sample mit Error-Schema
+    (`audio_deleted`); Beispielwert von ServerInfo.apiVersion aktualisiert.
+    Änderungen in 0.3.9: App-Versionen – ServerInfo.minAppVersion, latestAppVersion, appDownloadUrl, releaseNotes;
+    Header `X-Taleward-App` (App-Version, nur an Server ab 0.3.9); 426 `app_outdated` für zu alte Apps.
+    Änderungen in 0.3.10: `Campaign.allowCloudSummary` (SL erlaubt Recap/Vorschläge über eine Cloud-API je Kampagne);
+    ServerInfo.externalTranscriptionMode (fallback|primary) und ServerInfo.cloudSummary; `Member.deletedAt` für
+    gelöschte Konten; 429 bei POST /auth/register; VoteAnswer-Werte in Anführungszeichen.
+    Änderungen in 0.4.0 (Anmeldung): freiwillige E-Mail nur fürs Konto (PUT/DELETE /me/email), „Passwort vergessen“
+    (POST /auth/password-reset), Passwort setzen/ändern (PUT /me/password), Anmelden mit Google, Discord, Apple,
+    Microsoft über den Systembrowser und den Server (/auth/oidc/…, PKCE-Ticket, Rückweg taleward://auth), Dienste
+    verbinden/trennen, zweite Form von POST /auth/register mit registrationToken, DELETE /me mit confirmUsername.
+    ServerInfo.authProviders, ServerInfo.passwordReset; User.email, emailPending, hasPassword, providers.
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Test-PC (Windows, RTX 3060 Ti)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Stimmprofil
+  - name: Kampagnen
+  - name: Sessions
+  - name: Upload
+  - name: Stimmen
+  - name: Vorschläge
+  - name: Chronik
+  - name: Bibel
+  - name: Termine
+  - name: Kommentare
+  - name: Unterlagen
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Anmelden
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Angemeldet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /info:
+    get:
+      tags: [Auth]
+      summary: Öffentliche Angaben des Servers (ohne Anmeldung)
+      description: Die App prüft damit eine Adresse, zeigt Betreiber und Datenschutzhinweis und warnt bei alter Version.
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerInfo" }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Konto mit Einladungscode anlegen
+      description: |
+        Nur mit gültigem Einladungscode (registration invite_only; 404 `invite_invalid`), sonst 403 `registration_closed`.
+        Legt nur das Konto an – den Beitritt zur Kampagne macht die App danach mit POST /campaigns/join.
+        acceptPrivacy und ageConfirmed müssen true sein (400 `consent_required`); beides mit Zeitpunkt protokollieren.
+        Passwort mindestens 8 Zeichen (400 `weak_password`), Benutzername eindeutig (409 `username_taken`).
+        Gegen Durchprobieren von Codes: Anfragen pro Adresse begrenzen (429).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  title: Mit Benutzername und Passwort
+                  required: [inviteCode, username, displayName, password, acceptPrivacy, ageConfirmed]
+                  properties:
+                    inviteCode: { type: string }
+                    username: { type: string, description: "3–64 Zeichen aus Buchstaben, Ziffern, . - _ (400 username_invalid); wird kleingeschrieben" }
+                    displayName: { type: string }
+                    password: { type: string, format: password, minLength: 8 }
+                    acceptPrivacy: { type: boolean, enum: [true] }
+                    ageConfirmed: { type: boolean, enum: [true], description: "Mindestalter aus /info erreicht oder Eltern einverstanden" }
+                - type: object
+                  title: Nach Anmeldung mit einem Dienst (ab 0.4.0)
+                  description: |
+                    registrationToken aus POST /auth/oidc/exchange (status register, 15 min gültig). Benutzername bildet der
+                    Server (eindeutig, später änderbar), kein Passwort. Die bestätigte E-Mail des Dienstes wird übernommen.
+                    Einladungspflicht wie oben. 400 registration_token_invalid.
+                  required: [inviteCode, registrationToken, displayName, acceptPrivacy, ageConfirmed]
+                  properties:
+                    inviteCode: { type: string }
+                    registrationToken: { type: string }
+                    displayName: { type: string }
+                    acceptPrivacy: { type: boolean, enum: [true] }
+                    ageConfirmed: { type: boolean, enum: [true] }
+      responses:
+        "201":
+          description: Angelegt und angemeldet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429":
+          description: Zu viele Versuche (`too_many_requests`, mehr als 10 je Adresse in 15 Minuten)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /auth/password-reset:
+    post:
+      tags: [Auth]
+      summary: Passwort vergessen – Link an die bestätigte E-Mail (ab 0.4.0, ohne Anmeldung)
+      description: |
+        Antwortet immer 202, gleich ob es das Konto gibt (niemand soll so herausfinden, wer ein Konto hat). Nur wenn eine
+        bestätigte E-Mail existiert, geht dorthin ein Link auf https://<server>/passwort/<token> (einmalig, 1 h). Danach
+        ist das Konto überall abgemeldet. Begrenzung je Adresse und je Konto (429). Nur wenn ServerInfo.passwordReset.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login]
+              properties:
+                login: { type: string, description: "Benutzername oder E-Mail" }
+      responses:
+        "202": { description: Angenommen (immer) }
+        "429":
+          description: Zu viele Versuche
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /auth/oidc/{provider}/start:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [google, discord, apple, microsoft] } }
+    get:
+      tags: [Auth]
+      summary: Anmelden mit einem Dienst starten – nur im Systembrowser öffnen (ab 0.4.0)
+      description: |
+        Kein JSON-Endpunkt: Der Server leitet (302) zum Dienst weiter. Am Ende landet der Browser auf
+        taleward://auth?ticket=…&serverId=… oder taleward://auth?error=<code> (provider_unknown, oidc_failed, cancelled …).
+      security: []
+      parameters:
+        - { name: challenge, in: query, required: true, schema: { type: string }, description: "BASE64URL(SHA-256(verifier)), ohne Füllzeichen" }
+        - { name: purpose, in: query, required: true, schema: { type: string, enum: [login, link] } }
+        - { name: linkToken, in: query, schema: { type: string }, description: "Nur bei purpose=link" }
+      responses:
+        "302": { description: Weiterleitung zum Dienst }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /auth/oidc/exchange:
+    post:
+      tags: [Auth]
+      summary: Ticket aus taleward://auth gegen Anmeldung tauschen (ab 0.4.0)
+      description: |
+        Nur die App, die mit challenge gestartet hat, kennt den verifier. Ergebnis je status:
+        ok – angemeldet (bei link: Dienst jetzt verbunden, accessToken dann null);
+        register – noch kein Konto: App zeigt „Konto anlegen“ ohne Benutzername/Passwort, dann POST /auth/register mit
+        registrationToken (15 min);
+        email_in_use – die vom Dienst bestätigte E-Mail gehört schon zu einem Konto; der Server verbindet nicht selbst
+        (Schutz vor Kontoübernahme). App: „Melde dich mit deinem Benutzernamen an und verbinde {Dienst} dann unter Konten
+        und Server.“
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, verifier]
+              properties:
+                ticket: { type: string }
+                verifier: { type: string }
+      responses:
+        "200":
+          description: Ergebnis
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok, register, email_in_use] }
+                  accessToken: { type: [string, "null"] }
+                  expiresAt: { type: [string, "null"], format: date-time }
+                  user: { $ref: "#/components/schemas/User" }
+                  registrationToken: { type: [string, "null"] }
+                  suggestedDisplayName: { type: [string, "null"] }
+                  email: { type: [string, "null"] }
+                  provider: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /me/email:
+    put:
+      tags: [Auth]
+      summary: E-Mail eintragen oder ändern – freiwillig, nur für Kontozwecke (ab 0.4.0)
+      description: |
+        202; der Server schickt einen Bestätigungslink (24 h) auf https://<server>/konto/email/<token>. Bis dahin steht die
+        Adresse in User.emailPending. Fehler: 400 invalid_email, 409 email_taken (an anderem Konto bestätigt),
+        503 mail_unavailable, 429 (höchstens 5 pro Stunde).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: Bestätigungslink verschickt }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429":
+          description: Zu viele Versuche
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: Der Server kann keine E-Mails verschicken (`mail_unavailable`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      tags: [Auth]
+      summary: Bestätigte und offene E-Mail entfernen (ab 0.4.0)
+      responses:
+        "204": { description: Entfernt }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/password:
+    put:
+      tags: [Auth]
+      summary: Passwort setzen (Konten ohne Passwort) oder ändern (ab 0.4.0)
+      description: |
+        Mit Passwort: currentPassword nötig (401 wrong_password). Ohne Passwort (hasPassword false): currentPassword
+        entfällt. 400 weak_password. 204; danach sind alle anderen Geräte abgemeldet – das eigene Token bleibt gültig.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: Gespeichert }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/providers/{provider}/link:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [google, discord, apple, microsoft] } }
+    post:
+      tags: [Auth]
+      summary: Dienst mit dem eigenen Konto verbinden – linkToken für /auth/oidc/…/start holen (ab 0.4.0)
+      description: linkToken gilt 5 min. Danach wie beim Anmelden, nur mit purpose=link; exchange liefert status ok.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linkToken: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/providers/{provider}:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [google, discord, apple, microsoft] } }
+    delete:
+      tags: [Auth]
+      summary: Dienst trennen (ab 0.4.0)
+      description: 409 last_login_method, wenn das Konto danach weder Passwort noch einen anderen Dienst hätte.
+      responses:
+        "204": { description: Getrennt }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /me/export:
+    get:
+      tags: [Auth]
+      summary: Alle eigenen Daten auf diesem Server als JSON (Recht auf Datenübertragbarkeit)
+      description: Konto (ab 0.4.0 mit email und den Namen verbundener Dienste, keine Kennungen), Mitgliedschaften mit Charakterangaben, eigene Kommentare, Zustimmungen mit Zeitpunkten, Stimmprofil-Status (ohne Stimmabdruck), Charakterbilder als Verweise.
+      responses:
+        "200":
+          description: JSON-Datei
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me:
+    delete:
+      tags: [Auth]
+      summary: Eigenes Konto auf diesem Server löschen
+      description: |
+        Passwort zur Bestätigung (401 bei falschem). Leitet die Person Kampagnen als einzige SL, 409 `last_gm_campaigns`
+        mit den Titeln in message. Gelöscht werden Konto, Anmeldungen, Charakterbilder, Charakter-Hintergrund,
+        Zustimmungen (Protokoll des Widerrufs bleibt als Nachweis), Stimmprofil. Kommentare bleiben mit Autor
+        „gelöschtes Konto“ stehen; Transkripte/Recaps bleiben unverändert.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Konten mit Passwort bestätigen mit password (401 wrong_password), Konten ohne Passwort mit confirmUsername.
+              properties:
+                password: { type: string, format: password }
+                confirmUsername: { type: string }
+      responses:
+        "204": { description: Gelöscht }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [Auth]
+      summary: Eigenes Profil
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/voice-profile:
+    get:
+      tags: [Stimmprofil]
+      summary: Status des eigenen Stimmprofils
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Stimmprofil]
+      summary: Stimmprofil anlegen oder neu aufnehmen (freiwillig, eigene Einwilligung)
+      description: |
+        Etwa 20–30 Sekunden vorgelesener Text. Der Server berechnet daraus einen Stimmabdruck
+        (biometrisches Datum nach DSGVO) und löscht das Audio danach. Ein vorhandenes Profil wird ersetzt.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio, consent]
+              properties:
+                audio: { type: string, format: binary }
+                consent:
+                  type: string
+                  enum: ["true"]
+                  description: Ausdrückliche Einwilligung in die Speicherung des Stimmabdrucks
+                learnFromSessions: { type: string, enum: ["true", "false"] }
+      responses:
+        "202":
+          description: Wird verarbeitet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceProfile" }
+        "400":
+          description: Aufnahme zu kurz oder Einwilligung fehlt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+    patch:
+      tags: [Stimmprofil]
+      summary: Einstellungen ändern
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                learnFromSessions: { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceProfile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Stimmprofil]
+      summary: Stimmprofil und alles daraus Gelernte endgültig löschen
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /campaigns:
+    get:
+      tags: [Kampagnen]
+      summary: Eigene Kampagnen (als SL oder Spieler)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CampaignSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Kampagnen]
+      summary: Neue Kampagne anlegen (Ersteller wird SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                language: { $ref: "#/components/schemas/ContentLanguage" }
+                organizationId: { type: string, description: "Nur nötig, wenn man mehreren Organisationen angehört" }
+                system:
+                  oneOf:
+                    - { $ref: "#/components/schemas/GameSystem" }
+                    - { type: "null" }
+                systemName: { type: [string, "null"], maxLength: 100 }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /campaigns/join:
+    post:
+      tags: [Kampagnen]
+      summary: Mit Einladungscode beitreten (Rolle player)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "RABE-4821" }
+                characterName: { type: string }
+      responses:
+        "200":
+          description: Beigetreten
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /campaigns/{campaignId}:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Kampagnen]
+      summary: Kampagne mit Mitgliedern
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Kampagnen]
+      summary: Titel, Kurzbeschreibung oder Welt-Hintergrund ändern (nur SL)
+      description: |
+        Nur mitgeschickte Felder werden geändert. `worldInfo` ist für ALLE Mitglieder sichtbar
+        (Spielerwissen über die Welt, Tischregeln). Geheimes gehört als gm_only-Eintrag in die Bibel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1 }
+                description: { type: string }
+                worldInfo: { type: string, description: "Fließtext, Absätze durch Leerzeilen getrennt" }
+                language: { $ref: "#/components/schemas/ContentLanguage" }
+                allowExternalTranscription: { type: boolean }
+                allowCloudSummary: { type: boolean }
+                system:
+                  oneOf:
+                    - { $ref: "#/components/schemas/GameSystem" }
+                    - { type: "null" }
+                systemName: { type: [string, "null"], maxLength: 100 }
+                coverPreset:
+                  oneOf:
+                    - { $ref: "#/components/schemas/CoverPreset" }
+                    - { type: "null" }
+                  description: Setzt ein mitgeliefertes Motiv (null = keins); ein eigenes Bild wird dabei gelöscht
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/invites:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    post:
+      tags: [Kampagnen]
+      summary: Einladungscode erzeugen (nur SL)
+      responses:
+        "201":
+          description: Code erzeugt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/members/{memberId}:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { $ref: "#/components/parameters/memberId" }
+    patch:
+      tags: [Kampagnen]
+      summary: Charaktername oder Rolle ändern (Rolle nur durch SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: |
+                characterSummary und characterBackstory darf nur die Person selbst ändern (sonst 403).
+                Leerer String löscht das Feld.
+              properties:
+                characterName: { type: string }
+                characterSummary: { type: string, maxLength: 1000 }
+                characterBackstory: { type: string, maxLength: 8000 }
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /organizations:
+    get:
+      tags: [Kampagnen]
+      summary: Eigene Organisationen (Verein, Laden, Gruppe)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Organization" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /campaigns/{campaignId}/usage:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Kampagnen]
+      summary: Verarbeitungsaufwand eines Monats (nur SL)
+      parameters:
+        - { name: month, in: query, description: "YYYY-MM, Standard: aktueller Monat",
+            schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usage" }
+        "400":
+          description: month nicht im Format YYYY-MM (`validation_error`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/cover-image:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Kampagnen]
+      summary: Eigenes Titelbild (alle Mitglieder; 404, wenn keins hochgeladen ist)
+      description: Die App lädt das Bild mit Token und zeigt es lokal an; Cache-Schlüssel ist `coverImageUpdatedAt`.
+      responses:
+        "200":
+          description: Bild
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Kampagnen]
+      summary: Eigenes Titelbild hochladen oder ersetzen (nur SL)
+      description: |
+        Rohdaten im Body, Content-Type image/jpeg, image/png oder image/webp (sonst 400 `unsupported_image`),
+        höchstens 5 MB (sonst 413 `image_too_large`). Die App verkleinert vorher auf 1600 px lange Kante.
+        Der Server sollte das Bild neu kodieren (Metadaten wie GPS entfernen) und setzt `coverPreset` auf null.
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+    delete:
+      tags: [Kampagnen]
+      summary: Eigenes Titelbild löschen (nur SL)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/seen:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    post:
+      tags: [Kampagnen]
+      summary: Bereich als gelesen markieren (setzt den Marker des eigenen Mitglieds auf jetzt)
+      description: |
+        chronicle – die App hat die Chronik geöffnet: unread.recaps wird 0.
+        bible – die App hat die Bibel geöffnet: unread.bible wird 0.
+        Marker neuer Mitglieder starten beim Beitritt, damit alte Inhalte nicht als neu gelten.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [area]
+              properties:
+                area: { type: string, enum: [chronicle, bible] }
+      responses:
+        "204": { description: Gespeichert }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/members/{memberId}/portrait:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { $ref: "#/components/parameters/memberId" }
+    get:
+      tags: [Kampagnen]
+      summary: Charakterbild eines Mitglieds (alle Mitglieder der Kampagne; 404, wenn keins)
+      parameters:
+        - name: size
+          in: query
+          schema: { type: string, enum: [thumb, full], default: full }
+          description: thumb = quadratisch 256×256 (mittig zugeschnitten) für die Kreise; full = bis 1024 px lange Kante
+      responses:
+        "200":
+          description: Bild
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Kampagnen]
+      summary: Eigenes Charakterbild hochladen oder ersetzen (nur für sich selbst)
+      parameters:
+        - { name: cropX, in: query, schema: { type: integer, minimum: 0 }, description: "Linke Kante des quadratischen Ausschnitts für thumb, in Pixeln des hochgeladenen Bildes" }
+        - { name: cropY, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: cropSize, in: query, schema: { type: integer, minimum: 1 }, description: "Kantenlänge des Ausschnitts; ohne Angabe mittig zugeschnitten" }
+      description: |
+        JPEG, PNG oder WebP, höchstens 3 MB (die App verkleinert vorher auf 1024 px lange Kante, JPEG 85 %,
+        typisch 80–250 kB). Der Server kodiert neu, entfernt Metadaten, speichert full (≤ 1024 px) und
+        thumb (256×256 aus dem Ausschnitt cropX/cropY/cropSize, sonst mittig; Ausschnitt außerhalb des Bildes → 400)
+        und setzt `Member.portraitUpdatedAt`. full ist immer das ganze Bild.
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: OK – das eigene Mitglied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+    delete:
+      tags: [Kampagnen]
+      summary: Charakterbild löschen (eigenes; die SL darf zur Moderation jedes löschen)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/recording-consent:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    put:
+      tags: [Kampagnen]
+      summary: Eigene stehende Zustimmung zu Aufnahmen setzen oder widerrufen
+      description: |
+        Nur für sich selbst. `granted: true` setzt `recordingConsentAt` auf jetzt, `false` löscht es.
+        Ein Widerruf gilt sofort: Uploads von Sessions, bei denen die Person mit `consentSource: app`
+        anwesend war und die noch nicht hochgeladen sind, werden mit 409 `consent_revoked` abgelehnt.
+        Bereits veröffentlichte Recaps bleiben bestehen. Der Server sollte Zustimmung und Widerruf mit
+        Zeitpunkt protokollieren (Nachweis).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [granted]
+              properties:
+                granted: { type: boolean }
+      responses:
+        "200":
+          description: OK – das eigene Mitglied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/sessions:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Sessions]
+      summary: Sessions der Kampagne (Spieler sehen nur veröffentlichte)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SessionSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Sessions]
+      summary: Session (Kapitel) anlegen, vor der Aufnahme
+      description: Legt Anwesende und Einwilligungen fest. Ohne vollständige Einwilligung ist kein Upload möglich.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [playedAt, attendees]
+              properties:
+                title: { type: string, description: "Optional, sonst schlägt der Server einen Titel vor" }
+                playedAt: { type: string, format: date-time }
+                attendees:
+                  type: array
+                  items: { $ref: "#/components/schemas/Attendee" }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Sessions]
+      summary: Session-Details inkl. Verarbeitungsstatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Sessions]
+      summary: Anwesende/Einwilligungen oder Titel ändern (nur SL, nur vor dem Upload für Einwilligungen)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                attendees:
+                  type: array
+                  items: { $ref: "#/components/schemas/Attendee" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/status:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Sessions]
+      summary: Verarbeitungsstatus (App fragt z. B. alle 30 s ab)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/retry:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Sessions]
+      summary: Fehlgeschlagene Verarbeitung neu starten (nur SL)
+      description: |
+        Nur im Zustand `failed`. Setzt dort wieder an, wo es schiefging: bei gescheiterter Transkription
+        (solange das Audio noch da ist, höchstens 7 Tage), sonst bei der Zusammenfassung.
+        Ist das Audio schon gelöscht und die Transkription gescheitert, kommt 409 `audio_gone` – dann neu hochladen.
+      responses:
+        "202":
+          description: Neu eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/uploads:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Upload]
+      summary: Upload starten
+      description: |
+        Stückweiser Upload, damit lange Aufnahmen auch über wackeliges WLAN/Mobilfunk ankommen.
+        Formate: AAC in MP4/M4A (Android-App, mono, 32 kHz, 48 kbit/s) oder Opus in WebM/Ogg (Browser).
+        Für source=table: Mehrere Dateien sind aufeinanderfolgende Abschnitte EINER Aufnahme
+        (die Android-App teilt alle ~5 Minuten). Der Server hängt sie in der Reihenfolge des
+        files-Arrays lückenlos aneinander, bevor er transkribiert.
+        Für source=discord: eine Datei pro Spur, jeweils mit `trackMemberId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, files]
+              properties:
+                source: { type: string, enum: [table, discord] }
+                files:
+                  type: array
+                  items:
+                    type: object
+                    required: [fileName, sizeBytes, mimeType]
+                    properties:
+                      fileName: { type: string }
+                      sizeBytes: { type: integer }
+                      mimeType: { type: string, example: "audio/ogg" }
+                      trackMemberId:
+                        type: string
+                        description: Nur bei source=discord – welches Mitglied auf dieser Spur spricht
+      responses:
+        "201":
+          description: Upload angelegt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadId: { type: string }
+                  chunkSizeBytes: { type: integer, example: 5242880 }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fileId: { type: string }
+                        fileName: { type: string }
+                        chunkCount: { type: integer }
+        "409":
+          description: |
+            Nicht alle Anwesenden haben eingewilligt (`consent_missing`), eine App-Zustimmung wurde inzwischen
+            widerrufen (`consent_revoked`), oder es läuft bereits ein anderer Upload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+
+  /uploads/{uploadId}/files/{fileId}/chunks/{index}:
+    parameters:
+      - { name: uploadId, in: path, required: true, schema: { type: string } }
+      - { name: fileId, in: path, required: true, schema: { type: string } }
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    put:
+      tags: [Upload]
+      summary: Einen Teil hochladen (idempotent, darf wiederholt werden)
+      parameters:
+        - name: X-Chunk-SHA256
+          in: header
+          required: false
+          description: Optional – SHA-256 des Teils (hex). Stimmt er nicht, antwortet der Server mit 400 `chunk_checksum_mismatch`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "204": { description: Teil gespeichert }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+
+  /uploads/{uploadId}:
+    parameters:
+      - { name: uploadId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Upload]
+      summary: Welche Teile fehlen noch (zum Fortsetzen nach Abbruch)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fileId: { type: string }
+                        missingChunks: { type: array, items: { type: integer } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /uploads/{uploadId}/complete:
+    parameters:
+      - { name: uploadId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Upload]
+      summary: Upload abschließen, Verarbeitung einreihen
+      responses:
+        "202":
+          description: Eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "409":
+          description: Es fehlen noch Teile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/speakers:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Stimmen]
+      summary: Erkannte Stimmen mit Zuordnungsvorschlag (nur SL)
+      description: Bei source=discord sind alle Stimmen bereits zugeordnet, der Schritt entfällt.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Speaker" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Stimmen]
+      summary: Zuordnung bestätigen, danach startet die Zusammenfassung
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [speakerId]
+                properties:
+                  speakerId: { type: string }
+                  memberId:
+                    type: [string, "null"]
+                    description: null = Gast / ignorieren
+      responses:
+        "202":
+          description: Zusammenfassung eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/speakers/{speakerId}/sample:
+    parameters:
+      - { $ref: "#/components/parameters/sessionId" }
+      - { name: speakerId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stimmen]
+      summary: Kurze Hörprobe (wenige Sekunden, wird mit dem Audio gelöscht)
+      responses:
+        "200":
+          description: Audio
+          content:
+            audio/ogg:
+              schema: { type: string, format: binary }
+        "410":
+          description: Hörprobe bereits gelöscht (`audio_deleted`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/proposals:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Vorschläge]
+      summary: Bibel-Vorschläge der Session (nur SL)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Proposal" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /proposals/{proposalId}:
+    parameters:
+      - { name: proposalId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Vorschläge]
+      summary: Vorschlag übernehmen, verwerfen oder vor dem Übernehmen bearbeiten (nur SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision: { type: string, enum: [open, accepted, rejected] }
+                title: { type: string }
+                detail: { type: string }
+                gmNotes: { type: string, description: "Geheimer Teil; leerer String löscht ihn" }
+                visibility: { $ref: "#/components/schemas/Visibility" }
+                hiddenFromMemberIds: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Proposal" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/recap:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Chronik]
+      summary: Recap (Spieler erst nach Veröffentlichung)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recap" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Chronik]
+      summary: Recap vor der Veröffentlichung bearbeiten (nur SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                text: { type: string }
+                openThreads: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recap" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/publish:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chronik]
+      summary: Veröffentlichen (nur SL)
+      description: |
+        Übernimmt alle akzeptierten Vorschläge in die Bibel und macht den Recap für Spieler sichtbar.
+        Noch offene Vorschläge werden als verworfen behandelt.
+      responses:
+        "200":
+          description: Veröffentlicht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/gm-note:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Chronik]
+      summary: Geheime SL-Notiz (nur SL, fließt nie in Recaps ein)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+                  updatedAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Chronik]
+      summary: SL-Notiz speichern
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "204": { description: Gespeichert }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/transcript:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Chronik]
+      summary: Transkript (nur SL)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    start: { type: number, description: Sekunden }
+                    end: { type: number }
+                    speakerId: { type: string }
+                    memberId: { type: [string, "null"] }
+                    text: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/date-poll:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Termine]
+      summary: Aktuelle Terminabstimmung (die offene, sonst die zuletzt beendete; abgebrochene zählen nicht)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Kampagne unbekannt, oder es gibt keine Abstimmung (`no_date_poll`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    post:
+      tags: [Termine]
+      summary: Terminabstimmung starten (nur SL; 409 `date_poll_open`, wenn schon eine läuft)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: "Hinweis für alle, z. B. welches Kapitel" }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /date-polls/{pollId}:
+    parameters: [{ $ref: "#/components/parameters/pollId" }]
+    delete:
+      tags: [Termine]
+      summary: Offene Abstimmung abbrechen (nur SL)
+      responses:
+        "204": { description: Abgebrochen }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /date-polls/{pollId}/options:
+    parameters: [{ $ref: "#/components/parameters/pollId" }]
+    post:
+      tags: [Termine]
+      summary: Termin vorschlagen (alle Mitglieder)
+      description: |
+        Nur bei offener Abstimmung (sonst 409 `date_poll_closed`). Termine in der Vergangenheit: 400 `date_in_past`.
+        Gleicher Zeitpunkt doppelt: 409 `option_exists`. Wer vorschlägt, hat für diesen Termin automatisch "yes" gestimmt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startsAt]
+              properties:
+                startsAt: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Vorgeschlagen, liefert die ganze Abstimmung
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /date-polls/{pollId}/options/{optionId}:
+    parameters:
+      - { $ref: "#/components/parameters/pollId" }
+      - { name: optionId, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [Termine]
+      summary: Vorschlag entfernen (wer ihn vorgeschlagen hat, oder SL)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /date-polls/{pollId}/options/{optionId}/vote:
+    parameters:
+      - { $ref: "#/components/parameters/pollId" }
+      - { name: optionId, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [Termine]
+      summary: Eigene Antwort zu einem Termin setzen oder ändern
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer: { $ref: "#/components/schemas/VoteAnswer" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /date-polls/{pollId}/close:
+    parameters: [{ $ref: "#/components/parameters/pollId" }]
+    post:
+      tags: [Termine]
+      summary: Termin festlegen und Abstimmung beenden (nur SL)
+      description: Setzt `nextSessionAt` der Kampagne auf den gewählten Termin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [optionId]
+              properties:
+                optionId: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatePoll" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/seen:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Kommentare]
+      summary: Kommentare dieses Kapitels als gelesen markieren (die App ruft das beim Öffnen des Recaps auf)
+      responses:
+        "204": { description: Gespeichert }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/comments:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Kommentare]
+      summary: Kommentare zu einem Kapitel (Spieler nur bei veröffentlichten Kapiteln, sonst 404)
+      description: |
+        Liefert öffentliche Kommentare und nur die privaten, die man selbst geschrieben oder bekommen hat.
+        Das gilt auch für die SL (bei mehreren SLs sieht jede nur ihre eigenen privaten Nachrichten).
+        Aufsteigend nach createdAt. Kommentare fließen nie in Recaps oder Vorschläge ein.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Kommentare]
+      summary: Kommentieren oder privat schreiben
+      description: |
+        `recipientMemberId` leer = für alle. Gesetzt = privat, sichtbar nur für Absender und Empfänger.
+        Spieler dürfen privat nur an die SL schreiben (sonst 403), die SL an jede Person.
+        Leerer Text 400, mehr als 4000 Zeichen 413 `comment_too_long`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 4000 }
+                recipientMemberId: { type: [string, "null"] }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+
+  /comments/{commentId}:
+    parameters:
+      - { name: commentId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Kommentare]
+      summary: Eigenen Kommentar bearbeiten (setzt editedAt)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 4000 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+    delete:
+      tags: [Kommentare]
+      summary: Löschen (eigene; die SL auch alle, die sie sehen kann)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/documents:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Unterlagen]
+      summary: Hochgeladene SL-Unterlagen (nur SL; Spieler 403)
+      responses:
+        "200":
+          description: OK, neueste zuerst
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CampaignDocument" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Unterlagen]
+      summary: Unterlage hochladen und Auswertung einreihen (nur SL)
+      description: |
+        PDF, Word (.docx), .txt oder .md bis 50 MB (sonst 400 `unsupported_document` bzw. 413 `document_too_large`).
+        Der Server extrahiert den Text (Seitenzahlen merken), zerlegt ihn in Abschnitte und lässt das Sprachmodell
+        Bibel-Vorschläge erstellen – mit der vorhandenen Bibel (inkl. gmNotes) als Kontext, damit es ergänzt statt
+        doppelt anlegt (action update, targetEntryId) und Widersprüche markiert (contradicts_bible).
+
+        Trennung SL-/Spielerwissen (verbindlich):
+        - kind handout: suggestedVisibility public, keine gmNotes.
+        - kind gm: jeder Vorschlag gm_only.
+        - kind mixed: ebenfalls gm_only; hält die KI einen Eintrag für Spielerwissen, setzt sie publicSuggested=true
+          mit visibilityReason. Freigeben muss die SL selbst.
+        - Innerhalb eines Eintrags trennt die KI jede Aussage in detail (Spielerwissen) und gmNotes (geheim).
+          Abschnitte mit Markierungen wie „[SL]“, „[GM]“, „Geheim:“, „Secret:“ gehen immer in gmNotes.
+        - Ergänzt ein Vorschlag einen öffentlichen Eintrag, kommt Neues aus gm/mixed-Unterlagen in gmNotes;
+          detail bleibt der bisherige öffentliche Text.
+        Zusätzlich optional worldInfoSuggestion: kurzer Welt-Hintergrund nur aus Spielerwissen (nicht bei kind gm).
+        Die Datei bleibt nur für die SL gespeichert, bis sie gelöscht wird. Eingescannte Seiten ohne Textebene: noch
+        keine Texterkennung – dann message mit Hinweis.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file: { type: string, format: binary }
+                kind: { $ref: "#/components/schemas/DocumentKind" }
+                title: { type: string }
+      responses:
+        "201":
+          description: Angelegt und eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignDocument" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+
+  /documents/{documentId}:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    get:
+      tags: [Unterlagen]
+      summary: Status einer Unterlage (nur SL; für andere 404)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignDocument" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Unterlagen]
+      summary: Unterlage samt Datei und offenen Vorschlägen löschen (übernommene Bibeleinträge bleiben)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /documents/{documentId}/proposals:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    get:
+      tags: [Unterlagen]
+      summary: Bibel-Vorschläge aus der Unterlage (nur SL); bearbeitet werden sie wie bei Sessions über PATCH /proposals/{id}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Proposal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /documents/{documentId}/apply:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    post:
+      tags: [Unterlagen]
+      summary: Angenommene Vorschläge in die Bibel übernehmen (nur SL, nur im Zustand awaiting_review)
+      description: |
+        Offene Vorschläge gelten als verworfen. Bei update werden gmNotes an vorhandene gmNotes angehängt.
+        applyWorldInfo=true hängt worldInfoSuggestion an Campaign.worldInfo an. Danach state done.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                applyWorldInfo: { type: boolean, default: false }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignDocument" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /documents/{documentId}/retry:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    post:
+      tags: [Unterlagen]
+      summary: Fehlgeschlagene Auswertung neu starten (nur SL, nur bei failed; sonst 409)
+      responses:
+        "202":
+          description: Neu eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignDocument" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/entries:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Bibel]
+      summary: Bibel-Einträge (gm_only wird für Spieler serverseitig ausgefiltert)
+      parameters:
+        - { name: type, in: query, schema: { $ref: "#/components/schemas/EntryType" } }
+        - { name: q, in: query, description: Volltextsuche, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Entry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Bibel]
+      summary: Eintrag von Hand anlegen (nur SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EntryInput" }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /entries/{entryId}:
+    parameters:
+      - { name: entryId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Bibel]
+      summary: Eintrag mit Verlauf (in welchen Kapiteln erwähnt)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entry" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Bibel]
+      summary: Eintrag bearbeiten, freigeben oder zurückziehen (nur SL)
+      description: |
+        Nur mitgeschickte Felder ändern sich. visibility public ohne öffentlichen Text (summary leer) → 400.
+        Freigeben heißt: summary wird für Spieler sichtbar, gmNotes bleibt geheim. Zurück auf gm_only ist erlaubt
+        (Spieler sehen den Eintrag dann nicht mehr).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EntryInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Bibel]
+      summary: Eintrag löschen (nur SL)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    campaignId: { name: campaignId, in: path, required: true, schema: { type: string } }
+    sessionId: { name: sessionId, in: path, required: true, schema: { type: string } }
+    memberId: { name: memberId, in: path, required: true, schema: { type: string } }
+    pollId: { name: pollId, in: path, required: true, schema: { type: string } }
+    documentId: { name: documentId, in: path, required: true, schema: { type: string } }
+
+  responses:
+    Unauthorized:
+      description: Nicht angemeldet
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Keine Berechtigung (z. B. Spieler auf SL-Endpunkt)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Nicht gefunden (auch für Inhalte, die der Nutzer nicht sehen darf)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    BadRequest:
+      description: Ungültige Eingabe
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Im aktuellen Zustand nicht möglich (z. B. falscher Verarbeitungsstatus)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    PayloadTooLarge:
+      description: Datei oder Teil zu groß
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: "consent_missing" }
+        message: { type: string, description: "Für Nutzer lesbar, in der Sprache aus Accept-Language (Standard: Deutsch)" }
+
+    ServerInfo:
+      type: object
+      properties:
+        name: { type: string }
+        operator: { type: string }
+        contact: { type: [string, "null"] }
+        apiVersion: { type: string, example: "0.3.8" }
+        registration: { type: string, enum: [invite_only, closed] }
+        authMethods: { type: array, items: { type: string, enum: [password, oidc, passkey] }, description: "oidc, sobald mindestens ein Dienst eingerichtet ist" }
+        privacyPolicyUrl: { type: [string, "null"] }
+        minAge: { type: integer, example: 16 }
+        minAppVersion: { type: [string, "null"], example: "0.9.0", description: "Ältere Apps bekommen 426 app_outdated; null = keine Grenze" }
+        latestAppVersion: { type: [string, "null"], example: "0.9.1", description: "Neueste App – die App zeigt „Neue Version“" }
+        appDownloadUrl: { type: [string, "null"], description: "APK- oder Store-Link; auch für die Einladungsseite" }
+        releaseNotes: { type: [string, "null"], description: "Kurz, was neu ist (ein paar Zeilen)" }
+        authProviders:
+          type: array
+          description: Eingerichtete Anmeldedienste (ab 0.4.0) – die App zeigt genau diese Knöpfe. Leer = keine.
+          items:
+            type: object
+            properties:
+              id: { type: string, enum: [google, discord, apple, microsoft] }
+              name: { type: string, example: Google }
+        passwordReset:
+          type: boolean
+          description: true, wenn der Server E-Mails verschicken kann – dann zeigt die App „Passwort vergessen?“ (ab 0.4.0)
+        externalTranscriptionMode:
+          type: [string, "null"]
+          enum: [fallback, primary, null]
+          description: |
+            fallback = externe Transkription erst, wenn 24 h kein Worker erreichbar war (Standard);
+            primary = Betriebsart „Nur Cloud“, Aufnahmen gehen ohne Wartezeit dorthin. null, wenn externalTranscription null.
+        cloudSummary:
+          type: [string, "null"]
+          description: |
+            Anbieter der Cloud-Zusammenfassung (z. B. "mistral"), wenn der Betreiber eine API eingerichtet hat; null = nur
+            lokales Modell. Nur dann zeigt die App der SL den Schalter allowCloudSummary.
+        externalTranscription:
+          type: [string, "null"]
+          description: |
+            null = dieser Server transkribiert nur selbst. Sonst Name des externen Anbieters (z. B. "mistral"),
+            den der Betreiber als Ersatz freigegeben hat. Nur dann zeigt die App der SL den Schalter
+            allowExternalTranscription und nennt den Anbieter im Hinweis.
+
+    Organization:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        myRole: { type: string, enum: [admin, member] }
+
+    Usage:
+      type: object
+      properties:
+        month: { type: string, example: "2026-09" }
+        sessions: { type: integer }
+        audioSeconds: { type: integer }
+        documents: { type: integer }
+        costEstimateCents: { type: [integer, "null"] }
+        billedTo: { type: string, enum: [gm, organization] }
+
+    DocumentKind:
+      type: string
+      enum: [handout, gm, mixed]
+      description: handout = Spielerhandout (öffentlich), gm = SL-Unterlage (alles geheim), mixed = gemischt (geheim mit Freigabe-Vorschlägen)
+
+    CampaignDocument:
+      type: object
+      properties:
+        id: { type: string }
+        campaignId: { type: string }
+        title: { type: string }
+        fileName: { type: string }
+        kind: { $ref: "#/components/schemas/DocumentKind" }
+        sizeBytes: { type: integer }
+        pageCount: { type: [integer, "null"] }
+        state: { type: string, enum: [queued, processing, awaiting_review, done, failed] }
+        progress: { type: [number, "null"], minimum: 0, maximum: 1 }
+        message: { type: [string, "null"] }
+        proposalCount: { type: integer }
+        openProposalCount: { type: integer }
+        worldInfoSuggestion: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    CoverPreset:
+      type: string
+      description: Mitgelieferte Titelbilder der App (die Bilder selbst liegen in der App, nicht auf dem Server)
+      enum: [meadow, forest, desert, city, cyber, mountains, coast, swamp, dungeon, space, castle]
+
+    GameSystem:
+      type: string
+      enum: [dsa, dnd, pathfinder, cthulhu, shadowrun, splittermond, other]
+      description: |
+        Spielsystem der Kampagne. Für die großen Systeme hinterlegt der Server eine kleine Begriffsliste
+        (Orte, Götter, Fachbegriffe), die bei der Transkription als Schreibhilfe dient. `other` löst keine
+        Liste aus – dann kommen alle Namen aus der Kampagne selbst (Charaktere, Bibel, worldInfo, Unterlagen).
+        Bei PATCH ändert nur ein mitgeschicktes Feld etwas, `null` leert es. Ohne Angabe gilt `system: null`,
+        behandelt wie `other`.
+
+    ContentLanguage:
+      type: string
+      enum: [de, en]
+      default: de
+      description: Sprache der Spielrunde – steuert Transkription, Recaps, Vorschläge und den Vorlesetext fürs Stimmprofil
+
+    Role:
+      type: string
+      enum: [gm, player]
+
+    Visibility:
+      type: string
+      enum: [public, gm_only]
+
+    EntryType:
+      type: string
+      enum: [npc, location, quest, item, faction, other]
+
+    User:
+      type: object
+      description: Die Felder ab email bekommt nur die Person selbst (GET /me, Login, Registrierung, Tausch), nie andere.
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        email: { type: [string, "null"], description: "Bestätigte Adresse (ab 0.4.0)" }
+        emailPending: { type: [string, "null"], description: "Eingetragen, aber noch nicht bestätigt (ab 0.4.0)" }
+        hasPassword: { type: boolean, description: "false bei Konten, die nur über einen Dienst angelegt wurden (ab 0.4.0)" }
+        providers: { type: array, items: { type: string, enum: [google, discord, apple, microsoft] }, description: "Verbundene Dienste (ab 0.4.0)" }
+
+    VoiceProfile:
+      type: object
+      properties:
+        status: { type: string, enum: [none, processing, ready, failed] }
+        createdAt: { type: [string, "null"], format: date-time }
+        sampleSeconds: { type: [number, "null"] }
+        learnFromSessions:
+          type: boolean
+          description: Nach jeder von der SL bestätigten Stimmzuordnung lernt das Profil aus der echten Tischaufnahme dazu
+        learnedSessionCount: { type: integer }
+        message: { type: [string, "null"], description: "z. B. Grund bei failed" }
+
+    Member:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string, description: 'Bei gelöschten Konten "" (leer)' }
+        deletedAt:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Gesetzt, wenn das Konto gelöscht wurde. Das Mitglied bleibt stehen (displayName „Gelöschtes Konto“ /
+            „Deleted account“, Charaktername bleibt), damit Kapitel und Kommentare stimmig bleiben. Nicht als Anwesende,
+            Empfänger oder Auswahl anbieten (Server: attendee_unknown, recipient_unknown).
+        displayName: { type: string }
+        characterName: { type: [string, "null"] }
+        role: { $ref: "#/components/schemas/Role" }
+        recordingConsentAt:
+          type: [string, "null"]
+          format: date-time
+          description: Stehende Zustimmung zu Aufnahmen in dieser Kampagne (selbst gegeben); null = keine
+        characterSummary:
+          type: [string, "null"]
+          description: Kurzbeschreibung des Charakters, für alle Mitglieder sichtbar; darf in Recap/Vorschläge einfließen
+        characterBackstory:
+          type: [string, "null"]
+          description: |
+            Hintergrund nur für die Person selbst und die SL. Für alle anderen lässt der Server das Feld weg
+            (auch in Listen). Fließt NIE in Recaps oder Vorschläge ein.
+        portraitUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Gesetzt, wenn ein Charakterbild existiert; die App nutzt es als Cache-Schlüssel
+
+    CampaignSummary:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        organization:
+          type: [object, "null"]
+          properties:
+            id: { type: string }
+            name: { type: string }
+        myRole: { $ref: "#/components/schemas/Role" }
+        myCharacterName: { type: [string, "null"] }
+        memberCount: { type: integer }
+        publishedSessionCount: { type: integer }
+        pendingReviewCount:
+          type: integer
+          description: Nur für SL befüllt, für Spieler immer 0
+        lastPublishedAt: { type: [string, "null"], format: date-time }
+        coverPreset:
+          oneOf:
+            - { $ref: "#/components/schemas/CoverPreset" }
+            - { type: "null" }
+          description: Mitgeliefertes Motiv. Neue Kampagnen bekommen ein zufälliges.
+        unread:
+          type: object
+          description: Ungelesenes seit den eigenen Markern (nur Dinge, die man sehen darf und nicht selbst erstellt hat)
+          properties:
+            recaps: { type: integer, description: "Veröffentlichte Recaps nach dem Chronik-Marker" }
+            comments: { type: integer, description: "Kommentare anderer nach dem Marker des jeweiligen Kapitels (fehlt er: Chronik-Marker)" }
+            bible: { type: integer, description: "Neue/geänderte sichtbare Einträge nach dem Bibel-Marker; für die SL immer 0" }
+        coverImageUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Gesetzt, wenn ein eigenes Titelbild existiert (hat Vorrang vor coverPreset)
+        nextSessionAt:
+          type: [string, "null"]
+          format: date-time
+          description: Festgelegter Termin der nächsten Runde (aus der letzten beendeten Abstimmung)
+        datePollNeedsMyVote:
+          type: boolean
+          description: Es läuft eine Abstimmung und ich habe bei mindestens einem Termin noch nicht geantwortet
+
+    Campaign:
+      allOf:
+        - $ref: "#/components/schemas/CampaignSummary"
+        - type: object
+          properties:
+            description: { type: string }
+            language: { $ref: "#/components/schemas/ContentLanguage" }
+            system:
+              oneOf:
+                - { $ref: "#/components/schemas/GameSystem" }
+                - { type: "null" }
+            systemName:
+              type: [string, "null"]
+              maxLength: 100
+              description: Frei eingetragener Name des Systems, v. a. bei `other` (z. B. „Household“). Keine Wortliste, nur Kontext für die Zusammenfassung.
+            allowCloudSummary:
+              type: boolean
+              default: false
+              description: |
+                Darf der Server Recap und Vorschläge dieser Kampagne über die Cloud-API aus ServerInfo.cloudSummary erstellen?
+                Dabei geht der Text der Session (Namen, Gespräche – keine Stimmen) an den Anbieter. Nur die SL ändert das
+                (PATCH). Standard false; in der Betriebsart „Nur Cloud“ setzt der Server neue Kampagnen auf true.
+                false und kein lokales Modell verfügbar: Session bleibt in summarizing mit passender message.
+            allowExternalTranscription:
+              type: boolean
+              default: false
+              description: |
+                Darf der Server für diese Kampagne den externen Anbieter aus ServerInfo.externalTranscription
+                nutzen (z. B. wenn der eigene Rechenknecht nicht erreichbar ist)? Nur die SL ändert das (PATCH).
+                Standard false. Ist der Server ohne externen Anbieter, bleibt der Wert wirkungslos.
+            worldInfo:
+              type: [string, "null"]
+              description: Hintergrund der Spielwelt für alle Mitglieder (Absätze durch Leerzeilen getrennt)
+            members:
+              type: array
+              items: { $ref: "#/components/schemas/Member" }
+
+    Attendee:
+      type: object
+      description: |
+        Genau eines von memberId (Mitglied) oder guestName (Gast ohne Konto).
+        consentSource app: nur zulässig, wenn das Mitglied `recordingConsentAt` hat (sonst 409 `consent_missing`).
+        Gäste nur mit on_site (sonst 400 `invalid_attendee`).
+      required: [consent, consentSource]
+      properties:
+        memberId: { type: string }
+        guestName: { type: string }
+        consent: { type: boolean }
+        consentSource: { type: string, enum: [app, on_site] }
+        consentAt: { type: [string, "null"], format: date-time, description: "Bei on_site der Zeitpunkt der Bestätigung vor Ort" }
+
+    SessionSummary:
+      type: object
+      properties:
+        id: { type: string }
+        number: { type: integer, description: Kapitelnummer }
+        title: { type: [string, "null"] }
+        playedAt: { type: string, format: date-time }
+        state: { $ref: "#/components/schemas/ProcessingState" }
+        unreadComments: { type: integer, description: "Neue Kommentare anderer in diesem Kapitel seit dem eigenen Marker" }
+
+    Session:
+      allOf:
+        - $ref: "#/components/schemas/SessionSummary"
+        - type: object
+          properties:
+            campaignId: { type: string }
+            source: { type: [string, "null"], enum: [table, discord, null] }
+            attendees:
+              type: array
+              items: { $ref: "#/components/schemas/Attendee" }
+            durationSeconds: { type: [integer, "null"] }
+            audioDeletedAt: { type: [string, "null"], format: date-time }
+            transcriptionEngine:
+              type: [string, "null"]
+              enum: [local, external, null]
+              description: Womit transkribiert wurde – eigener Rechenknecht (local) oder externer Anbieter; null solange offen
+            publishedAt: { type: [string, "null"], format: date-time }
+
+    ProcessingState:
+      type: string
+      enum:
+        - created            # angelegt, noch kein Audio
+        - uploading
+        - queued
+        - transcribing
+        - awaiting_speakers  # SL muss Stimmen zuordnen
+        - summarizing
+        - awaiting_review    # SL muss Vorschläge prüfen
+        - published
+        - failed
+
+    ProcessingStatus:
+      type: object
+      properties:
+        state: { $ref: "#/components/schemas/ProcessingState" }
+        progress: { type: [number, "null"], minimum: 0, maximum: 1 }
+        queuePosition: { type: [integer, "null"] }
+        message: { type: [string, "null"], description: "z. B. Fehlertext bei failed" }
+        updatedAt: { type: string, format: date-time }
+
+    Speaker:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string, example: "Stimme 3" }
+        speakingSeconds: { type: number }
+        sampleText: { type: string, description: Transkript der Hörprobe }
+        suggestedMemberId: { type: [string, "null"] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source: { type: string, enum: [intro_round, voice_match, discord_track, none] }
+
+    Proposal:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: [string, "null"], description: "null bei Vorschlägen aus Unterlagen" }
+        documentId: { type: [string, "null"] }
+        entryType: { $ref: "#/components/schemas/EntryType" }
+        action:
+          type: string
+          enum: [create, update, reveal]
+          description: |
+            create = neuer Eintrag; update = ergänzt targetEntryId; reveal = targetEntryId ist bisher gm_only und wurde
+            in dieser Session am Tisch bekannt (z. B. die Gruppe trifft den NSC, betritt den Ort, erfährt den Namen).
+            Bei reveal: detail = künftig öffentlicher Text (nur das, was die Spieler jetzt wissen), gmNotes = was
+            geheim bleibt, suggestedVisibility public, visibilityReason + evidence = woran es erkannt wurde.
+            Nur Vorschläge aus Sessions, nie aus Unterlagen; nie automatisch – erst beim Veröffentlichen, wenn die SL
+            angenommen hat, wird der Eintrag public. Kein reveal, wenn nur die SL den Namen erwähnt hat (z. B.
+            Regelerklärung, Off-Topic) – der Name muss als Spielerwissen in der Szene vorkommen.
+        targetEntryId: { type: [string, "null"], description: Bei update der betroffene Eintrag }
+        title: { type: string }
+        detail: { type: string, description: "Spielerwissen (öffentlicher Teil)" }
+        gmNotes: { type: [string, "null"], description: "Geheimer Teil, nur für die SL" }
+        suggestedVisibility: { $ref: "#/components/schemas/Visibility" }
+        hiddenFromMemberIds:
+          type: array
+          items: { type: string }
+          description: |
+            Nur bei suggestedVisibility public: vor diesen Mitgliedern verborgen. Setzt die SL beim Prüfen; beim
+            Veröffentlichen (Session) bzw. Übernehmen (Unterlage) wird es zu Entry.hiddenFromMemberIds. Standard leer.
+        publicSuggested: { type: boolean, description: "Nur bei kind mixed: KI hält den Eintrag für Spielerwissen, er bleibt aber gm_only, bis die SL freigibt" }
+        visibilityReason: { type: [string, "null"] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        flags:
+          type: array
+          items: { type: string, enum: [joke_suspected, low_confidence, contradicts_bible] }
+        evidence:
+          type: array
+          description: Belegstellen im Transkript
+          items:
+            type: object
+            properties:
+              start: { type: number, description: "Sekunden im Transkript (bei Sessions)" }
+              page: { type: integer, description: "Seitenzahl (bei Unterlagen)" }
+              quote: { type: string }
+        decision: { type: string, enum: [open, accepted, rejected] }
+
+    VoteAnswer:
+      type: string
+      # In Anführungszeichen: YAML-1.1-Leser würden yes/no sonst als Wahrheitswerte lesen
+      enum: ["yes", "maybe", "no"]
+
+    DateOption:
+      type: object
+      properties:
+        id: { type: string }
+        startsAt: { type: string, format: date-time }
+        proposedByMemberId: { type: string }
+        votes:
+          type: array
+          items:
+            type: object
+            properties:
+              memberId: { type: string }
+              answer: { $ref: "#/components/schemas/VoteAnswer" }
+
+    DatePoll:
+      type: object
+      properties:
+        id: { type: string }
+        campaignId: { type: string }
+        status: { type: string, enum: [open, closed, cancelled] }
+        note: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        chosenOptionId: { type: [string, "null"] }
+        options:
+          type: array
+          description: Aufsteigend nach startsAt
+          items: { $ref: "#/components/schemas/DateOption" }
+
+    Comment:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        authorMemberId: { type: string }
+        recipientMemberId:
+          type: [string, "null"]
+          description: null = für alle; sonst privat (nur Absender und Empfänger sehen ihn)
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+        editedAt: { type: [string, "null"], format: date-time }
+
+    Recap:
+      type: object
+      properties:
+        sessionId: { type: string }
+        number: { type: integer }
+        title: { type: string }
+        text: { type: string, description: Vorlesbarer Recap, Absätze durch Leerzeilen getrennt }
+        openThreads: { type: array, items: { type: string } }
+        publishedAt: { type: [string, "null"], format: date-time }
+
+    EntryInput:
+      type: object
+      properties:
+        type: { $ref: "#/components/schemas/EntryType" }
+        name: { type: string }
+        summary: { type: string }
+        status: { type: [string, "null"], enum: [active, done, null], description: Nur für Quests }
+        holderMemberId: { type: [string, "null"], description: Nur für Gegenstände }
+        visibility: { $ref: "#/components/schemas/Visibility" }
+        hiddenFromMemberIds:
+          type: array
+          items: { type: string }
+          description: |
+            Nur bei visibility public: vor diesen Mitgliedern verborgen (z. B. Spieler, deren Charakter nicht dabei war).
+            Leer = alle sehen den öffentlichen Teil. Setzt nur die SL (PATCH). Für Spieler: Einträge, die vor ihnen
+            verborgen sind, werden nicht ausgeliefert (Liste, Suche, Einzelabruf 404, Ungelesen-Zähler); das Feld selbst
+            bekommen Spieler nie. Recaps sehen alle – deshalb behandelt die Recap-Pipeline teilweise verborgene
+            Einträge wie gm_only. Vor allen Spielern verborgen = gm_only (die App schickt dann visibility gm_only).
+        gmNotes:
+          type: [string, "null"]
+          description: |
+            Geheimer Teil eines (auch öffentlichen) Eintrags. Für Spieler lässt der Server das Feld weg; die Volltextsuche
+            der Spieler durchsucht es nicht. Recap-Pipeline bekommt nur öffentliche Einträge OHNE gmNotes;
+            die Vorschlags-Pipeline bekommt die ganze Bibel inklusive gmNotes.
+
+    Entry:
+      allOf:
+        - $ref: "#/components/schemas/EntryInput"
+        - type: object
+          properties:
+            id: { type: string }
+            campaignId: { type: string }
+            firstSessionNumber: { type: [integer, "null"] }
+            lastSessionNumber: { type: [integer, "null"] }
+            mentions:
+              type: array
+              items:
+                type: object
+                properties:
+                  sessionNumber: { type: integer }
+                  note: { type: string }
+            updatedAt: { type: string, format: date-time }

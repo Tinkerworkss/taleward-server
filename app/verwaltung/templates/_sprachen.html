@@ -1,0 +1,1 @@
+<nav class="sprachen" aria-label="{{ _('Sprache') }}">{% for code, name in sprachen.items() %}{% if code == sprache %}<span aria-current="true">{{ name }}</span>{% else %}<a href="/verwaltung/sprache/{{ code }}?weiter={{ request.url.path|urlencode }}" hreflang="{{ code }}" lang="{{ code }}">{{ name }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</nav>

@@ -1,0 +1,24 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Anmelden") }}{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% include "_kopf_marke.html" %}
+  <p class="leise zentriert">{{ _("Verwaltung von {name} · {betreiber}", name=angaben.server_name, betreiber=angaben.server_operator) }}</p>
+  <div class="karte">
+    <form class="formular" method="post" action="/verwaltung/anmelden">
+      <label>{{ _("Benutzername") }} <input type="text" name="username" autocomplete="username" required autofocus></label>
+      <label>{{ _("Passwort") }} <input type="password" name="password" autocomplete="current-password" required></label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Anmelden") }}</button></div>
+    </form>
+  </div>
+  {% if ersteinrichtung %}
+  <div class="meldung">{{ _("Ersteinrichtung: Benutzername admin, Passwort admin. Danach legst du deinen eigenen Verwalter an, und dieses Konto wird gelöscht.") }}</div>
+  {% endif %}
+  {% if kein_verwalter %}
+  <p class="hilfe">{{ _("Es gibt noch kein Konto mit Verwalter-Recht. Im Ubuntu-Fenster anlegen mit") }}
+    <code>uv run chronik create-user -u name -n Name --admin</code> {{ _("oder ein bestehendes Konto freischalten mit") }}
+    <code>uv run chronik admin -u name</code>.</p>
+  {% endif %}
+  <p class="zentriert">{% include "_sprachen.html" %}</p>
+</div>
+{% endblock %}

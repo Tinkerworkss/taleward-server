@@ -1,0 +1,23 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("E-Mail bestätigen") }}{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% include "_kopf_marke.html" %}
+  <div class="karte">
+    {% if fertig %}
+    <h2>{{ _("E-Mail bestätigt") }}</h2>
+    <p>{{ _("Die Adresse {adresse} gehört jetzt zu deinem Konto „{konto}“. Damit kannst du dein Passwort bei Bedarf selbst zurücksetzen.", adresse=adresse, konto=konto) }}</p>
+    {% elif gueltig %}
+    <h2>{{ _("E-Mail bestätigen") }}</h2>
+    <p>{{ _("Adresse {adresse} für das Konto „{konto}“ auf {server} bestätigen?", adresse=adresse, konto=konto, server=angaben.server_name) }}</p>
+    {% if token %}<form method="post" action="/konto/email/{{ token }}">
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Bestätigen") }}</button></div>
+    </form>{% endif %}
+    {% else %}
+    <h2>{{ _("Dieser Link gilt nicht mehr") }}</h2>
+    <p>{{ _("Der Link ist abgelaufen, schon benutzt oder unbekannt. Trag die Adresse in der App noch einmal ein.") }}</p>
+    {% endif %}
+  </div>
+  <p class="zentriert">{% include "_sprachen.html" %}</p>
+</div>
+{% endblock %}
