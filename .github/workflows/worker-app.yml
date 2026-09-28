@@ -26,12 +26,7 @@ jobs:
         working-directory: worker-app
         run: uv sync && uv run pytest -q
       - name: KI-Paket für Windows (CUDA) und Linux auflösbar?
-        run: |
-          uv pip compile engine-requirements.txt --python-version 3.11 \
-            --python-platform x86_64-pc-windows-msvc --torch-backend cu128 -q -o /tmp/windows.txt
-          uv pip compile engine-requirements.txt --python-version 3.11 \
-            --python-platform x86_64-manylinux_2_28 --torch-backend cu128 -q -o /tmp/linux.txt
-          grep -E "^(torch|ctranslate2|whisperx)==" /tmp/windows.txt
+        run: bash worker-app/packaging/pruefe-ki-paket.sh
       - name: Linux-Skript
         run: shellcheck worker-app/install-linux.sh
 
