@@ -1,0 +1,20 @@
+# Taleward nur im Heimnetz (z. B. im Vereinsheim): ohne Domain und ohne HTTPS, erreichbar unter
+# http://<IP dieses Rechners>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
+# Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
+
+services:
+  server:
+    build:
+      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
+    image: taleward-server:${TALEWARD_VERSION:-main}
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      PUBLIC_URL: ${TALEWARD_ADRESSE}
+    volumes:
+      - ./daten:/data
+    ports:
+      - "8000:8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }

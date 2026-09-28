@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC1111  # os-release zur Laufzeit; deutsche Anführungszeichen sind Absicht
-# Taleward-Server auf einem eigenen Server (VPS mit Ubuntu oder Debian) einrichten.
+# shellcheck disable=SC1091,SC1111,SC2016  # os-release zur Laufzeit; deutsche Anführungszeichen und PowerShell-$ sind Absicht
+# Taleward-Server einrichten – auf einem gemieteten Server (VPS), einem Rechner zu Hause/im Verein
+# oder unter Windows 11 mit Ubuntu (WSL).
 #
 #   curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
 #
-# Fragt nach Domain und E-Mail, installiert Docker (falls nötig), legt /opt/taleward an,
-# startet Server + HTTPS (Caddy) und zeigt am Ende den Link zur Ersteinrichtung.
-# Nochmal ausführen ist unschädlich: vorhandene Daten und Einstellungen bleiben.
+# Zwei Arten, den Server zu erreichen:
+#   1) Internet mit eigener Domain und HTTPS (VPS, oder zu Hause mit Portfreigabe + DynDNS)
+#   2) Nur im Heimnetz, z. B. im WLAN des Vereinsheims: http://<IP>:8000, ohne Domain
+# Installiert Docker (falls nötig), legt /opt/taleward an, richtet automatische Updates ein und zeigt am Ende den
+# Link zur Ersteinrichtung. Nochmal ausführen ist unschädlich: vorhandene Daten und Einstellungen bleiben.
 set -euo pipefail
 
 ZIEL=/opt/taleward
+REPO=https://github.com/Tinkerworkss/taleward-server.git
 QUELLE="${TALEWARD_QUELLE:-https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main}"
 
 rot() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -24,6 +28,7 @@ frage() {
   read -r -p "$text: " antwort </dev/tty || true
   printf '%s' "${antwort:-$vorgabe}"
 }
+alt_wert() { [ -f "$ZIEL/.env" ] && sed -n "s/^$1=//p" "$ZIEL/.env" || true; }
 
 [ "$(id -u)" -eq 0 ] || abbruch "bitte mit sudo starten."
 [ -r /etc/os-release ] && . /etc/os-release
@@ -31,6 +36,47 @@ case "${ID:-}" in
   ubuntu|debian) ;;
   *) abbruch "dieses Skript kennt nur Ubuntu und Debian (gefunden: ${ID:-unbekannt}).";;
 esac
+WSL=0
+grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && WSL=1
+
+# ------------------------------------------------------------------ Windows (WSL): Vorbereitung
+win() { powershell.exe -NoProfile -NonInteractive -Command "$1" 2>/dev/null | tr -d '\r'; }
+if [ "$WSL" -eq 1 ]; then
+  schritt "Windows mit Ubuntu erkannt"
+  BUILD=$(win '[Environment]::OSVersion.Version.Build' || true)
+  if [ -n "$BUILD" ] && [ "$BUILD" -lt 22621 ]; then
+    abbruch "Taleward als Server unter Windows braucht Windows 11 (ab 22H2). Unter Windows 10 lässt sich das Netz von Ubuntu nicht für andere Geräte öffnen."
+  fi
+  NEUSTART=0
+  # systemd (für Docker und die automatischen Updates)
+  if ! grep -qs '^systemd=true' /etc/wsl.conf; then
+    printf '[boot]\nsystemd=true\n' >> /etc/wsl.conf
+    NEUSTART=1
+  fi
+  # „Gespiegeltes“ Netz: Ubuntu ist unter der IP des Windows-PCs erreichbar
+  PROFIL=$(wslpath -u "$(win '$env:USERPROFILE')")
+  WSLCONFIG="$PROFIL/.wslconfig"
+  if ! grep -qsi '^networkingMode=mirrored' "$WSLCONFIG"; then
+    if grep -qs '^\[wsl2\]' "$WSLCONFIG"; then
+      sed -i 's/^\[wsl2\]/[wsl2]\nnetworkingMode=mirrored/' "$WSLCONFIG"
+    else
+      printf '\n[wsl2]\nnetworkingMode=mirrored\n' >> "$WSLCONFIG"
+    fi
+    NEUSTART=1
+  fi
+  if [ "$NEUSTART" -eq 1 ] || ! pidof systemd >/dev/null 2>&1; then
+    gruen "Ubuntu ist jetzt vorbereitet und muss einmal neu starten."
+    cat <<TEXT
+
+So geht es weiter:
+  1. Dieses Fenster schließen.
+  2. In der Windows-PowerShell eingeben:   wsl --shutdown
+  3. Ubuntu wieder öffnen und denselben Befehl noch einmal ausführen:
+     curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
+TEXT
+    exit 0
+  fi
+fi
 
 schritt "Docker"
 if ! command -v docker >/dev/null 2>&1; then
@@ -39,46 +85,87 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 docker compose version >/dev/null 2>&1 || abbruch "„docker compose“ fehlt. Bitte Docker neu installieren."
 command -v git >/dev/null 2>&1 || { apt-get update -q && apt-get install -y -q git; }
+systemctl enable --now docker >/dev/null 2>&1 || true
 gruen "Docker ist bereit."
 
-schritt "Angaben"
-ALT_DOMAIN=""; ALT_MAIL=""
-if [ -f "$ZIEL/.env" ]; then
-  ALT_DOMAIN=$(sed -n 's/^TALEWARD_DOMAIN=//p' "$ZIEL/.env")
-  ALT_MAIL=$(sed -n 's/^ACME_EMAIL=//p' "$ZIEL/.env")
-fi
-DOMAIN=$(frage "Adresse des Servers (z. B. taleward.meinverein.de)" "$ALT_DOMAIN")
-DOMAIN=${DOMAIN#http://}; DOMAIN=${DOMAIN#https://}; DOMAIN=${DOMAIN%%/*}
-[[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || abbruch "„$DOMAIN“ ist keine gültige Adresse."
-MAIL=$(frage "E-Mail für das HTTPS-Zertifikat (Let's Encrypt schreibt nur bei Problemen)" "$ALT_MAIL")
-[[ "$MAIL" == *@*.* ]] || abbruch "„$MAIL“ ist keine gültige E-Mail-Adresse."
+# ------------------------------------------------------------------ Art der Erreichbarkeit
+schritt "Wie sollen Handys den Server erreichen?"
+ALT_MODUS=$(alt_wert TALEWARD_MODUS)
+VORGABE=1
+[ "$ALT_MODUS" = "heimnetz" ] && VORGABE=2
+[ -z "$ALT_MODUS" ] && [ "$WSL" -eq 1 ] && VORGABE=2
+cat <<TEXT
+  1) Über das Internet mit eigener Domain und HTTPS
+     – gemieteter Server (VPS), oder zu Hause/im Verein mit Portfreigabe im Router und DynDNS
+  2) Nur im Heimnetz, z. B. im WLAN des Vereinsheims – ohne Domain, kein Dritter beteiligt
+     (Anmelden mit Google & Co. und die Web-App im Browser gehen dann nicht)
+TEXT
+WAHL=$(frage "Auswahl (1 oder 2)" "$VORGABE")
+case "$WAHL" in
+  1) MODUS=domain ;;
+  2) MODUS=heimnetz ;;
+  *) abbruch "bitte 1 oder 2 wählen." ;;
+esac
 
-# Zeigt die Domain schon auf diesen Server? Sonst klappt das Zertifikat nicht.
-EIGENE_IP=$(curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || true)
-DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)
-if [ -n "$EIGENE_IP" ] && [ "$DNS_IP" != "$EIGENE_IP" ]; then
-  rot "Achtung: $DOMAIN zeigt auf „${DNS_IP:-nichts}“, dieser Server hat aber $EIGENE_IP."
-  echo "Lege beim Domain-Anbieter einen A-Eintrag „$DOMAIN → $EIGENE_IP“ an (bei Hostinger: Domains → DNS-Einträge)."
-  echo "Bis der wirkt (oft Minuten, manchmal Stunden), bekommt Caddy kein Zertifikat – es versucht es aber selbst weiter."
-  [ "$(frage "Trotzdem fortfahren? (j/n)" "n")" = "j" ] || abbruch "erst den DNS-Eintrag anlegen, dann nochmal starten."
+LAN_IP=$( { ip -4 route get 1.1.1.1 2>/dev/null || true; } | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+[ -n "$LAN_IP" ] || LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+DOMAIN=""; MAIL=""; ADRESSE=""
+if [ "$MODUS" = "domain" ]; then
+  DOMAIN=$(frage "Adresse des Servers (z. B. taleward.meinverein.de)" "$(alt_wert TALEWARD_DOMAIN)")
+  DOMAIN=${DOMAIN#http://}; DOMAIN=${DOMAIN#https://}; DOMAIN=${DOMAIN%%/*}
+  [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || abbruch "„$DOMAIN“ ist keine gültige Adresse."
+  MAIL=$(frage "E-Mail für das HTTPS-Zertifikat (Let's Encrypt schreibt nur bei Problemen)" "$(alt_wert ACME_EMAIL)")
+  [[ "$MAIL" == *@*.* ]] || abbruch "„$MAIL“ ist keine gültige E-Mail-Adresse."
+  ADRESSE="https://$DOMAIN"
+
+  # Zeigt die Domain auf diesen Anschluss? Sonst klappt das Zertifikat nicht.
+  EIGENE_IP=$(curl -fsS4 --max-time 5 https://api.ipify.org 2>/dev/null || true)
+  DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)
+  if [ -n "$EIGENE_IP" ] && [ "$DNS_IP" != "$EIGENE_IP" ]; then
+    rot "Achtung: $DOMAIN zeigt auf „${DNS_IP:-nichts}“, dieser Anschluss hat aber $EIGENE_IP."
+    echo "Beim Domain-Anbieter einen A-Eintrag „$DOMAIN → $EIGENE_IP“ anlegen (zu Hause: DynDNS, z. B. über die FRITZ!Box)."
+    echo "Bis der wirkt (oft Minuten, manchmal Stunden), bekommt der Server kein Zertifikat – er versucht es selbst weiter."
+    [ "$(frage "Trotzdem fortfahren? (j/n)" "n")" = "j" ] || abbruch "erst den DNS-Eintrag anlegen, dann nochmal starten."
+  fi
+  if [ -n "$LAN_IP" ] && [[ "$LAN_IP" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+    echo
+    echo "Dieser Rechner steht hinter einem Router. Dort eine Portfreigabe einrichten:"
+    echo "  TCP 80 und 443  →  $LAN_IP   (FRITZ!Box: Internet → Freigaben → Portfreigaben)"
+    echo "Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht – dann Auswahl 2 (Heimnetz) nehmen."
+  fi
+else
+  [ -n "$LAN_IP" ] || abbruch "die IP-Adresse dieses Rechners im Heimnetz ist unbekannt."
+  ADRESSE="http://$LAN_IP:8000"
+  echo "Der Server wird erreichbar unter:  $ADRESSE"
+  echo "Tipp: Im Router für diesen Rechner immer dieselbe IP vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät bearbeiten)."
 fi
 
+# ------------------------------------------------------------------ Dateien
 schritt "Dateien in $ZIEL"
 mkdir -p "$ZIEL/daten"
-curl -fsSL "$QUELLE/deploy/docker-compose.yml" -o "$ZIEL/docker-compose.yml"
+COMPOSE=docker-compose.yml
+[ "$MODUS" = "heimnetz" ] && COMPOSE=docker-compose.heimnetz.yml
+if [ -f "$ZIEL/docker-compose.yml" ] && [ "$MODUS" != "${ALT_MODUS:-domain}" ]; then
+  (cd "$ZIEL" && docker compose down >/dev/null 2>&1 || true)   # Art gewechselt: alte Dienste beenden
+fi
+curl -fsSL "$QUELLE/deploy/$COMPOSE" -o "$ZIEL/docker-compose.yml"
 curl -fsSL "$QUELLE/deploy/Caddyfile" -o "$ZIEL/Caddyfile"
 curl -fsSL "$QUELLE/deploy/aktualisieren.sh" -o "$ZIEL/aktualisieren.sh" && chmod +x "$ZIEL/aktualisieren.sh"
 # Feste Fassung: neuestes Tag v…; die automatischen Updates gehen von dort weiter
-VERSION=$(git ls-remote --tags --refs https://github.com/Tinkerworkss/taleward-server.git 'v*' 2>/dev/null \
-  | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-VERSION=${VERSION:-main}
-if [ -f "$ZIEL/.env" ]; then ALT=$(sed -n 's/^TALEWARD_VERSION=//p' "$ZIEL/.env"); VERSION=${ALT:-$VERSION}; fi
+VERSION=$(alt_wert TALEWARD_VERSION)
+if [ -z "$VERSION" ]; then
+  VERSION=$(git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null \
+    | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+  VERSION=${VERSION:-main}
+fi
 umask 077
 cat > "$ZIEL/.env" <<ENV
 # Einstellungen für docker compose. Nach Änderungen: cd $ZIEL && docker compose up -d
+TALEWARD_MODUS=$MODUS
+TALEWARD_ADRESSE=$ADRESSE
 TALEWARD_DOMAIN=$DOMAIN
 ACME_EMAIL=$MAIL
-# Branch oder Version (Tag) des Servers, z. B. v0.4.0
+# Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
 TALEWARD_VERSION=$VERSION
 ENV
 umask 022
@@ -106,11 +193,45 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now taleward-aktualisieren.timer >/dev/null 2>&1 || true
 
+PORTS="80 443"
+[ "$MODUS" = "heimnetz" ] && PORTS="8000"
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-  ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null; ufw allow 443/udp >/dev/null
-  echo "Firewall: Ports 80 und 443 freigegeben."
+  for p in $PORTS; do ufw allow "$p/tcp" >/dev/null; done
+  echo "Firewall: Port(s) $PORTS freigegeben."
 fi
 
+# ------------------------------------------------------------------ Windows: Zugang aus dem Netz, Dauerbetrieb
+if [ "$WSL" -eq 1 ]; then
+  schritt "Windows einrichten"
+  # Eingehende Verbindungen zu Ubuntu erlauben (Hyper-V-Firewall) – braucht einmal eine Bestätigung als Administrator
+  TEMP_WIN=$(win '$env:TEMP')
+  SKRIPT="$(wslpath -u "$TEMP_WIN")/taleward-firewall.ps1"
+  {
+    for p in $PORTS; do
+      echo "New-NetFirewallHyperVRule -Name 'Taleward-$p' -DisplayName 'Taleward $p' -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts $p -ErrorAction SilentlyContinue"
+    done
+  } > "$SKRIPT"
+  echo "Windows fragt gleich, ob Änderungen erlaubt werden sollen – bitte mit „Ja“ bestätigen (Firewall für Taleward)."
+  if ! win "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$TEMP_WIN\\taleward-firewall.ps1'" >/dev/null; then
+    rot "Die Firewall-Regel ließ sich nicht setzen. Bitte in einer PowerShell „Als Administrator“ ausführen:"
+    cat "$SKRIPT"
+  fi
+  # Mit Windows starten und laufen lassen, auch ohne offenes Ubuntu-Fenster
+  STARTORDNER=$(wslpath -u "$(win '[Environment]::GetFolderPath("Startup")')")
+  DISTRO=${WSL_DISTRO_NAME:-$(wsl.exe -l -q --running 2>/dev/null | iconv -f utf-16le -t utf-8 2>/dev/null | tr -d '\r' | head -1)}
+  printf 'CreateObject("Wscript.Shell").Run "wsl.exe -d %s --exec sleep infinity", 0, False\r\n' "${DISTRO:-Ubuntu}" \
+    > "$STARTORDNER/Taleward-Server.vbs"
+  win "Start-Process wscript.exe -ArgumentList '\"$(wslpath -w "$STARTORDNER/Taleward-Server.vbs")\"'" >/dev/null || true
+  gruen "Taleward startet jetzt mit Windows und läuft im Hintergrund weiter."
+  if [ "$(frage "Soll der PC am Netzstrom nicht mehr in den Ruhezustand gehen? (j/n)" "j")" = "j" ]; then
+    win "powercfg /change standby-timeout-ac 0" >/dev/null || true
+    echo "Ruhezustand am Netzstrom ausgeschaltet (Bildschirm darf weiter ausgehen)."
+  else
+    echo "Hinweis: Im Ruhezustand ist der Server nicht erreichbar."
+  fi
+fi
+
+# ------------------------------------------------------------------ Starten
 schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
 cd "$ZIEL"
 docker compose build --pull
@@ -127,10 +248,15 @@ done
 
 schritt "Fertig"
 docker compose exec -T server chronik einrichtungscode || true
+if [ "$MODUS" = "domain" ]; then
+  HINWEIS="Falls die Seite noch nicht lädt: Das HTTPS-Zertifikat kann ein, zwei Minuten brauchen."
+else
+  HINWEIS="In der App als Server eintragen: $ADRESSE (Handy im selben WLAN)."
+fi
 cat <<TEXT
 
 Öffne den Link oben im Browser und lege dort das Konto für die Verwaltung an.
-Falls die Seite noch nicht lädt: Das HTTPS-Zertifikat kann ein, zwei Minuten brauchen.
+$HINWEIS
 
 Nützliche Befehle (in $ZIEL):
   Protokoll ansehen:   sudo docker compose logs -f server
@@ -138,5 +264,6 @@ Nützliche Befehle (in $ZIEL):
   Neu starten:         sudo docker compose restart
   Daten (sichern!):    $ZIEL/daten
 
-Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Worker“.
+Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Transkription“ – das darf auch
+dieser PC selbst sein.
 TEXT

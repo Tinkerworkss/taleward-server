@@ -1,4 +1,4 @@
-# Taleward-Server auf einem gemieteten Server (VPS, z. B. Hostinger)
+# Taleward-Server mit Docker: gemieteter Server, zu Hause oder unter Windows 11
 
 Der Server läuft dann rund um die Uhr im Internet. Die Transkription übernimmt ein **Worker** (dein PC mit
 Grafikkarte, verbindet sich von selbst mit dem Server) oder die Cloud-API. Dauer: etwa 20 Minuten.
@@ -29,6 +29,32 @@ Im Browser öffnen:  https://taleward.meinverein.de/verwaltung/einrichtung?code=
 **✅ Kontrolle:** Der Link öffnet im Browser die Ersteinrichtung, mit Schloss-Symbol in der Adresszeile.
 Dort legst du das Konto für die Verwaltung an. Danach verbindest du in der App den Server mit
 `https://taleward.meinverein.de`.
+
+## Zu Hause, im Verein oder unter Windows 11
+
+Derselbe Befehl funktioniert auch auf einem eigenen Rechner mit Ubuntu oder Debian, etwa einem Mini-PC im
+Vereinsheim, und unter **Windows 11 mit Ubuntu** (WSL). Das Skript fragt, wie Handys den Server erreichen:
+
+| Auswahl | Wann | Was nötig ist |
+|---|---|---|
+| **1 – Internet mit Domain und HTTPS** | VPS, oder zu Hause mit fester Erreichbarkeit | Domain bzw. DynDNS, **Portfreigabe TCP 80 und 443** im Router auf diesen Rechner. Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht. |
+| **2 – Nur im Heimnetz** | Spielen immer am selben Ort (Vereinsheim, Wohnzimmer) | Nichts weiter. Adresse `http://<IP>:8000`. Anmelden mit Google & Co. und die Web-App gehen ohne HTTPS nicht. |
+
+**Unter Windows 11** erledigt das Skript zusätzlich:
+
+1. Es stellt Ubuntu so ein, dass es unter der IP-Adresse des PCs erreichbar ist („gespiegeltes Netz“) und Docker
+   läuft (systemd). Danach heißt es einmal: Fenster schließen, in der PowerShell `wsl --shutdown`, Ubuntu wieder
+   öffnen und den Befehl noch einmal ausführen.
+2. Es gibt die Ports in der Windows-Firewall frei. Windows fragt dafür einmal nach Administratorrechten.
+3. Es startet Taleward mit Windows (Autostart) und lässt es im Hintergrund laufen, auch ohne offenes Fenster.
+4. Auf Wunsch schaltet es den Ruhezustand am Netzstrom aus. Im Ruhezustand ist der Server nicht erreichbar.
+
+Voraussetzung ist Windows 11 ab Version 22H2. Unter Windows 10 lässt sich Ubuntu nicht für andere Geräte öffnen.
+Der Worker (Grafikkarte) kann auf demselben PC laufen: Worker-App installieren und mit der Adresse des Servers
+koppeln.
+
+Tipp: Im Router für diesen Rechner immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
+bearbeiten), sonst ändert sich die Adresse für die App.
 
 ## 2. Deinen PC als Worker verbinden
 

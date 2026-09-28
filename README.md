@@ -29,7 +29,7 @@ Die Schritt-für-Schritt-Anleitung mit Kontrollpunkten und Fehlerhilfe steht in 
 
 Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](worker-app/README.md)**.
 
-Auf einem gemieteten Server (VPS, z. B. Hostinger) mit Docker: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
+Mit Docker – gemieteter Server (VPS), eigener Rechner zu Hause/im Verein oder Windows 11 mit Ubuntu: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
