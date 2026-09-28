@@ -1,0 +1,87 @@
+name: Worker-App
+# Prüft die Worker-App bei jeder Änderung. Wird ein Release mit Tag „worker-v…“ veröffentlicht,
+# baut dieser Ablauf den Windows-Installer und hängt ihn samt Linux-Skript an das Release.
+on:
+  push:
+    branches: [main]
+    paths: ["worker-app/**", "engine-requirements.txt", ".github/workflows/worker-app.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Patch einspielen"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  pruefen:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'worker-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests der App
+        working-directory: worker-app
+        run: uv sync && uv run pytest -q
+      - name: KI-Paket für Windows (CUDA) und Linux auflösbar?
+        run: |
+          uv pip compile engine-requirements.txt --python-version 3.11 \
+            --python-platform x86_64-pc-windows-msvc --torch-backend cu128 -q -o /tmp/windows.txt
+          uv pip compile engine-requirements.txt --python-version 3.11 \
+            --python-platform x86_64-manylinux_2_28 --torch-backend cu128 -q -o /tmp/linux.txt
+          grep -E "^(torch|ctranslate2|whisperx)==" /tmp/windows.txt
+      - name: Linux-Skript
+        run: shellcheck worker-app/install-linux.sh
+
+  windows:
+    needs: pruefen
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'worker-v')
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: worker-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Fassung
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            V="${{ github.event.release.tag_name }}"; V="${V#worker-v}"
+          else
+            V=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          sed -i "s/^VERSION = .*/VERSION = \"$V\"/" taleward_worker/__init__.py
+      - name: uv beilegen (installiert später das KI-Paket)
+        run: |
+          mkdir -p bin
+          curl -fsSL -o uv.zip https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip
+          unzip -o -j uv.zip uv.exe -d bin
+          bin/uv.exe --version
+      - name: App bauen
+        run: |
+          uv sync --python 3.12
+          uv run pyinstaller packaging/taleward-worker.spec --noconfirm
+          dist/TalewardWorker/TalewardWorker.exe --pruefen
+      - name: Installer bauen
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DVersion=$env:VERSION" packaging\windows\taleward-worker.iss
+          Copy-Item dist\TalewardWorker-Setup.exe "dist\TalewardWorker-Setup-$env:VERSION.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TalewardWorker-Setup
+          path: worker-app/dist/TalewardWorker-Setup*.exe
+      - name: An das Release hängen
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/TalewardWorker-Setup.exe \
+            "dist/TalewardWorker-Setup-$VERSION.exe" install-linux.sh --clobber
