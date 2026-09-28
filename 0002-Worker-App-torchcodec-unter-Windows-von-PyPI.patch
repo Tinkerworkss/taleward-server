@@ -1,0 +1,124 @@
+From 2a28eb4154a5253d304b43bb9b2cb3d45ad6d728 Mon Sep 17 00:00:00 2001
+From: Taleward <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 15:13:35 +0200
+Subject: [PATCH] Worker-App: torchcodec unter Windows von PyPI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Im PyTorch-Verzeichnis gibt es torchcodec (cu128) nur für Linux. Die App
+installiert das KI-Paket jetzt ohne erneutes Auflösen (feste Versionen aus
+uv.lock) und torchcodec getrennt von PyPI. Prüfskript für den GitHub-Ablauf.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ worker-app/packaging/pruefe-ki-paket.sh | 19 ++++++++++++
+ worker-app/taleward_worker/motor.py     | 40 +++++++++++++++++++++++--
+ worker-app/tests/test_worker_app.py     |  9 ++++++
+ 3 files changed, 66 insertions(+), 2 deletions(-)
+ create mode 100755 worker-app/packaging/pruefe-ki-paket.sh
+
+diff --git a/worker-app/packaging/pruefe-ki-paket.sh b/worker-app/packaging/pruefe-ki-paket.sh
+new file mode 100755
+index 0000000..00a749a
+--- /dev/null
++++ b/worker-app/packaging/pruefe-ki-paket.sh
+@@ -0,0 +1,19 @@
++#!/usr/bin/env bash
++# Prüft, ob sich das KI-Paket genau so installieren lässt, wie es die Worker-App tut (für den GitHub-Ablauf):
++# alles außer torchcodec über das PyTorch-Verzeichnis (CUDA 12.8), torchcodec von PyPI – für Windows und Linux.
++set -euo pipefail
++cd "$(dirname "$0")/../.."
++grep -viE '^torchcodec==' engine-requirements.txt > /tmp/basis.txt
++grep -iE '^torchcodec==' engine-requirements.txt > /tmp/extra.txt || true
++for plattform in x86_64-pc-windows-msvc x86_64-manylinux_2_28; do
++  echo "== $plattform"
++  uv pip compile /tmp/basis.txt --no-deps --python-version 3.11 --python-platform "$plattform" \
++    --torch-backend cu128 -q -o "/tmp/$plattform.txt"
++  grep -E "^(torch|torchaudio|ctranslate2|whisperx)==" "/tmp/$plattform.txt"
++  if [ -s /tmp/extra.txt ]; then
++    uv pip compile /tmp/extra.txt --no-deps --python-version 3.11 --python-platform "$plattform" -q \
++      -o "/tmp/$plattform-extra.txt"
++    grep -E "^torchcodec==" "/tmp/$plattform-extra.txt"
++  fi
++done
++echo "KI-Paket auflösbar."
+diff --git a/worker-app/taleward_worker/motor.py b/worker-app/taleward_worker/motor.py
+index 09f52bd..44aa1e7 100644
+--- a/worker-app/taleward_worker/motor.py
++++ b/worker-app/taleward_worker/motor.py
+@@ -188,8 +188,18 @@ class Installation:
+                      anteil_von=0.06, anteil_bis=0.95, erwartet_mb=self.erwartet_mb)
+         else:
+             torch = "cpu" if self.backend == "cpu" else "auto"  # auto: CUDA-Fassung passend zum Treiber
+-            self._uv("pip", "install", "--python", py, "--torch-backend", torch, "-r", q["anforderungen"],
+-                     "imageio-ffmpeg", anteil_von=0.06, anteil_bis=0.9, erwartet_mb=self.erwartet_mb)
++            basis, extra = anforderungen_aufteilen(anforderungen_lesen(q["anforderungen"]))
++            ordner = pfade.basis() / "cache"
++            ordner.mkdir(parents=True, exist_ok=True)
++            (ordner / "basis.txt").write_text(basis, encoding="utf-8")
++            (ordner / "extra.txt").write_text(extra, encoding="utf-8")
++            # Alle Versionen stehen fest (aus uv.lock) → ohne erneutes Auflösen installieren
++            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
++                     "-r", str(ordner / "basis.txt"), "imageio-ffmpeg",
++                     anteil_von=0.06, anteil_bis=0.88, erwartet_mb=self.erwartet_mb)
++            if extra.strip():
++                self._uv("pip", "install", "--python", py, "--no-deps", "-r", str(ordner / "extra.txt"),
++                         anteil_von=0.88, anteil_bis=0.9)
+             self.phase = "taleward"
+             self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
+ 
+@@ -221,6 +231,32 @@ class Installation:
+              "installiert": time.strftime("%Y-%m-%d %H:%M")}), encoding="utf-8")
+ 
+ 
++# Pakete, die es im PyTorch-Verzeichnis nicht für jedes System gibt (torchcodec cu128: nur Linux). Sie kommen von
++# PyPI in der gewöhnlichen Fassung – Taleward übergibt Audio im Speicher, torchcodec dekodiert nichts.
++OHNE_TORCH_VERZEICHNIS = ("torchcodec",)
++
++
++def anforderungen_lesen(quelle: str) -> str:
++    if quelle.startswith(("http://", "https://")):
++        try:
++            r = httpx.get(quelle, timeout=30, follow_redirects=True, headers={"User-Agent": f"TalewardWorker/{VERSION}"})
++        except httpx.HTTPError:
++            raise MotorFehler("github_nicht_erreichbar") from None
++        if r.status_code != 200:
++            raise MotorFehler("installation", f"engine-requirements.txt: HTTP {r.status_code}")
++        return r.text
++    return Path(quelle).read_text(encoding="utf-8")
++
++
++def anforderungen_aufteilen(text: str) -> tuple[str, str]:
++    """engine-requirements.txt → (über das PyTorch-Verzeichnis, direkt von PyPI)."""
++    basis, extra = [], []
++    for zeile in text.splitlines():
++        name = zeile.split("==")[0].split(";")[0].strip().lower()
++        (extra if name in OHNE_TORCH_VERZEICHNIS else basis).append(zeile)
++    return "\n".join(basis) + "\n", "\n".join(extra) + ("\n" if extra else "")
++
++
+ def ffmpeg_einrichten(python: Path) -> Path:
+     """ffmpeg aus imageio-ffmpeg als „ffmpeg(.exe)“ in den Werkzeug-Ordner legen (WhisperX ruft „ffmpeg“ auf)."""
+     aus = subprocess.run([str(python), "-c", "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"],
+diff --git a/worker-app/tests/test_worker_app.py b/worker-app/tests/test_worker_app.py
+index c78f6b2..0ec33ef 100644
+--- a/worker-app/tests/test_worker_app.py
++++ b/worker-app/tests/test_worker_app.py
+@@ -205,3 +205,12 @@ def test_selbstupdate_abfragen_und_laden(monkeypatch):
+         u2._laden()
+     assert not list((pfade.basis() / "updates").glob("*.exe"))
+     assert echt_get and echt_stream
++
++
++def test_anforderungen_aufteilen():
++    text = "torch==2.8.0\ntorchcodec==0.7.0\nwhisperx==3.8.6\nnvidia-cudnn-cu12==9.10.2.21 ; sys_platform == 'linux'\n"
++    basis, extra = motor.anforderungen_aufteilen(text)
++    assert "torchcodec" not in basis and "whisperx==3.8.6" in basis and "nvidia-cudnn" in basis
++    assert extra.strip() == "torchcodec==0.7.0"
++    b2, e2 = motor.anforderungen_aufteilen("torch==2.8.0\n")
++    assert e2 == "" and b2 == "torch==2.8.0\n"
+-- 
+2.43.0
+
