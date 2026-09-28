@@ -1,0 +1,30 @@
+name: Fassung markieren
+# Setzt zu jeder neuen Server-Fassung (version in pyproject.toml) das Git-Tag v<Fassung>.
+# Die Worker-App installiert ihr KI-Paket genau aus diesem Tag – so passen Worker und Server immer zusammen.
+on:
+  push:
+    branches: [main]
+    paths: ["pyproject.toml"]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Patch einspielen"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  markieren:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag setzen, falls neu
+        run: |
+          V=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "v$V gibt es schon."
+          else
+            git tag "v$V" && git push origin "v$V" && echo "v$V gesetzt."
+          fi
