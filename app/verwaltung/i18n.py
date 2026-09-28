@@ -17,6 +17,8 @@ STANDARD = "de"
 COOKIE = "tw_sprache"
 
 EN: dict[str, str] = {
+    "Die Web-App auf {adresse} darf diesen Server nutzen": "The web app at {adresse} may use this server",
+    "Dann können Mitglieder Taleward auch im Browser nutzen. Die Website sieht dabei keine Inhalte – der Browser spricht direkt mit diesem Server. Nur mit HTTPS.": "Members can then use Taleward in the browser too. The website never sees any content – the browser talks to this server directly. HTTPS only.",
     "Updates": "Updates",
     "Dieser Server": "This server",
     "Update verfügbar": "Update available",

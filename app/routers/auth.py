@@ -13,7 +13,7 @@ from app.models import AuthMethod, Organization, OrgMember, User
 from app.security import create_token, verify_password
 from app.services import user_out
 
-API_VERSION = "0.4.0"
+API_VERSION = "0.4.3"
 
 router = APIRouter(tags=["Auth"])
 
@@ -41,6 +41,7 @@ def info(request: Request, db: Session = Depends(get_db)):
         latest_app_version=a.app_latest_version or (neu and neu["version"]),
         app_download_url=a.app_download_url or (neu and neu["url"]),
         release_notes=a.app_release_notes or (neu and neu["notes"]),
+        app_download_sha256=neu and neu.get("sha256"), app_download_size_bytes=neu and neu.get("sizeBytes"),
         external_transcription_mode=(("primary" if betriebsart(db) == "cloud" else "fallback") if extern else None),
         cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],

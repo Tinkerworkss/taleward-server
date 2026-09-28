@@ -226,12 +226,21 @@ def trennen(provider: str, user: User = Depends(current_user), db: Session = Dep
 # ---------------------------------------------------------------- Anmelden mit Dienst
 @router.get("/auth/oidc/{provider}/start")
 def dienst_start(provider: str, request: Request, challenge: str = "", purpose: str = "login",
-                 linkToken: str | None = None, db: Session = Depends(get_db)):  # noqa: N803 – Name aus der YAML
+                 linkToken: str | None = None, returnTo: str | None = None,  # noqa: N803 – Namen aus der YAML
+                 db: Session = Depends(get_db)):
+    from app import webapp
+
+    basis = oeffentliche_adresse(db, request)
+    rueckweg = "taleward://auth"
+    if returnTo:
+        if returnTo not in webapp.rueckwege(db, basis):  # nur fest hinterlegte Ziele (kein offener Umleiter)
+            return RedirectResponse("taleward://auth?error=return_to_not_allowed", status_code=302)
+        rueckweg = returnTo
     try:
-        ziel = anmeldedienste.start(db, provider, challenge, purpose, linkToken, oeffentliche_adresse(db, request))
+        ziel = anmeldedienste.start(db, provider, challenge, purpose, linkToken, basis, rueckweg)
     except anmeldedienste.DienstFehler as e:
         db.rollback()
-        return RedirectResponse(f"taleward://auth?error={e.code}", status_code=302)
+        return RedirectResponse(webapp.mit_parametern(rueckweg, f"error={e.code}"), status_code=302)
     return RedirectResponse(ziel, status_code=302)
 
 

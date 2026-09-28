@@ -126,7 +126,8 @@ def challenge_von(verifier: str) -> str:
 
 
 # ---------------------------------------------------------------- 1. Start
-def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: str | None, basis: str) -> str:
+def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: str | None, basis: str,
+          rueckweg: str = "taleward://auth") -> str:
     """URL beim Dienst. Fehler als DienstFehler (→ Rückweg in die App)."""
     if dienst not in DIENSTE or not konfig(db, dienst).eingerichtet:
         raise DienstFehler("provider_unknown")
@@ -140,7 +141,7 @@ def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: st
         user_id = gefunden[0].user_id
     nonce = secrets.token_urlsafe(16)
     zustand = einmal.erzeugen(db, "oidc_zustand", ZUSTAND_GUELTIG, user_id=user_id, dienst=dienst,
-                              challenge=challenge, purpose=purpose, nonce=nonce)
+                              challenge=challenge, purpose=purpose, nonce=nonce, rueckweg=rueckweg)
     db.commit()
     d, k = DIENSTE[dienst], konfig(db, dienst)
     werte = {"client_id": k.client_id, "redirect_uri": rueckleitung(basis, dienst), "response_type": "code",
@@ -235,15 +236,16 @@ def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.C
     if zustand is None or zustand[1].get("dienst") != dienst:
         return "taleward://auth?" + urlencode({"error": "oidc_failed"})
     z = zustand[1]
+    weg = z.get("rueckweg") or "taleward://auth"  # Web-Fassung: https://…/app/#/auth
     if werte.get("error"):
         code = "cancelled" if werte["error"] in ("access_denied", "user_cancelled_authorize") else "oidc_failed"
-        return "taleward://auth?" + urlencode({"error": code})
+        return f"{weg}?" + urlencode({"error": code})
     eigener = klient is None
     klient = klient or httpx.Client(timeout=20)
     try:
         ident = identitaet_holen(db, dienst, werte.get("code") or "", basis, z["nonce"], werte.get("user"), klient)
     except DienstFehler as e:
-        return "taleward://auth?" + urlencode({"error": e.code})
+        return f"{weg}?" + urlencode({"error": e.code})
     finally:
         if eigener:
             klient.close()
@@ -251,4 +253,4 @@ def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.C
                              sub=ident.sub, email=ident.email, name=ident.name, purpose=z["purpose"],
                              challenge=z["challenge"])
     db.commit()
-    return "taleward://auth?" + urlencode({"ticket": ticket, "serverId": server_id()})
+    return f"{weg}?" + urlencode({"ticket": ticket, "serverId": server_id()})

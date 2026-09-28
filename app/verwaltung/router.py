@@ -705,9 +705,13 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
     from app import benachrichtigung
 
     limit = kosten.limit_cent(db)
+    from app import webapp
+    from app.config import get_settings
+
     return _seite(request, "einstellungen.html", user, db, orgs=orgs, fehler=fehler,
                   registrierung=registrierung(db), limit_euro=(limit or 0) / 100,
-                  melden=benachrichtigung.konfig(db))
+                  melden=benachrichtigung.konfig(db), web_zentral=webapp.zentral_erlaubt(db),
+                  zentrale_webapp=webapp.herkunft(get_settings().central_web_origin))
 
 
 @router.post("/einstellungen", dependencies=[Depends(csrf_pruefen)])
@@ -716,7 +720,7 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
                             min_age: str = Form("16"), org_name: str = Form(""), app_min_version: str = Form(""),
                             app_latest_version: str = Form(""), app_download_url: str = Form(""),
                             app_release_notes: str = Form(""), registrierung: str = Form(""), limit_euro: str = Form(""),
-                            public_url: str = Form(""),
+                            public_url: str = Form(""), web_zentral: str = Form(""), web_zentral_feld: str = Form(""),
                             user: User = Depends(verwalter),
                             db: Session = Depends(get_db)):
     from app.einstellungen import mindestversion_vergessen, version_tupel
@@ -762,11 +766,16 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
               app_release_notes=app_release_notes.strip()[:1000] or None, public_url=oeffentlich[:300] or None)
     if registrierung:
         meta_schreiben(db, "registrierung", registrierung)
+    if web_zentral_feld:  # Kästchen war auf der Seite (sonst gar nicht angezeigt)
+        meta_schreiben(db, "web.zentral", "an" if web_zentral == "an" else "aus")
     orgs = db.scalars(select(Organization).order_by(Organization.created_at)).all()
     if org_name.strip() and len(orgs) == 1:
         orgs[0].name = org_name.strip()[:200]
     db.commit()
     mindestversion_vergessen()
+    from app import webapp
+
+    webapp.vergessen()
     return _zurueck("/einstellungen", "gespeichert")
 
 

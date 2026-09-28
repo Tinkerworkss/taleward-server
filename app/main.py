@@ -127,8 +127,16 @@ def create_app() -> FastAPI:
     from app.versionen import pruefen
 
     app.add_middleware(BaseHTTPMiddleware, dispatch=pruefen)
+    class TalewardCORS(CORSMiddleware):
+        """Erlaubte Herkünfte ändern sich zur Laufzeit (Verwaltung: zentrale Web-App, öffentliche Adresse)."""
+
+        def is_allowed_origin(self, origin: str) -> bool:
+            from app.webapp import erlaubte_herkuenfte
+
+            return origin in erlaubte_herkuenfte()
+
     app.add_middleware(
-        CORSMiddleware,
+        TalewardCORS,
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

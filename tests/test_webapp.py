@@ -1,0 +1,101 @@
+"""Web-Fassung der App (Schnittstelle 0.4.2): CORS für die zentrale Web-App und die eigene Adresse, returnTo."""
+from urllib.parse import parse_qs, urlsplit
+
+from tests.test_anmeldung import VERIFIER, dienst  # noqa: F401 (Fixture)
+from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
+
+API = "/api/v1"
+ZENTRAL = "https://taleward.org"
+
+
+def vorab(client, herkunft):
+    return client.options(f"{API}/campaigns", headers={
+        "Origin": herkunft, "Access-Control-Request-Method": "PATCH",
+        "Access-Control-Request-Headers": "authorization,content-type,x-taleward-app,x-chunk-sha256,accept-language"})
+
+
+def test_cors_zentral_eigene_und_fremde(client, dbs, admin):  # noqa: F811
+    from app import webapp
+    from app.einstellungen import speichern
+
+    webapp.vergessen()
+    r = vorab(client, ZENTRAL)
+    assert r.status_code == 200 and r.headers["access-control-allow-origin"] == ZENTRAL
+    assert "PATCH" in r.headers["access-control-allow-methods"]
+    assert "x-chunk-sha256" in r.headers["access-control-allow-headers"].lower()
+    r = client.get(f"{API}/info", headers={"Origin": ZENTRAL})
+    assert r.headers["access-control-allow-origin"] == ZENTRAL
+    assert "access-control-allow-origin" not in client.get(f"{API}/info", headers={"Origin": "https://boese.example"}).headers
+    assert vorab(client, "https://boese.example").status_code == 400
+    # eigene Adresse (für /app/ auf diesem Server)
+    speichern(dbs, public_url="https://taleward.meinverein.de")
+    dbs.commit()
+    webapp.vergessen()
+    assert vorab(client, "https://taleward.meinverein.de").headers["access-control-allow-origin"] == \
+        "https://taleward.meinverein.de"
+    # In der Verwaltung abschalten
+    seite = client.get("/verwaltung/einstellungen").text
+    assert "Die Web-App auf https://taleward.org darf diesen Server nutzen" in seite
+    csrf = admin
+    r = client.post("/verwaltung/einstellungen", data={"csrf": csrf, "server_name": "S", "server_operator": "B",
+                                                       "min_age": "16", "web_zentral_feld": "1",
+                                                       "public_url": "https://taleward.meinverein.de"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert vorab(client, ZENTRAL).status_code == 400
+    assert not webapp.zentral_erlaubt(dbs)
+    # App im Emulator bleibt immer erlaubt
+    assert vorab(client, "http://localhost").headers["access-control-allow-origin"] == "http://localhost"
+
+
+def test_return_to_fuer_die_web_app(client, world, dbs, dienst):  # noqa: F811
+    from tests.test_anmeldung import challenge_von
+
+    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
+    # fremdes Ziel → abgelehnt, zurück in die App
+    r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": "https://boese.example/#/auth"},
+                   follow_redirects=False)
+    assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed"
+    # unbekannter Dienst mit erlaubtem Ziel → Fehler dorthin
+    r = client.get(f"{API}/auth/oidc/apple/start", params={**params, "returnTo": f"{ZENTRAL}/app/#/auth"},
+                   follow_redirects=False)
+    assert r.headers["location"] == f"{ZENTRAL}/app/#/auth?error=provider_unknown"
+    # ganzer Ablauf über die eigene Adresse
+    ziel = "http://testserver/app/#/auth"
+    r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": ziel}, follow_redirects=False)
+    q = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
+    dienst.nonce = q.get("nonce")
+    dienst.claims = {"sub": "g-web", "email": "web@example.org", "email_verified": True, "name": "Web"}
+    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": q["state"]}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith(ziel + "?ticket=")
+    ticket = parse_qs(r.headers["location"].split("?", 1)[1])["ticket"][0]
+    r = client.post(f"{API}/auth/oidc/exchange", json={"ticket": ticket, "verifier": VERIFIER})
+    assert r.status_code == 200 and r.json()["status"] == "register"
+    # Abbruch beim Dienst → Fehler in die Web-App
+    r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": ziel}, follow_redirects=False)
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    r = client.get("/auth/oidc/google/callback", params={"error": "access_denied", "state": state},
+                   follow_redirects=False)
+    assert r.headers["location"] == ziel + "?error=cancelled"
+
+
+def test_titelbilder_0_4_3(client, world):
+    w = world
+    r = client.patch(f"{API}/campaigns/{w['cid']}", json={"coverPreset": "riverside-mystery"}, headers=w["gm"])
+    assert r.status_code == 200 and r.json()["coverPreset"] == "riverside-mystery"
+    assert client.patch(f"{API}/campaigns/{w['cid']}", json={"coverPreset": "gibtsnicht"},
+                        headers=w["gm"]).status_code == 400
+
+
+def test_info_mit_pruefsumme(client, dbs):
+    import hashlib
+
+    from app import aktualisierung
+    from tests.test_aktualisierung import APK, EXE, github, release
+
+    gh = github([release("v1.2.0", "t.apk", APK)], [release("worker-v0.1.0", "TalewardWorker-Setup.exe", EXE)], [],
+                {"/v1.2.0/t.apk": APK, "/worker-v0.1.0/TalewardWorker-Setup.exe": EXE})
+    aktualisierung.pruefen(dbs, gh)
+    info = client.get(f"{API}/info").json()
+    assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
+    assert info["apiVersion"] == "0.4.3"

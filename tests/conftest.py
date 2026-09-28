@@ -96,3 +96,13 @@ def world(client, make_user, login):
         "cid": c["id"], "gm": gm, "pl": pl, "out": out,
         "gm_member": members["Anna"], "pl_member": members["Ben"],
     }
+
+
+@pytest.fixture(autouse=True)
+def _webapp_zwischenspeicher_leeren():
+    """Erlaubte Herkünfte werden 30 s zwischengespeichert – zwischen Tests nicht mitnehmen."""
+    from app import webapp
+
+    webapp.vergessen()
+    yield
+    webapp.vergessen()

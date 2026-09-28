@@ -49,6 +49,12 @@
     <label>{{ _("Download-Link") }} <input type="url" name="app_download_url" value="{{ angaben.app_download_url or '' }}" maxlength="500" placeholder="https://…">
       <span class="hilfe">{{ _("APK- oder Store-Link. Erscheint auch auf der Einladungsseite („App herunterladen“).") }}</span></label>
     <label>{{ _("Was ist neu") }} <textarea name="app_release_notes" rows="3" maxlength="1000">{{ angaben.app_release_notes or '' }}</textarea></label>
+    {% if zentrale_webapp %}
+    <input type="hidden" name="web_zentral_feld" value="1">
+    <label class="haken"><input type="checkbox" name="web_zentral" value="an" {% if web_zentral %}checked{% endif %}>
+      <span>{{ _("Die Web-App auf {adresse} darf diesen Server nutzen", adresse=zentrale_webapp) }}</span></label>
+    <span class="hilfe">{{ _("Dann können Mitglieder Taleward auch im Browser nutzen. Die Website sieht dabei keine Inhalte – der Browser spricht direkt mit diesem Server. Nur mit HTTPS.") }}</span>
+    {% endif %}
   </div>
 </div>
 <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>

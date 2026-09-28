@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Session-Chronik API
-  version: 0.4.0
+  version: 0.4.3
   description: |
     Schnittstelle zwischen der Session-Chronik-App (Android/PWA) und dem Verarbeitungsserver.
 
@@ -23,6 +23,16 @@ info:
     - Der Server protokolliert pro Session und Unterlage Audiodauer, Rechenzeit, Tokens des Sprachmodells und
       geschätzte Kosten. Abgerechnet würde beim Betreiber der Kampagne (SL) oder – falls übernommen – bei der
       Organisation. Spieler verursachen nie Kosten.
+    - App-Updates (ab 0.4.1): Der Server holt täglich das neueste Release aus `Tinkerworkss/taleward-app` (Tag `v1.2.3`
+      oder `app-v1.2.3`, Anhang `*.apk`), prüft die SHA-256 und bietet die Datei selbst an
+      (`https://<server>/downloads/app/<version>/<datei>.apk`, öffentlich). /info nennt latestAppVersion, appDownloadUrl
+      (immer dieser Server), appDownloadSha256, appDownloadSizeBytes, releaseNotes; von Hand eingetragene Werte haben
+      Vorrang. Freigabe automatisch oder von Hand – sie regelt nur, was dieser Server verteilt, und verbietet keine
+      neueren Apps (einzige Sperre: minAppVersion → 426).
+    - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser unter `/app/` – zentral auf der Taleward-Website
+      und optional auf jedem Server. Server erlauben CORS für die Herkunft der zentralen Website (Voreinstellung, in der
+      Verwaltung abschaltbar) und die eigene; Header mindestens Authorization, Content-Type, Accept-Language,
+      X-Taleward-App, X-Chunk-SHA256; Methoden GET, POST, PUT, PATCH, DELETE. Voraussetzung: HTTPS.
     - Die App schickt `Accept-Language: de` oder `en`. Der Server liefert `message` in dieser Sprache
       (Standard und Rückfall: de). Inhalte (Recaps, Bibel) folgen dagegen `Campaign.language`.
     - Einwilligung: Jede anwesende Person muss selbst zugestimmt haben – entweder dauerhaft in der eigenen App
@@ -80,6 +90,12 @@ info:
     Microsoft über den Systembrowser und den Server (/auth/oidc/…, PKCE-Ticket, Rückweg taleward://auth), Dienste
     verbinden/trennen, zweite Form von POST /auth/register mit registrationToken, DELETE /me mit confirmUsername.
     ServerInfo.authProviders, ServerInfo.passwordReset; User.email, emailPending, hasPassword, providers.
+    Änderungen in 0.4.1: ServerInfo.appDownloadSha256 und appDownloadSizeBytes; Regeln für App-Updates über den eigenen
+    Server (siehe Grundregeln).
+    Änderungen in 0.4.2: Web-Fassung der App unter /app/ (zentral auf der Taleward-Website und auf eigenen Servern):
+    CORS-Regeln, Parameter `returnTo` bei /auth/oidc/{provider}/start für den Rückweg in den Browser.
+    Änderungen in 0.4.3: CoverPreset um 19 Titelbilder erweitert (dark-fantasy bis riverside-mystery), bestehende
+    IDs unverändert.
 
 servers:
   - url: http://localhost:8000/api/v1
@@ -242,6 +258,14 @@ paths:
         - { name: challenge, in: query, required: true, schema: { type: string }, description: "BASE64URL(SHA-256(verifier)), ohne Füllzeichen" }
         - { name: purpose, in: query, required: true, schema: { type: string, enum: [login, link] } }
         - { name: linkToken, in: query, schema: { type: string }, description: "Nur bei purpose=link" }
+        - name: returnTo
+          in: query
+          schema: { type: string }
+          description: |
+            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://taleward.app/app/#/auth`. Der Server
+            hängt `?ticket=…&serverId=…` bzw. `?error=…` wörtlich an den Wert an (auch hinter `#/auth`). Erlaubt sind nur
+            fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App; sonst Rückweg mit
+            error=return_to_not_allowed über taleward://auth.
       responses:
         "302": { description: Weiterleitung zum Dienst }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1870,6 +1894,8 @@ components:
         latestAppVersion: { type: [string, "null"], example: "0.9.1", description: "Neueste App – die App zeigt „Neue Version“" }
         appDownloadUrl: { type: [string, "null"], description: "APK- oder Store-Link; auch für die Einladungsseite" }
         releaseNotes: { type: [string, "null"], description: "Kurz, was neu ist (ein paar Zeilen)" }
+        appDownloadSha256: { type: [string, "null"], description: "SHA-256 (hex) der APK unter appDownloadUrl – nur, wenn der Server die Datei selbst anbietet (ab 0.4.1)" }
+        appDownloadSizeBytes: { type: [integer, "null"], description: "Größe der APK in Bytes (ab 0.4.1)" }
         authProviders:
           type: array
           description: Eingerichtete Anmeldedienste (ab 0.4.0) – die App zeigt genau diese Knöpfe. Leer = keine.
@@ -1942,7 +1968,7 @@ components:
     CoverPreset:
       type: string
       description: Mitgelieferte Titelbilder der App (die Bilder selbst liegen in der App, nicht auf dem Server)
-      enum: [meadow, forest, desert, city, cyber, mountains, coast, swamp, dungeon, space, castle]
+      enum: [meadow, forest, desert, city, cyber, mountains, coast, swamp, dungeon, space, castle, dark-fantasy, moonwood, ancient-ruins, tavern, battlefield, frozen-north, arcane-ruins, fairy-wilds, underworld, storm-coast, steampunk, post-apocalypse, western, noir, space-opera, orient, necropolis, manor, riverside-mystery]
 
     GameSystem:
       type: string

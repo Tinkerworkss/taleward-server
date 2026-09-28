@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     model_mirror_url: str = ""
     # Updates: Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen von App, Worker und Server, lädt die
     # Dateien für App und Worker und bietet sie selbst an – so fragen Handys und Worker nie direkt bei GitHub.
+    # Web-Fassung der App (ab 0.4.2): zentrale Web-App der Taleward-Website darf diesen Server nutzen (CORS, Rückweg
+    # nach der Anmeldung). In der Verwaltung abschaltbar. Leer = keine zentrale Web-App.
+    central_web_origin: str = "https://taleward.org"
     update_check: bool = True
     update_app_repo: str = "Tinkerworkss/taleward-app"
     update_server_repo: str = "Tinkerworkss/taleward-server"

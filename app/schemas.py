@@ -17,7 +17,11 @@ EntryType = Literal["npc", "location", "quest", "item", "faction", "other"]
 ContentLanguage = Literal["de", "en"]
 GameSystem = Literal["dsa", "dnd", "pathfinder", "cthulhu", "shadowrun", "splittermond", "other"]
 CoverPreset = Literal["meadow", "forest", "desert", "city", "cyber", "mountains", "coast", "swamp",
-                      "dungeon", "space", "castle"]
+                      "dungeon", "space", "castle",
+                      # ab 0.4.3
+                      "dark-fantasy", "moonwood", "ancient-ruins", "tavern", "battlefield", "frozen-north",
+                      "arcane-ruins", "fairy-wilds", "underworld", "storm-coast", "steampunk", "post-apocalypse",
+                      "western", "noir", "space-opera", "orient", "necropolis", "manor", "riverside-mystery"]
 COVER_PRESETS: tuple[str, ...] = CoverPreset.__args__  # type: ignore[attr-defined]
 ProcessingState = Literal[
     "created", "uploading", "queued", "transcribing", "awaiting_speakers",
@@ -51,6 +55,8 @@ class ServerInfoOut(ApiModel):
     latest_app_version: str | None = None
     app_download_url: str | None = None
     release_notes: str | None = None
+    app_download_sha256: str | None = None
+    app_download_size_bytes: int | None = None
     external_transcription: str | None
     external_transcription_mode: Literal["fallback", "primary"] | None = None
     cloud_summary: str | None = None
