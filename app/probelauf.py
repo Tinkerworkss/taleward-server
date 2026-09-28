@@ -122,7 +122,19 @@ class Bericht:
 
 
 def cuda_bibliotheken_vorladen() -> None:
-    """CTranslate2 findet cuDNN/cuBLAS aus den pip-Paketen sonst manchmal nicht (libcudnn_ops.so.9 …)."""
+    """CTranslate2 findet cuDNN/cuBLAS aus den pip-Paketen sonst manchmal nicht (libcudnn_ops.so.9 …).
+    Windows: PyTorch bringt die DLLs in torch/lib mit – den Ordner für CTranslate2 auffindbar machen."""
+    if sys.platform == "win32":
+        import importlib.util
+        import os
+
+        spec = importlib.util.find_spec("torch")
+        if spec and spec.origin:
+            lib = str(Path(spec.origin).parent / "lib")
+            if os.path.isdir(lib):
+                os.add_dll_directory(lib)
+                os.environ["PATH"] = lib + os.pathsep + os.environ.get("PATH", "")
+        return
     try:
         import nvidia  # noqa: F401  (Namespace der pip-Pakete nvidia-*)
     except ImportError:

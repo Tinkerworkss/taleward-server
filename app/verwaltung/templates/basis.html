@@ -22,7 +22,7 @@
       <button class="tw-btn tw-btn--quiet" type="submit"><span class="breit">{{ user.display_name }} </span>{{ _("abmelden") }}</button></form>
   </div>
   <nav class="nav" aria-label="{{ _('Bereiche') }}">
-    {% for ziel, text in [("uebersicht", _("Übersicht")), ("transkription", _("Transkription")), ("zusammenfassung", _("Zusammenfassung")), ("warteschlange", _("Warteschlange")), ("konten", _("Konten")), ("anmeldung", _("Anmeldung")), ("einstellungen", _("Einstellungen"))] %}
+    {% for ziel, text in [("uebersicht", _("Übersicht")), ("transkription", _("Transkription")), ("zusammenfassung", _("Zusammenfassung")), ("warteschlange", _("Warteschlange")), ("konten", _("Konten")), ("anmeldung", _("Anmeldung")), ("updates", _("Updates")), ("einstellungen", _("Einstellungen"))] %}
     <a href="/verwaltung/{{ '' if ziel == 'uebersicht' else ziel }}" {% if aktiv == ziel %}aria-current="page"{% endif %}>{{ text }}</a>
     {% endfor %}
   </nav>

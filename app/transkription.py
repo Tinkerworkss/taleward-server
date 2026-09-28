@@ -237,8 +237,15 @@ class EinrichtungsFehler(Exception):
 
 class WhisperXMotor:
     def __init__(self, modell: str = "large-v3", genauigkeit: str = "int8_float16", batch: int = 8,
-                 hf_token: str | None = None, quelle=None):
+                 hf_token: str | None = None, quelle=None, geraet: str = "cuda", geraet_ausrichten: str = "",
+                 geraet_sprecher: str = "", grenze_mb: int = 0, threads: int = 0):
         self.modell, self.genauigkeit, self.batch, self.hf_token = modell, genauigkeit, batch, hf_token
+        self.geraet = geraet if geraet in ("cuda", "cpu") else "cuda"
+        self.geraet_ausrichten = geraet_ausrichten if geraet_ausrichten in ("cuda", "cpu") else self.geraet
+        self.geraet_sprecher = geraet_sprecher if geraet_sprecher in ("cuda", "cpu") else self.geraet
+        if self.geraet == "cpu" and self.genauigkeit.endswith("float16"):
+            self.genauigkeit = "int8"  # float16 gibt es auf dem Prozessor nicht
+        self.grenze_mb, self.threads = max(0, grenze_mb), max(0, threads)
         self.quelle = quelle  # modelle.ServerQuelle: Sprechermodell vom Server statt von Hugging Face
         self.bereit: dict = {}  # whisper/sprecher → modelle.Bereit (feste Fassung, lokaler Ordner)
 
@@ -253,9 +260,15 @@ class WhisperXMotor:
             import whisperx  # noqa: F401
         except ImportError:
             raise EinrichtungsFehler("Die KI-Pakete fehlen. Installieren mit: uv sync --extra ki") from None
-        if not torch.cuda.is_available():
+        braucht_gpu = "cuda" in (self.geraet, self.geraet_ausrichten, self.geraet_sprecher)
+        if braucht_gpu and not torch.cuda.is_available():
             raise EinrichtungsFehler("PyTorch sieht keine Grafikkarte. `nvidia-smi` prüfen und ggf. den NVIDIA-Treiber "
-                                     "unter Windows aktualisieren (INSTALLATION.md Teil 5.1).")
+                                     "aktualisieren – oder in der Worker-App den Prozessor wählen.")
+        if braucht_gpu and self.grenze_mb:
+            gesamt = torch.cuda.get_device_properties(0).total_memory / 2 ** 20
+            torch.cuda.set_per_process_memory_fraction(min(1.0, self.grenze_mb / gesamt), 0)
+        if self.threads:
+            torch.set_num_threads(self.threads)
         try:
             sprecher = modelle.vom_server(modelle.SPRECHERMODELL, self.quelle) if self.quelle else None
             if sprecher is None:
@@ -269,9 +282,15 @@ class WhisperXMotor:
                            "sprecher": sprecher}
         except modelle.ModellFehler as e:
             raise EinrichtungsFehler(str(e)) from None
-        return {"gpu": torch.cuda.get_device_name(0), "vramMb": VramMesser.gesamt_mb(), "modell": self.modell,
-                "genauigkeit": self.genauigkeit,
+        return {"gpu": torch.cuda.get_device_name(0) if braucht_gpu else "CPU",
+                "vramMb": VramMesser.gesamt_mb() if braucht_gpu else None, "modell": self.modell,
+                "genauigkeit": self.genauigkeit, "geraete": self.geraete, "grenzeMb": self.grenze_mb or None,
                 "modelle": {b.repo: (b.fassung or "")[:12] for b in self.bereit.values()}}
+
+    @property
+    def geraete(self) -> str:
+        """Kurzform für Anzeige und Protokoll, z. B. „cuda/cuda/cpu“ (Transkription/Ausrichtung/Sprecher)."""
+        return f"{self.geraet}/{self.geraet_ausrichten}/{self.geraet_sprecher}"
 
     def _pfad(self, art: str, ersatz: str) -> str:
         b = self.bereit.get(art)
@@ -293,8 +312,9 @@ class WhisperXMotor:
         import whisperx
 
         opts = {"hotwords": ", ".join(hotwords)} if hotwords else None
-        model = whisperx.load_model(self._pfad("whisper", self.modell), "cuda", compute_type=self.genauigkeit, language=sprache,
-                                    asr_options=opts)
+        extra = {"threads": self.threads} if self.threads and self.geraet == "cpu" else {}
+        model = whisperx.load_model(self._pfad("whisper", self.modell), self.geraet, compute_type=self.genauigkeit,
+                                    language=sprache, asr_options=opts, **extra)
         try:
             return model.transcribe(daten, batch_size=self.batch, language=sprache,
                                     progress_callback=fortschritt)["segments"]
@@ -314,9 +334,9 @@ class WhisperXMotor:
             from app import modelle
 
             name = str(modelle.bereitstellen(DEFAULT_ALIGN_MODELS_HF[sprache], self.hf_token).pfad)
-        model_a, meta = whisperx.load_align_model(language_code=sprache, device="cuda", model_name=name)
+        model_a, meta = whisperx.load_align_model(language_code=sprache, device=self.geraet_ausrichten, model_name=name)
         try:
-            return whisperx.align(segmente, model_a, meta, daten, "cuda", return_char_alignments=False,
+            return whisperx.align(segmente, model_a, meta, daten, self.geraet_ausrichten, return_char_alignments=False,
                                   progress_callback=fortschritt)["segments"]
         finally:
             del model_a
@@ -327,7 +347,7 @@ class WhisperXMotor:
         from whisperx.diarize import DiarizationPipeline
 
         pipe = DiarizationPipeline(model_name=self._pfad("sprecher", "pyannote/speaker-diarization-community-1"),
-                                   token=self.hf_token, device="cuda")
+                                   token=self.hf_token, device=self.geraet_sprecher)
         try:
             diar, embeddings = pipe(daten, num_speakers=1, return_embeddings=True, progress_callback=fortschritt)
             if not embeddings:
@@ -342,7 +362,7 @@ class WhisperXMotor:
         from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
         pipe = DiarizationPipeline(model_name=self._pfad("sprecher", "pyannote/speaker-diarization-community-1"),
-                                   token=self.hf_token, device="cuda")
+                                   token=self.hf_token, device=self.geraet_sprecher)
         try:
             diar, embeddings = pipe(daten, min_speakers=min_n, max_speakers=max_n, return_embeddings=True,
                                     progress_callback=fortschritt)

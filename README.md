@@ -27,11 +27,19 @@ die Tests prüfen jede Antwort dagegen.
 
 Die Schritt-für-Schritt-Anleitung mit Kontrollpunkten und Fehlerhilfe steht in **[INSTALLATION.md](INSTALLATION.md)**.
 
+Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](worker-app/README.md)**.
+
+Auf einem gemieteten Server (VPS, z. B. Hostinger) mit Docker: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
+```
+
 Kurzfassung für später:
 
 ```bash
 cd ~/session-chronik-server
-uv run pytest                  # erwartet: 219 passed
+uv run pytest                  # erwartet: 233 passed
 uv run chronik serve           # Server starten, Strg+C beendet
 uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
 uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
@@ -76,6 +84,7 @@ app/
   queue.py      Warteschlange, Leases, Wartung
   storage.py    Ablage von Upload-Teilen und Hörproben unter data/
   worker_prozess.py, audio.py   Worker (holt Aufträge ab, verarbeitet lokal)
+  worker_app.py Anbindung an die Worker-App (Ereignisse als JSON-Zeilen, Steuerung über stdin)
   transkription.py  WhisperX-Motor und Auswertung (Stimmen, Hörproben, Abdrücke)
   namenshilfe.py, begriffe/   Namen und Systembegriffe als Hilfe für die Erkennung
   verwaltung/   Weboberfläche /verwaltung (Seiten, Stil, lokaler Worker)
@@ -87,7 +96,13 @@ app/
   cli.py        Kommandozeile „chronik“
 migrations/   Datenbank-Migrationen (Alembic)
 tests/        pytest inkl. automatischer Vertragsprüfung
+worker-app/   Worker-App für Windows und Linux (eigene Oberfläche, installiert das KI-Paket selbst)
+deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
+engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
 ```
+
+`engine-requirements.txt` nach Änderungen an den Abhängigkeiten neu erzeugen:
+`uv export --format requirements-txt --extra ki --no-dev --no-hashes --no-emit-project --no-header -o engine-requirements.txt`
 
 
 ## Lizenz

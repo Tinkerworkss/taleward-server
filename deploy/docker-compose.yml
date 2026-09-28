@@ -1,0 +1,52 @@
+# Taleward auf einem eigenen Server (VPS): Taleward-Server + Caddy (HTTPS automatisch).
+# Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
+#
+#   Starten / nach Änderungen:  docker compose up -d
+#   Update:                     docker compose build --pull && docker compose up -d
+#   Protokoll:                  docker compose logs -f server
+#   Einrichtungscode:           docker compose exec server chronik einrichtungscode
+
+services:
+  server:
+    build:
+      # Gebaut direkt aus dem öffentlichen Repository; TALEWARD_VERSION = Branch oder Tag (Standard: main)
+      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
+    image: taleward-server:${TALEWARD_VERSION:-main}
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      PUBLIC_URL: https://${TALEWARD_DOMAIN}
+      # Nur Caddy erreicht den Server (kein Port nach außen) – dessen Angaben zu HTTPS und Absender gelten
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      # Datenbank, Bilder, Unterlagen, Sicherungen, Geheimnis – alles, was gesichert werden muss
+      - ./daten:/data
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      TALEWARD_DOMAIN: ${TALEWARD_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-daten:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  caddy-daten:
+  caddy-config:

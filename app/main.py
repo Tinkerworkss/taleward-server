@@ -61,6 +61,13 @@ def _wartung_starten() -> threading.Event | None:
             except Exception:
                 log.exception("Modellablage fehlgeschlagen")
             try:
+                from app import aktualisierung
+
+                with session_factory()() as db:
+                    aktualisierung.automatisch(db)
+            except Exception:
+                log.exception("Update-Prüfung fehlgeschlagen")
+            try:
                 with session_factory()() as db:
                     benachrichtigung.pruefen(db)
             except Exception:
@@ -143,6 +150,9 @@ def create_app() -> FastAPI:
     app.include_router(api)
     app.include_router(worker.router)
     app.include_router(anmeldung.seiten)
+    from app.routers import downloads
+
+    app.include_router(downloads.router)
     from app.verwaltung.router import einbinden
 
     einbinden(app)

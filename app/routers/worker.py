@@ -418,7 +418,7 @@ def pair(body: PairIn, request: Request, db: Session = Depends(get_db)):
     from app.koppeln import koppeln
 
     w, token = koppeln(db, request.client.host if request.client else "?", body.code, body.name)
-    return {"workerId": w.id, "name": w.name, "token": token}
+    return {"workerId": w.id, "name": w.name, "token": token, "serverVersion": server_fassung()}
 
 
 @router.get("/config")
@@ -430,8 +430,33 @@ def config(worker: Worker = Depends(current_worker), db: Session = Depends(get_d
 
     stand = modellablage.vorhanden(db)
     if stand is not None:
-        return {"hfToken": None, "models": {stand.repo: stand.fassung}}
-    return {"hfToken": meta_lesen(db, "hf.token") or None, "models": {}}
+        return {"hfToken": None, "models": {stand.repo: stand.fassung}, "serverVersion": server_fassung()}
+    return {"hfToken": meta_lesen(db, "hf.token") or None, "models": {}, "serverVersion": server_fassung()}
+
+
+@router.get("/app-update")
+def app_update(request: Request, system: str = "windows", worker: Worker = Depends(current_worker),
+               db: Session = Depends(get_db)):
+    """Neueste freigegebene Fassung der Worker-App für dieses System – die Datei liegt auf diesem Server
+    (/downloads/…), der Worker fragt nie direkt bei GitHub. 204 = nichts bekannt."""
+    from app import aktualisierung
+    from app.einstellungen import oeffentliche_adresse
+
+    art = "worker-linux" if system == "linux" else "worker-windows"
+    angebot = aktualisierung.angebot(db, art, oeffentliche_adresse(db, request))
+    if angebot is None:
+        return Response(status_code=204)
+    return {**angebot, "repo": aktualisierung.ARTEN[art].repo()}
+
+
+def server_fassung() -> str:
+    """Fassung des Servers – die Worker-App installiert dazu passend dieselbe Fassung als KI-Paket."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("taleward-server")
+    except PackageNotFoundError:
+        return "0.0.0"
 
 
 @router.get("/models")

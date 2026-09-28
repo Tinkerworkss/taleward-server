@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     hf_token: str | None = None
     # Taleward-Spiegel des Sprechermodells (ohne Hugging-Face-Konto). Genutzt nur, wenn die Prüfsumme im Code steht.
     model_mirror_url: str = ""
+    # Updates: Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen von App, Worker und Server, lädt die
+    # Dateien für App und Worker und bietet sie selbst an – so fragen Handys und Worker nie direkt bei GitHub.
+    update_check: bool = True
+    update_app_repo: str = "Tinkerworkss/taleward-app"
+    update_server_repo: str = "Tinkerworkss/taleward-server"
+    update_worker_repo: str = "Tinkerworkss/taleward-server"  # nach dem Umzug der Worker-App: eigenes Repository
     # Externe Transkription als Ersatz (Standard aus). Audio verlässt dann den eigenen Betrieb →
     # Vertrag zur Auftragsverarbeitung mit dem Anbieter und Absatz im Datenschutzhinweis nötig.
     external_transcription: str = ""  # "mistral" = freigegeben
@@ -73,6 +79,13 @@ class Settings(BaseSettings):
     whisper_model: str = "large-v3"
     whisper_compute_type: str = "int8_float16"
     whisper_batch: int = 8
+    # Wo die Schritte laufen: "cuda" (Grafikkarte) oder "cpu". Die Worker-App wählt das nach Hardware und der
+    # eingestellten Speichergrenze (kleine Karten: Ausrichtung und Sprechertrennung auf dem Prozessor).
+    whisper_device: str = "cuda"
+    align_device: str = ""        # leer = wie whisper_device
+    diarize_device: str = ""      # leer = wie whisper_device
+    gpu_memory_limit_mb: int = 0  # 0 = keine Grenze; sonst höchstens so viel Grafikspeicher für PyTorch
+    cpu_threads: int = 0          # 0 = automatisch
     # Nur für Tests: andere DB-Datei
     database_url: str | None = None
 

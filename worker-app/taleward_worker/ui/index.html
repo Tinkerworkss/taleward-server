@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taleward Worker</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="kopf" id="kopf">
+  <div class="kopf__zeile">
+    <div class="kopf__marke"><img src="marke/taleward-lockup-inverse.svg" alt="Taleward"><span class="kopf__zusatz">Worker</span></div>
+  </div>
+  <nav class="reiter" role="tablist">
+    <button role="tab" data-reiter="status" aria-selected="true" data-t="Status"></button>
+    <button role="tab" data-reiter="einstellungen" aria-selected="false" data-t="Einstellungen"></button>
+    <button role="tab" data-reiter="protokoll" aria-selected="false" data-t="Protokoll"></button>
+  </nav>
+</header>
+
+<main>
+<!-- ============================================================ Assistent -->
+<section class="seite" id="assistent" hidden>
+  <ol class="schritte" aria-label="Einrichtung">
+    <li data-schritt="1" data-t="Verbinden"></li>
+    <li data-schritt="2" data-t="Prüfen"></li>
+    <li data-schritt="3" data-t="Installieren"></li>
+    <li data-schritt="4" data-t="Fertig"></li>
+  </ol>
+
+  <div data-seite="1">
+    <h1 data-t="Worker einrichten"></h1>
+    <p class="leise" data-t="intro_verbinden"></p>
+    <div class="karte">
+      <label class="feld"><span data-t="Adresse des Servers"></span>
+        <input id="adresse" type="url" placeholder="https://taleward.meinverein.de" autocomplete="url" spellcheck="false"></label>
+      <label class="feld"><span data-t="Kopplungscode"></span>
+        <input id="code" class="code" type="text" placeholder="ABCD-EFGH" maxlength="9" autocomplete="off" spellcheck="false">
+        <span class="hilfe" data-t="hilfe_code"></span></label>
+      <label class="feld"><span data-t="Name dieses Workers"></span>
+        <input id="name" type="text" maxlength="60" spellcheck="false">
+        <span class="hilfe" data-t="hilfe_name"></span></label>
+      <label class="haken" id="unsicher-zeile" hidden><input type="checkbox" id="unsicher"><span data-t="unsicher_erlauben"></span></label>
+      <div class="meldung meldung--fehler" id="koppeln-fehler" hidden></div>
+      <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="verbinden" data-t="Verbinden"></button></div>
+    </div>
+  </div>
+
+  <div data-seite="2" hidden>
+    <h1 data-t="Diesen PC prüfen"></h1>
+    <p class="leise" id="verbunden-mit"></p>
+    <div class="karte"><ul class="pruefliste" id="pruefliste"></ul></div>
+    <div class="meldung meldung--fehler" id="pruef-meldung" hidden></div>
+    <div class="knopfreihe knopfreihe--ende">
+      <button class="tw-btn tw-btn--quiet" id="nochmal-pruefen" data-t="Erneut prüfen"></button>
+      <button class="tw-btn tw-btn--quiet" id="testmodus-waehlen" data-t="Testmodus" hidden></button>
+      <button class="tw-btn tw-btn--primary" id="prozessor-waehlen" data-t="Mit dem Prozessor einrichten" hidden></button>
+      <button class="tw-btn tw-btn--primary" id="weiter-installieren" data-t="Weiter"></button>
+    </div>
+  </div>
+
+  <div data-seite="3" hidden>
+    <h1 data-t="KI-Paket laden"></h1>
+    <p class="leise" id="installieren-text"></p>
+    <div class="karte">
+      <div id="inst-start">
+        <ul class="pruefliste klein">
+          <li data-ok="ja"><span class="zeichen">1</span><span class="titel" data-t="inst_punkt_1"></span></li>
+          <li data-ok="ja"><span class="zeichen">2</span><span class="titel" data-t="inst_punkt_2"></span></li>
+          <li data-ok="ja"><span class="zeichen">3</span><span class="titel" data-t="inst_punkt_3"></span></li>
+        </ul>
+        <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="installieren" data-t="Installieren"></button></div>
+      </div>
+      <div id="inst-lauf" hidden>
+        <h2 id="inst-phase"></h2>
+        <div class="balken" id="inst-balken"><span></span></div>
+        <div class="fortschritt-zeile"><span id="inst-mb"></span><strong id="inst-prozent"></strong></div>
+        <p class="hilfe" id="inst-zeile"></p>
+        <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--quiet" id="inst-abbrechen" data-t="Abbrechen"></button></div>
+      </div>
+      <div id="inst-fehler" hidden>
+        <div class="meldung meldung--fehler" id="inst-fehlertext"></div>
+        <div class="knopfreihe knopfreihe--ende">
+          <button class="tw-btn tw-btn--quiet" data-zeige="protokoll" data-t="Protokoll ansehen"></button>
+          <button class="tw-btn tw-btn--primary" id="inst-nochmal" data-t="Erneut versuchen"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div data-seite="4" hidden>
+    <h1 data-t="Fertig eingerichtet"></h1>
+    <p class="leise" data-t="fertig_text"></p>
+    <div class="karte">
+      <div class="zeile"><div class="zeile__text"><strong data-t="autostart_titel"></strong><span data-t="autostart_text"></span></div>
+        <label class="schalter"><input type="checkbox" data-einstellung="autostart"><span></span></label></div>
+      <div class="zeile"><div class="zeile__text"><strong data-t="hintergrund_titel"></strong><span data-t="hintergrund_text"></span></div>
+        <label class="schalter"><input type="checkbox" data-einstellung="im_hintergrund"><span></span></label></div>
+      <div class="regler" data-regler hidden>
+        <div class="regler__kopf"><div class="zeile__text"><strong data-t="regler_titel"></strong><span data-t="regler_text"></span></div>
+          <output class="regler__wert" data-regler-wert></output></div>
+        <input type="range" min="2" max="8" step="0.5" data-regler-eingabe>
+        <div class="regler__skala"><span>2 GB</span><span data-regler-max></span></div>
+        <p class="regler__folge" data-regler-folge></p>
+      </div>
+    </div>
+    <div class="meldung meldung--hinweis" id="hinweis-modelle" data-t="hinweis_erste_modelle"></div>
+    <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="los" data-t="Worker starten"></button></div>
+  </div>
+</section>
+
+<!-- ============================================================ Status -->
+<section class="seite" id="reiter-status" hidden>
+  <div class="meldung meldung--hinweis" id="app-update" hidden></div>
+  <div class="meldung" id="motor-update" hidden></div>
+  <div class="karte" id="statuskarte" data-art="gestoppt">
+    <div class="status">
+      <div class="siegel"><img src="marke/taleward-mark.svg" alt="" id="siegel-bild"></div>
+      <div><p class="status__titel" id="status-titel"></p><p class="status__text" id="status-text"></p></div>
+      <div class="status__fortschritt" id="status-fortschritt" hidden>
+        <div class="balken"><span></span></div>
+        <div class="fortschritt-zeile"><span id="status-dauer"></span><strong id="status-prozent"></strong></div>
+      </div>
+    </div>
+    <div class="knopfreihe" id="status-knoepfe"></div>
+  </div>
+  <div class="zahlen">
+    <div class="zahl"><div class="zahl__wert" id="z-heute">0</div><div class="zahl__text" data-t="Heute verarbeitet"></div></div>
+    <div class="zahl"><div class="zahl__wert" id="z-gesamt">0</div><div class="zahl__text" data-t="Insgesamt"></div></div>
+  </div>
+  <div class="karte">
+    <dl class="liste">
+      <dt data-t="Server"></dt><dd id="i-server" class="waehlbar"></dd>
+      <dt data-t="Worker-Name"></dt><dd id="i-name"></dd>
+      <dt data-t="Grafikkarte"></dt><dd id="i-gpu"></dd>
+      <dt data-t="Arbeitsweise"></dt><dd id="i-modell"></dd>
+      <dt data-t="Gemessen"></dt><dd id="i-messung"></dd>
+      <dt data-t="Fassung"></dt><dd id="i-fassung"></dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ============================================================ Einstellungen -->
+<section class="seite" id="reiter-einstellungen" hidden>
+  <div class="karte">
+    <div class="zeile"><div class="zeile__text"><strong data-t="autostart_titel"></strong><span data-t="autostart_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="autostart"><span></span></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="hintergrund_titel"></strong><span data-t="hintergrund_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="im_hintergrund"><span></span></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="update_titel"></strong><span data-t="update_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="auto_update"><span></span></label></div>
+    <div class="regler" data-regler hidden>
+        <div class="regler__kopf"><div class="zeile__text"><strong data-t="regler_titel"></strong><span data-t="regler_text"></span></div>
+          <output class="regler__wert" data-regler-wert></output></div>
+        <input type="range" min="2" max="8" step="0.5" data-regler-eingabe>
+        <div class="regler__skala"><span>2 GB</span><span data-regler-max></span></div>
+        <p class="regler__folge" data-regler-folge></p>
+      </div>
+    <div class="zeile" id="zeile-prozessor" hidden><div class="zeile__text"><strong data-t="prozessor_titel"></strong><span data-t="prozessor_text"></span></div>
+      <label class="schalter"><input type="checkbox" id="nur-prozessor"><span></span></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="modell_titel"></strong><span data-t="modell_text"></span></div>
+      <select data-einstellung="modell">
+        <option value="auto" data-t="modell_auto"></option>
+        <option value="large-v3" data-t="modell_genau"></option>
+        <option value="large-v3-turbo" data-t="modell_schnell"></option>
+      </select></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="Sprache"></strong></div>
+      <select data-einstellung="sprache"><option value="" data-t="Wie das System"></option><option value="de">Deutsch</option><option value="en">English</option></select></div>
+  </div>
+  <div class="karte">
+    <h2 data-t="Speicherplatz"></h2>
+    <p class="leise" id="speicher"></p>
+    <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="ordner" data-t="Ordner öffnen"></button>
+      <button class="tw-btn tw-btn--secondary" id="verwaltung" data-t="Verwaltung öffnen"></button></div>
+  </div>
+  <div class="karte gefahr">
+    <h2 data-t="Verbindung und KI-Paket"></h2>
+    <p class="leise klein" data-t="gefahr_text"></p>
+    <div class="knopfreihe">
+      <button class="tw-btn tw-btn--secondary" id="neu-koppeln" data-t="Neu koppeln"></button>
+      <button class="tw-btn tw-btn--secondary" id="neu-installieren" data-t="KI-Paket neu installieren"></button>
+      <button class="tw-btn tw-btn--danger" id="entfernen" data-t="KI-Paket und Modelle entfernen"></button>
+    </div>
+  </div>
+  <p class="fuss"><span id="fuss-version"></span> · <button class="tw-btn tw-btn--quiet" id="beenden" data-t="Worker beenden"></button></p>
+</section>
+
+<!-- ============================================================ Protokoll -->
+<section class="seite" id="reiter-protokoll" hidden>
+  <pre class="log" id="log"></pre>
+  <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="log-kopieren" data-t="Kopieren"></button>
+    <button class="tw-btn tw-btn--secondary" id="log-ordner" data-t="Ordner öffnen"></button>
+    <button class="tw-btn tw-btn--quiet" data-zurueck data-t="Zurück"></button></div>
+</section>
+</main>
+<div class="toast" id="toast" hidden></div>
+<script src="texte.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

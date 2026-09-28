@@ -304,9 +304,16 @@ def worker(
     koppeln: str = typer.Option(None, "--koppeln", help="Kopplungscode aus der Verwaltung (Transkription → Worker "
                                                           "koppeln); trägt Schlüssel und Adresse selbst in die .env ein"),
     name: str = typer.Option(None, "--name", help="Nur mit --koppeln: Name dieses Workers (Standard: Gerätename)"),
+    app_modus: bool = typer.Option(False, "--app", hidden=True,
+                                   help="Für die Worker-App: Ereignisse als JSON-Zeilen, Steuerung über stdin"),
 ):
     """Worker starten: holt Aufträge vom Server und verarbeitet sie."""
     import logging
+
+    from app.worker_app import Anbindung
+
+    anbindung = Anbindung() if app_modus else None
+    melden = anbindung.melden if anbindung else (lambda ereignis, **daten: None)
 
     from app.config import get_settings
     from app.worker_prozess import WorkerProzess, pruefe_adresse, verarbeite_attrappe
@@ -337,15 +344,21 @@ def worker(
 
         from app.modelle import ServerQuelle
 
+        melden("pruefe")
         hf_token = s.hf_token or (_hf_vom_server(server, token) if token else None)
         quelle = ServerQuelle(server, token) if token else None  # Sprechermodell vom Server
-        motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle)
+        motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
+                              geraet=s.whisper_device, geraet_ausrichten=s.align_device,
+                              geraet_sprecher=s.diarize_device, grenze_mb=s.gpu_memory_limit_mb,
+                              threads=s.cpu_threads)
         try:
             info = motor.pruefen()
         except EinrichtungsFehler as e:
+            melden("fehler", message=str(e))
             typer.echo(f"Worker kann nicht starten: {e}", err=True)
             raise typer.Exit(1)
-        typer.echo(f"Grafikkarte: {info['gpu']}, Modell {info['modell']} ({info['genauigkeit']})")
+        grenze = f", höchstens {info['grenzeMb']} MB" if info.get("grenzeMb") else ""
+        typer.echo(f"Gerät: {info['gpu']} ({info['geraete']}), Modell {info['modell']} ({info['genauigkeit']}){grenze}")
         typer.echo("Hinweis: Beim ersten Auftrag werden die Modelle geladen (einige GB, einmalig).")
         verarbeite = verarbeiter(motor)
     if selbsttest:
@@ -359,7 +372,11 @@ def worker(
         typer.echo(f"Sprachmodell: {llm} – übernimmt auch Zusammenfassungen, wenn die Verwaltung „Lokales Modell“ "
                    "eingestellt hat.")
     knecht = WorkerProzess(server, token, s.worker_work_dir.expanduser().resolve(), verarbeite, info=info,
-                          zusammenfassen=zusammenfassen)
+                          zusammenfassen=zusammenfassen, melden=melden)
+    melden("bereit", gpu=info.get("gpu"), modell=info.get("modell"), vramMb=info.get("vramMb"), llm=llm,
+           testmodus=attrappe, geraete=info.get("geraete"), grenzeMb=info.get("grenzeMb"))
+    if anbindung:
+        anbindung.steuern(knecht)
     try:
         if einmal:
             knecht.aufraeumen()
@@ -369,6 +386,12 @@ def worker(
             knecht.laufen()
     except KeyboardInterrupt:
         typer.echo("\nWorker beendet.")
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            melden("fehler", message=str(e.code))
+        raise
+    finally:
+        melden("beendet")
 
 
 def _env_setzen(werte: dict[str, str], datei: Path = Path(".env")) -> None:
@@ -745,6 +768,12 @@ def einrichtungscode(neu: bool = typer.Option(False, "--neu", help="Einen neuen 
             typer.echo("Dieser Server ist schon eingerichtet. Verwalter-Recht vergeben mit: uv run chronik admin -u NAME")
             raise typer.Exit(1)
         code = code_erzeugen(db, neu=neu)
+        from app.einstellungen import angaben
+
+        adresse = angaben(db).public_url
+    if adresse:  # z. B. im Docker-Paket: PUBLIC_URL=https://taleward.meinverein.de
+        typer.echo(f"Im Browser öffnen:  {adresse.rstrip('/')}/verwaltung/einrichtung?code={code}")
+        return
     typer.echo(f"Im Browser öffnen:  <Adresse dieses Servers>/verwaltung/einrichtung?code={code}")
     typer.echo(f"Beispiel am eigenen PC: http://localhost:8000/verwaltung/einrichtung?code={code}")
 

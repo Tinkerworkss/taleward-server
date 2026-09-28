@@ -1,0 +1,67 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Updates") }}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Updates") }}</h1>
+
+<div class="karte" id="server">
+  <h2>{{ _("Dieser Server") }}</h2>
+  {% if server_neu %}
+  <p><span class="marke-status marke-status--warten">{{ _("Update verfügbar") }}</span>
+    {{ _("Hier läuft {jetzt}, verfügbar ist {neu}.", jetzt=eigene, neu=server_neu.version) }}
+    <a href="{{ server_neu.url }}" rel="noopener noreferrer" target="_blank">{{ _("Was ist neu?") }}</a></p>
+  <p>{{ _("Vorher eine Sicherung anlegen (Übersicht → Sicherung). Dann auf dem Server ausführen:") }}</p>
+  {% if docker %}
+  <div class="geheim"><code>cd /opt/taleward &amp;&amp; sudo docker compose build --pull &amp;&amp; sudo docker compose up -d</code></div>
+  <p class="hilfe">{{ _("Steht in /opt/taleward/.env eine feste Fassung (TALEWARD_VERSION), diese vorher auf v{neu} ändern.", neu=server_neu.version) }}</p>
+  {% else %}
+  <div class="geheim"><code>cd ~/session-chronik-server &amp;&amp; git pull &amp;&amp; uv sync</code></div>
+  <p class="hilfe">{{ _("Danach den Server neu starten. Die Datenbank wird beim Start selbst auf den neuen Stand gebracht.") }}</p>
+  {% endif %}
+  {% else %}
+  <p><span class="marke-status marke-status--gut">{{ _("aktuell") }}</span> {{ _("Hier läuft die Fassung {jetzt}.", jetzt=eigene) }}</p>
+  {% endif %}
+  <p class="hilfe">{{ _("Eine neue Server-Fassung meldet der Server auch per Benachrichtigung (Einstellungen → Benachrichtigungen).") }}</p>
+</div>
+
+<div class="karte" id="verteilen">
+  <h2>{{ _("App und Worker") }}</h2>
+  <p class="leise">{{ _("Der Server lädt neue Fassungen einmal am Tag von GitHub und bietet sie selbst an. Handys und Worker fragen nur diesen Server – nie GitHub. Die App nimmt immer die neueste Fassung, die einer ihrer Server anbietet.") }}</p>
+  <form method="post" action="/verwaltung/updates/modus" class="formular">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="haken"><input type="radio" name="modus" value="automatisch" {% if modus == "automatisch" %}checked{% endif %}>
+      <span><strong>{{ _("Automatisch freigeben") }}</strong> – {{ _("neue Fassungen werden sofort angeboten (empfohlen).") }}</span></label>
+    <label class="haken"><input type="radio" name="modus" value="manuell" {% if modus == "manuell" %}checked{% endif %}>
+      <span><strong>{{ _("Erst nach meiner Freigabe") }}</strong> – {{ _("du testest neue Fassungen selbst und gibst sie dann hier frei. Andere Server verteilen sie unter Umständen früher.") }}</span></label>
+    <div><button class="tw-btn tw-btn--secondary" type="submit">{{ _("Speichern") }}</button></div>
+  </form>
+  {% if app_von_hand %}
+  <div class="meldung">{{ _("Für die App sind unter Einstellungen eine Fassung bzw. ein Download-Link von Hand eingetragen – diese Angaben gelten vor den Updates hier.") }} <a href="/verwaltung/einstellungen">{{ _("Einstellungen") }}</a></div>
+  {% endif %}
+  <div class="tabelle-huelle"><table>
+    <thead><tr><th>{{ _("Was") }}</th><th>{{ _("Neueste") }}</th><th>{{ _("Angeboten") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for z in zeilen %}
+      <tr>
+        <td data-label="{{ _('Was') }}"><strong>{{ _(z.name) }}</strong><br><span class="leise">{{ z.repo }}</span></td>
+        <td data-label="{{ _('Neueste') }}">{% if z.neueste %}{{ z.neueste.version }}{% if z.neueste.groesse %} <span class="leise">· {{ groesse(z.neueste.groesse) }}</span>{% endif %}
+          {% if z.neueste.notizen %}<details><summary>{{ _("Was ist neu?") }}</summary><p class="hilfe notizen">{{ z.neueste.notizen }}</p></details>{% endif %}
+          {% else %}<span class="leise">{{ _("noch keine gefunden") }}</span>{% endif %}</td>
+        <td data-label="{{ _('Angeboten') }}">{% if z.freigegeben %}{{ z.freigegeben }}{% else %}<span class="leise">–</span>{% endif %}</td>
+        <td>{% if z.neueste and z.neueste.bereit and z.freigegeben != z.neueste.version %}
+          <form method="post" action="/verwaltung/updates/freigeben"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="art" value="{{ z.art }}"><input type="hidden" name="version" value="{{ z.neueste.version }}">
+            <button class="tw-btn tw-btn--primary tw-btn--klein" type="submit">{{ _("Freigeben") }}</button></form>
+          {% elif z.freigegeben %}<span class="marke-status marke-status--gut">{{ _("aktuell") }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <form method="post" action="/verwaltung/updates/pruefen" class="formular--zeile">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Jetzt nach Updates suchen") }}</button>
+    <span class="hilfe">{% if geprueft %}{{ _("Zuletzt gesucht: {zeit}", zeit=zeit(geprueft)) }}{% else %}{{ _("Noch nie gesucht.") }}{% endif %}
+      {% if not pruefung_an %} · {{ _("Automatische Suche ist aus (UPDATE_CHECK=false).") }}{% endif %}</span>
+  </form>
+  {% if fehler_pruefung %}<div class="meldung meldung--fehler">{{ _("Bei der letzten Suche gab es Fehler:") }} {{ fehler_pruefung }}</div>{% endif %}
+</div>
+{% endblock %}

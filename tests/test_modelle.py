@@ -205,3 +205,63 @@ def test_motor_nutzt_feste_fassungen(monkeypatch, tmp_path):
     assert m._pfad("whisper", "large-v3") == str(tmp_path / "Systran/faster-whisper-large-v3")
     import os
     assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
+
+
+def _schein_ki(monkeypatch, tmp_path, cuda: bool):
+    import sys
+    import types
+
+    from app import modelle, transkription
+
+    aufrufe = {}
+    torch = types.ModuleType("torch")
+    torch.cuda = types.SimpleNamespace(
+        is_available=lambda: cuda, get_device_name=lambda i: "Testkarte",
+        get_device_properties=lambda i: types.SimpleNamespace(total_memory=8 * 2 ** 30),
+        set_per_process_memory_fraction=lambda f, i: aufrufe.setdefault("anteil", f))
+    torch.set_num_threads = lambda n: aufrufe.setdefault("threads", n)
+    wx = types.ModuleType("whisperx")
+
+    class Modell:
+        def transcribe(self, *a, **kw):
+            return {"segments": []}
+
+    def laden(pfad, geraet, **kw):
+        aufrufe["laden"] = (geraet, kw)
+        return Modell()
+
+    wx.load_model = laden
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "whisperx", wx)
+    monkeypatch.setattr(transkription, "cuda_bibliotheken_vorladen", lambda: None)
+    monkeypatch.setattr(transkription, "gpu_freigeben", lambda: None)
+    monkeypatch.setattr(transkription.VramMesser, "gesamt_mb", staticmethod(lambda: 8192 if cuda else None))
+    monkeypatch.setattr(modelle, "bereitstellen",
+                        lambda repo, token=None: modelle.Bereit(repo, "f00d" * 10, tmp_path / repo, "gemerkt"))
+    return aufrufe
+
+
+def test_motor_auf_dem_prozessor(monkeypatch, tmp_path):
+    """Ohne Grafikkarte: alles auf der CPU, int8 statt float16, eigene Zahl an Threads."""
+    from app import transkription
+
+    aufrufe = _schein_ki(monkeypatch, tmp_path, cuda=False)
+    m = transkription.WhisperXMotor(modell="large-v3-turbo", hf_token="hf_x", geraet="cpu", threads=6)
+    info = m.pruefen()
+    assert info["gpu"] == "CPU" and info["geraete"] == "cpu/cpu/cpu" and m.genauigkeit == "int8"
+    assert aufrufe["threads"] == 6
+    m.transkribieren([], "de", [], lambda p: None)
+    assert aufrufe["laden"][0] == "cpu" and aufrufe["laden"][1]["threads"] == 6
+    # Grafikkarte verlangt, aber keine da → verständlicher Fehler
+    with pytest.raises(transkription.EinrichtungsFehler, match="Prozessor"):
+        transkription.WhisperXMotor(hf_token="hf_x").pruefen()
+
+
+def test_motor_mit_speichergrenze(monkeypatch, tmp_path):
+    from app import transkription
+
+    aufrufe = _schein_ki(monkeypatch, tmp_path, cuda=True)
+    m = transkription.WhisperXMotor(hf_token="hf_x", geraet="cuda", geraet_sprecher="cpu", grenze_mb=4096)
+    info = m.pruefen()
+    assert info["geraete"] == "cuda/cuda/cpu" and info["grenzeMb"] == 4096
+    assert aufrufe["anteil"] == 0.5 and m.genauigkeit == "int8_float16"

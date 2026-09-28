@@ -53,8 +53,11 @@ def beim_start(db: Session) -> str | None:
     if not braucht_einrichtung(db):
         return None
     code = code_erzeugen(db)
-    log.warning("\n%s\n  Ersteinrichtung: im Browser öffnen\n    <Adresse dieses Servers>/verwaltung/einrichtung?code=%s"
-                "\n  (Code jederzeit neu anzeigen: chronik einrichtungscode)\n%s", "=" * 64, code, "=" * 64)
+    from app.einstellungen import angaben
+
+    adresse = (angaben(db).public_url or "<Adresse dieses Servers>").rstrip("/")
+    log.warning("\n%s\n  Ersteinrichtung: im Browser öffnen\n    %s/verwaltung/einrichtung?code=%s"
+                "\n  (Code jederzeit neu anzeigen: chronik einrichtungscode)\n%s", "=" * 64, adresse, code, "=" * 64)
     return code
 
 

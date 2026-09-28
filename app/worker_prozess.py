@@ -25,6 +25,11 @@ from app.sprachmodell import SprachmodellFehler
 log = logging.getLogger("worker")
 
 Fortschritt = Callable[[float], None]
+Melden = Callable[..., None]  # melden("ereignis", **daten) – für die Worker-App (chronik worker --app)
+
+
+def _still(ereignis: str, **daten) -> None:
+    pass
 
 
 class Abgebrochen(Exception):
@@ -170,7 +175,7 @@ class WorkerProzess:
                  verarbeite: Callable[[dict, list[Path], Path, Fortschritt], dict],
                  client: httpx.Client | None = None, claim_wait: int | None = None,
                  capabilities: tuple[str, ...] = ("asr",), info: dict | None = None,
-                 zusammenfassen: Callable[[dict, Fortschritt], dict] | None = None):
+                 zusammenfassen: Callable[[dict, Fortschritt], dict] | None = None, melden: Melden = _still):
         self.client = client or httpx.Client(base_url=server, timeout=httpx.Timeout(90.0))
         self.client.headers["Authorization"] = f"Bearer {token}"
         self.arbeit = arbeitsordner
@@ -182,6 +187,16 @@ class WorkerProzess:
         if zusammenfassen is not None and "llm" not in self.capabilities:
             self.capabilities.append("llm")
         self._stop = threading.Event()
+        self.melden = melden
+        self._pause = threading.Event()  # gesetzt = keine neuen Aufträge annehmen (laufender wird fertig)
+
+    def pausieren(self, an: bool) -> None:
+        if an and not self._pause.is_set():
+            self._pause.set()
+            self.melden("pausiert")
+        elif not an and self._pause.is_set():
+            self._pause.clear()
+            self.melden("fortgesetzt")
 
     # -- Arbeitsordner
     def aufraeumen(self) -> None:
@@ -227,8 +242,10 @@ class WorkerProzess:
             return False
         job = auftrag["jobId"]
         log.info("Auftrag %s übernommen (%d Datei(en))", job, len(auftrag["files"]))
+        t0 = time.monotonic()
+        self.melden("auftrag", jobId=job, typ=auftrag.get("type") or "transcribe", dateien=len(auftrag["files"]))
         self.aufraeumen()
-        stand = {"p": 0.0, "verloren": False}
+        stand = {"p": 0.0, "verloren": False, "gemeldet": -1.0}
         herz_stop = threading.Event()
 
         def herzschlag():
@@ -244,6 +261,9 @@ class WorkerProzess:
 
         def fortschritt(p: float) -> None:
             stand["p"] = max(stand["p"], min(1.0, p))
+            if stand["p"] - stand["gemeldet"] >= 0.01:
+                stand["gemeldet"] = stand["p"]
+                self.melden("fortschritt", jobId=job, p=round(stand["p"], 3))
             if stand["verloren"] or self._stop.is_set():
                 raise Abgebrochen()
 
@@ -263,13 +283,17 @@ class WorkerProzess:
             r = self.client.post(f"/worker/v1/jobs/{job}/{ziel}", json=ergebnis)
             if r.status_code == 409:
                 log.warning("Ergebnis zu %s verworfen: Auftrag inzwischen woanders", job)
+                self.melden("abgebrochen", jobId=job, grund="lease")
             else:
                 r.raise_for_status()
                 log.info("Auftrag %s fertig", job)
+                self.melden("fertig", jobId=job, sekunden=round(time.monotonic() - t0, 1),
+                            audioSekunden=ergebnis.get("audioSeconds"), peakVramMb=ergebnis.get("peakVramMb"))
         except Abgebrochen:
             if not stand["verloren"]:
                 self._melde_fehler(job, "worker_stopped", "Der Worker wurde beendet.", True)
             log.warning("Auftrag %s abgebrochen", job)
+            self.melden("abgebrochen", jobId=job, grund="lease" if stand["verloren"] else "beendet")
         except KeyboardInterrupt:
             self._melde_fehler(job, "worker_stopped", "Der Worker wurde beendet.", True)
             raise
@@ -286,6 +310,8 @@ class WorkerProzess:
         return True
 
     def _melde_fehler(self, job: str, code: str, message: str, retryable: bool) -> None:
+        if code != "worker_stopped":
+            self.melden("fehlgeschlagen", jobId=job, code=code, message=message)
         try:
             self.client.post(f"/worker/v1/jobs/{job}/fail",
                              json={"code": code, "message": message, "retryable": retryable})
@@ -295,19 +321,33 @@ class WorkerProzess:
     def laufen(self) -> None:
         self.aufraeumen()
         log.info("Worker bereit, warte auf Aufträge …")
+        self.melden("warte")
         pause = 1.0
+        getrennt = False
         while not self._stop.is_set():
+            if self._pause.is_set():
+                self._stop.wait(1)
+                continue
             try:
-                self.einen_auftrag()
+                if self.einen_auftrag():
+                    self.melden("warte")
+                if getrennt:
+                    getrennt = False
+                    self.melden("verbunden")
                 pause = 1.0
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401:
+                    self.melden("abgelehnt")
                     raise SystemExit("Der Server lehnt den Worker-Token ab (401). Token prüfen: chronik worker-token list")
                 log.warning("Server antwortet mit %s – neuer Versuch in %.0f s", e.response.status_code, pause)
+                getrennt = True
+                self.melden("getrennt", grund=f"HTTP {e.response.status_code}", wiederIn=pause)
                 self._stop.wait(pause)
                 pause = min(pause * 2, 60)
             except httpx.HTTPError as e:
                 log.warning("Server nicht erreichbar (%s) – neuer Versuch in %.0f s", type(e).__name__, pause)
+                getrennt = True
+                self.melden("getrennt", grund=type(e).__name__, wiederIn=pause)
                 self._stop.wait(pause)
                 pause = min(pause * 2, 60)
         self.aufraeumen()

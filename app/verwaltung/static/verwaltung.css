@@ -205,3 +205,11 @@ article.text { max-width:760px; margin:var(--space-8) auto; line-height:1.6; }
 article.text h2 { margin-top:var(--space-6); }
 .formular fieldset ol, .formular fieldset p { margin:0; }
 .formular fieldset ol { padding-left:1.4em; display:grid; gap:var(--space-1); }
+
+/* Kopplung: Adresse und Code für die Worker-App */
+.koppeldaten { display:grid; grid-template-columns:auto 1fr; gap:var(--space-2) var(--space-4); align-items:center; margin:0 0 var(--space-3);
+  background:var(--siegel-soft); border-radius:var(--radius-sm); padding:var(--space-3) var(--space-4); }
+.koppeldaten dt { font:500 14px/20px var(--font-sans); color:var(--ink-muted); }
+.koppeldaten dd { margin:0; overflow-wrap:anywhere; }
+.koppelcode { font:700 24px/30px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing:.12em; }
+.notizen { white-space:pre-line; }

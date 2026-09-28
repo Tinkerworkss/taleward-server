@@ -19,8 +19,9 @@ router = APIRouter(tags=["Auth"])
 
 
 @router.get("/info", response_model=schemas.ServerInfoOut)
-def info(db: Session = Depends(get_db)):
-    from app import anmeldedienste, mail
+def info(request: Request, db: Session = Depends(get_db)):
+    from app import aktualisierung, anmeldedienste, mail
+    from app.einstellungen import oeffentliche_adresse
     from app.einrichtung import betriebsart
     from app.einstellungen import llm_konfig
     from app.services import cloud_anbieter
@@ -29,12 +30,17 @@ def info(db: Session = Depends(get_db)):
     extern = anbieter(db)
     k = llm_konfig(db)
     dienste = anmeldedienste.eingerichtet(db)
+    # Neueste App: von Hand in der Verwaltung eingetragen, sonst die freigegebene Fassung aus den Updates
+    # (Datei liegt auf diesem Server – die App fragt nie direkt bei GitHub)
+    neu = None if a.app_latest_version else aktualisierung.angebot(db, "app", oeffentliche_adresse(db, request))
     return schemas.ServerInfoOut(
         name=a.server_name, operator=a.server_operator, contact=a.server_contact, api_version=API_VERSION,
         registration=registrierung(db), auth_methods=["password"] + (["oidc"] if dienste else []),
         privacy_policy_url=a.privacy_policy_url,
         min_age=a.min_age, external_transcription=extern, min_app_version=a.app_min_version,
-        latest_app_version=a.app_latest_version, app_download_url=a.app_download_url, release_notes=a.app_release_notes,
+        latest_app_version=a.app_latest_version or (neu and neu["version"]),
+        app_download_url=a.app_download_url or (neu and neu["url"]),
+        release_notes=a.app_release_notes or (neu and neu["notes"]),
         external_transcription_mode=(("primary" if betriebsart(db) == "cloud" else "fallback") if extern else None),
         cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],

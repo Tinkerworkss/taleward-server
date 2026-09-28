@@ -1,0 +1,9 @@
+# HTTPS-Zertifikat holt Caddy selbst (Let's Encrypt) – die Domain muss auf diesen Server zeigen.
+{
+	email {$ACME_EMAIL}
+}
+
+{$TALEWARD_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy server:8000
+}

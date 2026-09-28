@@ -92,6 +92,8 @@ MELDUNGEN = {
     "modell": "Das Sprechermodell liegt jetzt auf dem Server.",
     "melden": "Benachrichtigungen gespeichert.",
     "melden_test": "Testnachricht verschickt.",
+    "updates_geprueft": "Nach Updates gesucht.",
+    "freigegeben": "Fassung freigegeben – App und Worker bekommen sie jetzt angeboten.",
 }
 
 
@@ -985,6 +987,9 @@ def einbinden(app: FastAPI) -> None:
     app.include_router(seiten)
     app.include_router(uebergabe.router)
     app.include_router(anmeldung.router)
+    from app.verwaltung import updates
+
+    app.include_router(updates.router)
     app.include_router(assistent.router)
     app.include_router(assistent.oeffentlich)
     app.include_router(router)

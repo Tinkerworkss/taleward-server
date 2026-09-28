@@ -1,6 +1,8 @@
 # Installation des Session-Chronik-Servers
 
 Schritt-für-Schritt-Anleitung für Windows 11 mit NVIDIA-Grafikkarte.
+Für einen gemieteten Server im Internet (VPS, z. B. Hostinger) gibt es eine kürzere Anleitung mit Docker:
+[INSTALLATION-VPS.md](INSTALLATION-VPS.md).
 Dauer: etwa 30–45 Minuten für Teil 1–4, dazu etwa 30 Minuten für den Probelauf (Teil 5), davon viel Warten auf Downloads.
 
 **So liest du die Anleitung:**
@@ -199,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
 uv run pytest
 ```
 
-✅ **Kontrolle:** Die letzte Zeile lautet **`219 passed`**. Der Lauf dauert etwa eine Minute.
+✅ **Kontrolle:** Die letzte Zeile lautet **`233 passed`**. Der Lauf dauert etwa eine Minute.
 
 ### 4.2 Eigenes Konto anlegen
 
@@ -684,6 +686,10 @@ Der jetzige Stand wird vorher selbst gesichert (Datei mit `-vorher` im Namen). D
 
 ## Teil 13 – Weitere Worker koppeln
 
+**Am einfachsten mit der Worker-App** für Windows oder Linux ([worker-app/README.md](worker-app/README.md)). Sie
+braucht weder WSL noch Kommandozeile: installieren, Adresse und Kopplungscode eingeben, fertig. Den Rest dieses
+Teils brauchst du nur ohne App.
+
 Soll ein lokaler Server mit Grafikkarte transkribieren, musst du keinen Schlüssel mehr von Hand kopieren:
 
 1. In der Verwaltung **Transkription → Weiteren Worker anbinden → Kopplungscode erzeugen** wählen. Der Code gilt
@@ -762,6 +768,19 @@ Die App zeigt nur die Dienste, die hier eingerichtet sind. Jeder eingeschaltete 
 Datenschutzhinweis; die Vorlage im Assistenten ergänzt ihn automatisch.
 
 ---
+
+## Teil 16 – Updates für App, Worker und Server
+
+Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen (Verwaltung → **Updates**):
+
+- **App und Worker:** Er lädt die Dateien (Android-APK, Windows-Installer) selbst herunter, prüft sie und bietet sie
+  unter seiner eigenen Adresse an. Handys und Worker fragen nur diesen Server, nie GitHub. Standard ist
+  „Automatisch freigeben“. Mit „Erst nach meiner Freigabe“ testest du eine neue Fassung zuerst und gibst sie dann frei.
+- **Worker-App:** Sie installiert neue Fassungen selbst, sobald sie nichts zu tun hat (abschaltbar in ihren
+  Einstellungen).
+- **Server:** Eine neue Server-Fassung zeigt die Seite mit dem passenden Befehl an. Wenn Benachrichtigungen
+  eingerichtet sind, kommt zusätzlich eine Nachricht.
+- Ohne Internetzugang oder zum Abschalten: `UPDATE_CHECK=false` in der `.env`.
 
 ## Alltag: Server später wieder starten
 

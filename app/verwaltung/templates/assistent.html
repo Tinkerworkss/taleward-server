@@ -84,10 +84,18 @@
 {% if art in ("lokal", "beides") %}
 <div class="karte" id="koppeln">
   <h2>{{ _("Lokalen Server verbinden") }}</h2>
-  <p>{{ _("Auf dem lokalen Server den Worker installieren (Anleitung Teil 5–7) und einmal mit dem Kopplungscode starten:") }}</p>
+  <p>{{ _("Die Worker-App richtet alles Nötige selbst ein und passt sich dem PC an: am schnellsten mit einer NVIDIA-Grafikkarte, sonst langsamer mit dem Prozessor.") }}
+    <a href="https://github.com/Tinkerworkss/taleward-server/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
+    <a href="https://github.com/Tinkerworkss/taleward-server/tree/main/worker-app#linux">{{ _("Linux") }}</a></p>
   {% if koppel %}
-  <div class="geheim"><code>uv run chronik worker --koppeln {{ koppel[0] }} --server {{ server_url }}</code></div>
+  <p>{{ _("In der Worker-App eintragen:") }}</p>
+  <dl class="koppeldaten">
+    <dt>{{ _("Adresse des Servers") }}</dt><dd><code>{{ server_url }}</code></dd>
+    <dt>{{ _("Kopplungscode") }}</dt><dd><code class="koppelcode">{{ koppel[0] }}</code></dd>
+  </dl>
   <p class="hilfe">{{ _("Der Code gilt bis {zeit} und nur einmal. Schlüssel und Adresse trägt der Worker selbst ein.", zeit=zeit(koppel[1])) }}</p>
+  <details><summary>{{ _("Ohne App: Befehl für die Kommandozeile") }}</summary>
+  <div class="geheim"><code>uv run chronik worker --koppeln {{ koppel[0] }} --server {{ server_url }}</code></div></details>
   {% else %}
   <form method="post" action="/verwaltung/assistent/koppeln"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="weiter" value="/verwaltung/assistent/betrieb">
     <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Kopplungscode erzeugen") }}</button></form>

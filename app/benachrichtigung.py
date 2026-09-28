@@ -175,8 +175,16 @@ TEXTE = {
     "speicher": ("Speicherplatz knapp",
                  "Im Datenordner sind nur noch {gb} GB frei. Alte Sicherungen löschen oder den Speicher erweitern."),
     "test": ("Test", "Diese Testnachricht zeigt: Benachrichtigungen kommen an."),
+    "server_update": ("Neue Server-Fassung {version}",
+                      "Für Taleward gibt es die Server-Fassung {version} (hier läuft {jetzt}). Wie du aktualisierst, "
+                      "steht in der Verwaltung → Updates."),
 }
 EN = {
+    "Neue Server-Fassung {version}": "New server version {version}",
+    "Für Taleward gibt es die Server-Fassung {version} (hier läuft {jetzt}). Wie du aktualisierst, "
+    "steht in der Verwaltung → Updates.":
+        "Taleward server version {version} is available (this server runs {jetzt}). How to update is shown in "
+        "Admin → Updates.",
     "Aufträge warten, kein Worker erreichbar": "Jobs waiting, no worker reachable",
     "{n} Auftrag/Aufträge warten seit über {h} Stunden, aber kein passender Worker ist verbunden. "
     "Bitte den lokalen Server und den Worker prüfen (Verwaltung → Transkription).":
@@ -219,7 +227,7 @@ def melden(db: Session, art: str, wichtig: bool = True, **werte) -> list[str]:
     k = konfig(db)
     titel, text = TEXTE[art]
     werte = {n: (_t(k, v) if isinstance(v, str) else v) for n, v in werte.items()}
-    return senden(db, _t(k, titel), _t(k, text).format(**werte), wichtig)
+    return senden(db, _t(k, titel).format(**werte), _t(k, text).format(**werte), wichtig)
 
 
 # ---------------------------------------------------------------- Prüfen (aus der Wartung)
