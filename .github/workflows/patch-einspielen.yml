@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths: ["*.patch"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -36,7 +37,7 @@ jobs:
         run: |
           docker build -t taleward-server:probe .
           docker run -d --name probe -p 8000:8000 taleward-server:probe
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1:health 2>/dev/null; curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
           docker logs probe; exit 1
       - name: Hochladen
         run: git push
