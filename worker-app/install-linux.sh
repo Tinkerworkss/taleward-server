@@ -71,7 +71,9 @@ Categories=AudioVideo;Utility;
 Terminal=false
 StartupWMClass=taleward-worker
 DESKTOP
-command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DATEN/applications" || true
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "$DATEN/applications" || true
+fi
 
 schritt "Autostart"
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/taleward-worker.desktop"
