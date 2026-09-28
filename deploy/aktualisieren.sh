@@ -64,6 +64,7 @@ if [ -z "$NEU" ]; then
   exit 1
 fi
 if [ "$ALT" = "$NEU" ]; then
+  if [ -t 1 ]; then echo "[taleward] schon aktuell: $NEU"; fi
   exit 0  # nichts zu tun – letztes Ergebnis bleibt für die Verwaltung stehen
 fi
 # Nie auf eine ältere Fassung wechseln
