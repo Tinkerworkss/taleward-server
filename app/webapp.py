@@ -46,7 +46,28 @@ def herkuenfte(db: Session) -> frozenset[str]:
     zentral = zentrale_herkunft(db)
     if zentral:
         werte.add(zentral)
+    werte |= set(zusaetzliche(db))
     return frozenset(werte)
+
+
+def zusaetzliche(db: Session) -> list[str]:
+    """In der Verwaltung eingetragene weitere Herkünfte (eine je Zeile)."""
+    return [h for h in (herkunft(z) for z in (meta_lesen(db, "web.herkuenfte") or "").splitlines()) if h]
+
+
+def browser_link(db: Session, basis: str, einladung: str) -> str | None:
+    """„Im Browser öffnen“: die Web-App dieses Servers, sonst die zentrale (falls erlaubt)."""
+    from urllib.parse import quote
+
+    from app import aktualisierung
+
+    if aktualisierung.web_ordner(db) is not None:
+        web = basis.rstrip("/")
+    else:
+        web = zentrale_herkunft(db)
+    if not web:
+        return None
+    return f"{web}/app/#/verbinden?invite=" + quote(einladung, safe="")
 
 
 def erlaubte_herkuenfte() -> frozenset[str]:

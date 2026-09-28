@@ -21,7 +21,9 @@
     <div class="knopfstapel">
       <a class="tw-btn tw-btn--primary" href="{{ app_link }}">{{ _("In Taleward öffnen") }}</a>
       {% if angaben.app_download_url %}<a class="tw-btn tw-btn--secondary" href="{{ angaben.app_download_url }}" rel="noopener">{{ _("App herunterladen") }}</a>{% endif %}
+      {% if browser_link %}<a class="tw-btn tw-btn--secondary" href="{{ browser_link }}" rel="noopener">{{ _("Im Browser öffnen") }}</a>{% endif %}
     </div>
+    {% if browser_link %}<p class="hilfe">{{ _("Für lange Aufnahmen am Handy die App verwenden.") }}</p>{% endif %}
     {% if angaben.app_download_url and apk_hinweis %}<p class="hilfe">{{ _("Android fragt einmal, ob Installationen aus dieser Quelle erlaubt sind – das ist bei Apps außerhalb des Play Store normal.") }}</p>{% endif %}
     <label>{{ _("Link zum Kopieren") }} <input class="einladung__link" type="text" readonly value="{{ link }}"></label>
     <ol class="schritte">

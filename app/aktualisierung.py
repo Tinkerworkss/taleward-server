@@ -49,11 +49,13 @@ class Art:
 
     def repo(self) -> str:
         s = get_settings()
-        return {"app": s.update_app_repo, "server": s.update_server_repo}.get(self.schluessel, s.update_worker_repo)
+        return {"app": s.update_app_repo, "web": s.update_app_repo,
+                "server": s.update_server_repo}.get(self.schluessel, s.update_worker_repo)
 
 
 ARTEN = {a.schluessel: a for a in [
     Art("app", "App (Android)", r"^(?:app-)?v?(\d+\.\d+\.\d+)$", r"\.apk$", "releases"),
+    Art("web", "Web-App", r"^(?:app-)?v?(\d+\.\d+\.\d+)$", r"^taleward-web-.*\.zip$", "releases"),
     Art("worker-windows", "Worker (Windows)", r"^worker-v(\d+\.\d+\.\d+)$", r"^TalewardWorker-Setup\.exe$", "releases"),
     Art("worker-linux", "Worker (Linux)", r"^worker-v(\d+\.\d+\.\d+)$", None, "releases"),
     Art("server", "Server", r"^v(\d+\.\d+\.\d+)$", None, "tags"),
@@ -203,6 +205,61 @@ def _laden(klient: httpx.Client, art: str, eintrag: dict) -> dict:
     return {**eintrag, "sha256": summe, "groesse": ziel.stat().st_size, "bereit": True}
 
 
+MAX_WEB_BYTES = 200 * 1024 * 1024
+MAX_WEB_DATEIEN = 5000
+
+
+def _entpacken(zip_pfad: Path) -> Path:
+    """Web-App (taleward-web-<version>.zip) sicher entpacken nach <ordner>/app – ohne Pfade außerhalb des Ordners.
+    Liegt alles in einem gemeinsamen Oberordner, wird dieser weggelassen (index.html muss oben liegen)."""
+    import zipfile
+    from pathlib import PurePosixPath
+
+    ziel = zip_pfad.parent / "app"
+    if (ziel / "index.html").is_file():
+        return ziel
+    tmp = zip_pfad.parent / "app.teil"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        with zipfile.ZipFile(zip_pfad) as z:
+            eintraege = [i for i in z.infolist() if not i.is_dir()]
+            if len(eintraege) > MAX_WEB_DATEIEN or sum(i.file_size for i in eintraege) > MAX_WEB_BYTES:
+                raise UpdateFehler("Web-App: Archiv zu groß")
+            namen = [PurePosixPath(i.filename) for i in eintraege]
+            for n in namen:
+                if n.is_absolute() or ".." in n.parts or "\\" in str(n) or not n.parts:
+                    raise UpdateFehler(f"Web-App: unzulässiger Pfad {n}")
+            ober = {n.parts[0] for n in namen}
+            weglassen = 1 if len(ober) == 1 and all(len(n.parts) > 1 for n in namen) else 0
+            for info, n in zip(eintraege, namen):
+                rel = PurePosixPath(*n.parts[weglassen:])
+                pfad = tmp.joinpath(*rel.parts)
+                pfad.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as quelle, pfad.open("wb") as aus:
+                    shutil.copyfileobj(quelle, aus)
+    except zipfile.BadZipFile:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise UpdateFehler("Web-App: Archiv beschädigt") from None
+    except UpdateFehler:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    if not (tmp / "index.html").is_file():
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise UpdateFehler("Web-App: index.html fehlt")
+    shutil.rmtree(ziel, ignore_errors=True)
+    tmp.rename(ziel)
+    return ziel
+
+
+def web_ordner(db: Session) -> Path | None:
+    """Ordner der freigegebenen Web-App, falls dieser Server sie selbst ausliefert."""
+    s = freigegeben(db, "web")
+    if not s:
+        return None
+    ordner = ablage() / "web" / s["version"] / "app"
+    return ordner if (ordner / "index.html").is_file() else None
+
+
 def _sha(pfad: Path) -> str:
     h = hashlib.sha256()
     with pfad.open("rb") as f:
@@ -246,6 +303,8 @@ def pruefen(db: Session, klient: httpx.Client | None = None) -> dict:
             if art.datei:
                 try:
                     eintrag = _laden(klient, schluessel, eintrag)
+                    if schluessel == "web":
+                        _entpacken(ablage() / "web" / eintrag["version"] / eintrag["datei"])
                 except (httpx.HTTPError, UpdateFehler, OSError) as e:
                     fehler.append(f"{art.name}: {e}")
                     continue

@@ -17,6 +17,12 @@ STANDARD = "de"
 COOKIE = "tw_sprache"
 
 EN: dict[str, str] = {
+    "Weitere Adressen für die Web-App": "Additional addresses for the web app",
+    "Eine je Zeile. Nur nötig, wenn die Web-App noch woanders läuft. Die eigene Adresse ist immer erlaubt.": "One per line. Only needed if the web app also runs elsewhere. This server's own address is always allowed.",
+    "Weitere Adressen bitte vollständig angeben, z. B. https://taleward.meinverein.de": "Please enter additional addresses in full, e.g. https://taleward.myclub.org",
+    "Im Browser öffnen": "Open in browser",
+    "Für lange Aufnahmen am Handy die App verwenden.": "For long recordings on a phone, use the app.",
+    "Web-App": "Web app",
     "Die Web-App auf {adresse} darf diesen Server nutzen": "The web app at {adresse} may use this server",
     "Dann können Mitglieder Taleward auch im Browser nutzen. Die Website sieht dabei keine Inhalte – der Browser spricht direkt mit diesem Server. Nur mit HTTPS.": "Members can then use Taleward in the browser too. The website never sees any content – the browser talks to this server directly. HTTPS only.",
     "Updates": "Updates",

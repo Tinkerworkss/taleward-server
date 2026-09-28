@@ -52,7 +52,8 @@ def test_pruefen_laden_und_anbieten(client, dbs, gh):
     from app import aktualisierung
 
     ergebnis = aktualisierung.pruefen(dbs, gh)
-    assert ergebnis == {"app": "1.2.0", "worker-windows": "0.1.0", "worker-linux": "0.1.0", "server": "0.5.0"}
+    assert ergebnis == {"app": "1.2.0", "web": None, "worker-windows": "0.1.0", "worker-linux": "0.1.0",
+                        "server": "0.5.0"}
     info = client.get("/api/v1/info").json()
     assert info["latestAppVersion"] == "1.2.0" and info["releaseNotes"] == "Neu: Kapitel-Kommentare"
     assert info["appDownloadUrl"] == "http://testserver/downloads/app/1.2.0/taleward-1.2.0.apk"  # eigener Server

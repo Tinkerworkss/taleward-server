@@ -158,9 +158,10 @@ def create_app() -> FastAPI:
     app.include_router(api)
     app.include_router(worker.router)
     app.include_router(anmeldung.seiten)
-    from app.routers import downloads
+    from app.routers import downloads, webapp_seiten
 
     app.include_router(downloads.router)
+    app.include_router(webapp_seiten.router)
     from app.verwaltung.router import einbinden
 
     einbinden(app)

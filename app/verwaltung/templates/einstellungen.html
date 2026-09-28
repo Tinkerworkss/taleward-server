@@ -55,6 +55,8 @@
       <span>{{ _("Die Web-App auf {adresse} darf diesen Server nutzen", adresse=zentrale_webapp) }}</span></label>
     <span class="hilfe">{{ _("Dann können Mitglieder Taleward auch im Browser nutzen. Die Website sieht dabei keine Inhalte – der Browser spricht direkt mit diesem Server. Nur mit HTTPS.") }}</span>
     {% endif %}
+    <label>{{ _("Weitere Adressen für die Web-App") }} <textarea name="web_herkuenfte" rows="2" maxlength="2000" placeholder="https://…">{{ web_herkuenfte }}</textarea>
+      <span class="hilfe">{{ _("Eine je Zeile. Nur nötig, wenn die Web-App noch woanders läuft. Die eigene Adresse ist immer erlaubt.") }}</span></label>
   </div>
 </div>
 <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>

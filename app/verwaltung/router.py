@@ -711,6 +711,7 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
     return _seite(request, "einstellungen.html", user, db, orgs=orgs, fehler=fehler,
                   registrierung=registrierung(db), limit_euro=(limit or 0) / 100,
                   melden=benachrichtigung.konfig(db), web_zentral=webapp.zentral_erlaubt(db),
+                  web_herkuenfte="\n".join(webapp.zusaetzliche(db)),
                   zentrale_webapp=webapp.herkunft(get_settings().central_web_origin))
 
 
@@ -721,6 +722,7 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
                             app_latest_version: str = Form(""), app_download_url: str = Form(""),
                             app_release_notes: str = Form(""), registrierung: str = Form(""), limit_euro: str = Form(""),
                             public_url: str = Form(""), web_zentral: str = Form(""), web_zentral_feld: str = Form(""),
+                            web_herkuenfte: str = Form(""),
                             user: User = Depends(verwalter),
                             db: Session = Depends(get_db)):
     from app.einstellungen import mindestversion_vergessen, version_tupel
@@ -768,6 +770,12 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
         meta_schreiben(db, "registrierung", registrierung)
     if web_zentral_feld:  # Kästchen war auf der Seite (sonst gar nicht angezeigt)
         meta_schreiben(db, "web.zentral", "an" if web_zentral == "an" else "aus")
+    from app.webapp import herkunft
+
+    zeilen = [z.strip() for z in web_herkuenfte.splitlines() if z.strip()]
+    if any(herkunft(z) is None for z in zeilen):
+        return fehler(_("Weitere Adressen bitte vollständig angeben, z. B. https://taleward.meinverein.de"))
+    meta_schreiben(db, "web.herkuenfte", "\n".join(herkunft(z) for z in zeilen[:20]))
     orgs = db.scalars(select(Organization).order_by(Organization.created_at)).all()
     if org_name.strip() and len(orgs) == 1:
         orgs[0].name = org_name.strip()[:200]
@@ -913,6 +921,9 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
     from app.models import Invite
     from app.services import normalize_invite_code
 
+    from app import webapp
+    from app.einstellungen import oeffentliche_adresse
+
     code = normalize_invite_code(code)[:32]
     einladung = db.get(Invite, code)
     gueltig = einladung is not None and einladung.expires_at > utcnow()
@@ -925,7 +936,8 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
                      app_link="taleward://einladung?url=" + quote(link, safe=""),
                      apk_hinweis=ziel.path.lower().endswith(".apk") or not store,
                      og_bild=str(request.base_url).rstrip("/") + "/verwaltung/static/marke/og-image.png",
-                     qr=qr_bild(link) if gueltig else None)
+                     qr=qr_bild(link) if gueltig else None,
+                     browser_link=webapp.browser_link(db, oeffentliche_adresse(db, request), link) if gueltig else None)
     if not gueltig:
         antwort.status_code = 404
     return antwort

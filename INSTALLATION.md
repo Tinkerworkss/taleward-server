@@ -201,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
 uv run pytest
 ```
 
-✅ **Kontrolle:** Die letzte Zeile lautet **`237 passed`**. Der Lauf dauert etwa eine Minute.
+✅ **Kontrolle:** Die letzte Zeile lautet **`241 passed`**. Der Lauf dauert etwa eine Minute.
 
 ### 4.2 Eigenes Konto anlegen
 
@@ -780,6 +780,9 @@ Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen (Verwaltung → *
   Einstellungen).
 - **Server:** Eine neue Server-Fassung zeigt die Seite mit dem passenden Befehl an. Wenn Benachrichtigungen
   eingerichtet sind, kommt zusätzlich eine Nachricht.
+- **Web-App:** Hat ein App-Release die Web-Fassung (`taleward-web-….zip`) dabei, liefert der Server sie unter
+  `https://<server>/app/` selbst aus. Die Einladungsseite bekommt dann „Im Browser öffnen“. Ohne eigene Web-App zeigt
+  dieser Knopf auf die zentrale Web-App auf taleward.org, sofern sie unter Einstellungen → App-Versionen erlaubt ist.
 - Ohne Internetzugang oder zum Abschalten: `UPDATE_CHECK=false` in der `.env`.
 
 ## Alltag: Server später wieder starten

@@ -99,3 +99,73 @@ def test_info_mit_pruefsumme(client, dbs):
     info = client.get(f"{API}/info").json()
     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
     assert info["apiVersion"] == "0.4.3"
+
+
+def _web_zip(dateien: dict) -> bytes:
+    import io
+    import zipfile
+
+    puffer = io.BytesIO()
+    with zipfile.ZipFile(puffer, "w") as z:
+        for name, inhalt in dateien.items():
+            z.writestr(name, inhalt)
+    return puffer.getvalue()
+
+
+def test_web_app_vom_eigenen_server(client, dbs, world):
+    from app import aktualisierung
+    from tests.test_aktualisierung import github, release
+
+    assert client.get("/app/").status_code == 404
+    zip_ = _web_zip({"dist/index.html": "<!doctype html><title>Taleward</title>", "dist/assets/app-1a2b.js": "x=1",
+                     "dist/manifest.webmanifest": "{}"})
+    gh = github([release("v1.2.0", "taleward-web-1.2.0.zip", zip_)], [], [], {"/v1.2.0/taleward-web-1.2.0.zip": zip_})
+    assert aktualisierung.pruefen(dbs, gh)["web"] == "1.2.0"
+    assert client.get("/app", follow_redirects=False).headers["location"] == "/app/"
+    r = client.get("/app/")
+    assert r.status_code == 200 and "Taleward" in r.text and r.headers["cache-control"] == "no-cache"
+    r = client.get("/app/assets/app-1a2b.js")
+    assert r.text == "x=1" and "immutable" in r.headers["cache-control"]
+    assert client.get("/app/manifest.webmanifest").headers["content-type"].startswith("application/manifest+json")
+    assert client.get("/app/../pyproject.toml").status_code == 404
+    assert client.get("/app/%2e%2e/%2e%2e/geheimnis.txt").status_code == 404
+    # Einladungsseite verweist jetzt auf die Web-App dieses Servers
+    code = client.post(f"{API}/campaigns/{world['cid']}/invites", headers=world["gm"]).json()["code"]
+    seite = client.get(f"/einladung/{code}").text
+    assert "http://testserver/app/#/verbinden?invite=http%3A%2F%2Ftestserver%2Feinladung%2F" in seite
+    assert "Für lange Aufnahmen am Handy die App verwenden." in seite
+
+
+def test_web_zip_mit_boesem_pfad_wird_abgelehnt(client, dbs):
+    from app import aktualisierung
+    from app.einstellungen import meta_lesen
+    from tests.test_aktualisierung import github, release
+
+    zip_ = _web_zip({"index.html": "ok", "../../boese.txt": "x"})
+    gh = github([release("v1.2.0", "taleward-web-1.2.0.zip", zip_)], [], [], {"/v1.2.0/taleward-web-1.2.0.zip": zip_})
+    aktualisierung.pruefen(dbs, gh)
+    assert "unzulässiger Pfad" in meta_lesen(dbs, "update.fehler")
+    assert client.get("/app/").status_code == 404
+    assert not (aktualisierung.ablage().parent / "boese.txt").exists()
+
+
+def test_einladung_im_browser_zentral_oder_gar_nicht(client, dbs, world):
+    from app.einstellungen import meta_schreiben
+
+    code = client.post(f"{API}/campaigns/{world['cid']}/invites", headers=world["gm"]).json()["code"]
+    assert f"{ZENTRAL}/app/#/verbinden?invite=" in client.get(f"/einladung/{code}").text
+    meta_schreiben(dbs, "web.zentral", "aus")
+    dbs.commit()
+    assert "Im Browser öffnen" not in client.get(f"/einladung/{code}").text
+
+
+def test_weitere_herkuenfte(client, dbs, admin):  # noqa: F811
+    daten = {"csrf": admin, "server_name": "S", "server_operator": "B", "min_age": "16", "web_zentral_feld": "1",
+             "web_zentral": "an"}
+    r = client.post("/verwaltung/einstellungen", data={**daten, "web_herkuenfte": "kein-link"})
+    assert r.status_code == 400
+    r = client.post("/verwaltung/einstellungen", data={**daten, "web_herkuenfte": "https://App.Beispiel.de/app/\n"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert vorab(client, "https://app.beispiel.de").headers["access-control-allow-origin"] == "https://app.beispiel.de"
+    assert "https://app.beispiel.de" in client.get("/verwaltung/einstellungen").text
