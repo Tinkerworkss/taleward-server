@@ -1,4 +1,4 @@
-"""Anbindung an die Worker-App (Oberfläche für Windows und Linux, Ordner worker-app/).
+"""Anbindung an die Worker-App (Oberfläche für Windows und Linux, Repository taleward-worker).
 
 Die App startet „chronik worker --app“ als Unterprozess:
 - Ereignisse gehen als eine JSON-Zeile je Ereignis auf stdout, mit Vorsilbe, damit andere Ausgaben nicht stören:

@@ -27,7 +27,7 @@ die Tests prüfen jede Antwort dagegen.
 
 Die Schritt-für-Schritt-Anleitung mit Kontrollpunkten und Fehlerhilfe steht in **[INSTALLATION.md](INSTALLATION.md)**.
 
-Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](worker-app/README.md)**.
+Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](https://github.com/Tinkerworkss/taleward-worker)** (eigenes Repository).
 
 Mit Docker – gemieteter Server (VPS), eigener Rechner zu Hause/im Verein oder Windows 11 mit Ubuntu: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
 
@@ -96,7 +96,6 @@ app/
   cli.py        Kommandozeile „chronik“
 migrations/   Datenbank-Migrationen (Alembic)
 tests/        pytest inkl. automatischer Vertragsprüfung
-worker-app/   Worker-App für Windows und Linux (eigene Oberfläche, installiert das KI-Paket selbst)
 deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
 engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
 ```

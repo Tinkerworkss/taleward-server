@@ -58,7 +58,7 @@ bearbeiten), sonst ändert sich die Adresse für die App.
 
 ## 2. Deinen PC als Worker verbinden
 
-Auf dem PC die **Worker-App** installieren ([worker-app/README.md](worker-app/README.md), Windows oder Linux). In der
+Auf dem PC die **Worker-App** installieren ([taleward-worker](https://github.com/Tinkerworkss/taleward-worker), Windows oder Linux). In der
 Verwaltung **Transkription → Weiteren Worker anbinden → Kopplungscode erzeugen** und Adresse und Code in der App
 eintragen. Der PC braucht keine
 Portfreigabe im Router – er fragt beim Server nach Arbeit. Ist er aus, warten die Aufnahmen, bis er wieder läuft

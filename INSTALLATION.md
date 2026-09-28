@@ -686,7 +686,7 @@ Der jetzige Stand wird vorher selbst gesichert (Datei mit `-vorher` im Namen). D
 
 ## Teil 13 – Weitere Worker koppeln
 
-**Am einfachsten mit der Worker-App** für Windows oder Linux ([worker-app/README.md](worker-app/README.md)). Sie
+**Am einfachsten mit der Worker-App** für Windows oder Linux ([taleward-worker](https://github.com/Tinkerworkss/taleward-worker)). Sie
 braucht weder WSL noch Kommandozeile: installieren, Adresse und Kopplungscode eingeben, fertig. Den Rest dieses
 Teils brauchst du nur ohne App.
 

@@ -5,6 +5,3 @@ __pycache__/
 data/
 .env
 *.log
-worker-app/dist/
-worker-app/build/
-worker-app/bin/

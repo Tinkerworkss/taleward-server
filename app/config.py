@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     update_check: bool = True
     update_app_repo: str = "Tinkerworkss/taleward-app"
     update_server_repo: str = "Tinkerworkss/taleward-server"
-    update_worker_repo: str = "Tinkerworkss/taleward-server"  # nach dem Umzug der Worker-App: eigenes Repository
+    update_worker_repo: str = "Tinkerworkss/taleward-worker"
     # Externe Transkription als Ersatz (Standard aus). Audio verlässt dann den eigenen Betrieb →
     # Vertrag zur Auftragsverarbeitung mit dem Anbieter und Absatz im Datenschutzhinweis nötig.
     external_transcription: str = ""  # "mistral" = freigegeben
