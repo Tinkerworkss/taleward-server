@@ -1,0 +1,42 @@
+
+# Lädt man eine *.patch-Datei ins Hauptverzeichnis hoch, spielt dieser Ablauf sie ein,
+# prüft mit den Tests und schiebt das Ergebnis auf main. Die Patch-Datei selbst wird wieder entfernt.
+on:
+  push:
+    branches: [main]
+    paths: ["*.patch"]
+
+permissions:
+  contents: write
+
+jobs:
+  einspielen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch anwenden
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p /tmp/patches
+          ls *.patch
+          cp *.patch /tmp/patches/
+          git rm -q *.patch
+          git commit -q -m "Patch-Datei entfernt"
+          git am --committer-date-is-author-date /tmp/patches/*.patch
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          uv sync --frozen
+          uv run pytest -q
+      - name: Docker-Paket bauen und starten
+        run: |
+          docker build -t taleward-server:probe .
+          docker run -d --name probe -p 8000:8000 taleward-server:probe
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1:health 2>/dev/null; curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
+          docker logs probe; exit 1
+      - name: Hochladen
+        run: git push
