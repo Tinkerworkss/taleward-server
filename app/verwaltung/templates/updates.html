@@ -9,16 +9,35 @@
   <p><span class="marke-status marke-status--warten">{{ _("Update verfügbar") }}</span>
     {{ _("Hier läuft {jetzt}, verfügbar ist {neu}.", jetzt=eigene, neu=server_neu.version) }}
     <a href="{{ server_neu.url }}" rel="noopener noreferrer" target="_blank">{{ _("Was ist neu?") }}</a></p>
-  <p>{{ _("Vorher eine Sicherung anlegen (Übersicht → Sicherung). Dann auf dem Server ausführen:") }}</p>
-  {% if docker %}
-  <div class="geheim"><code>cd /opt/taleward &amp;&amp; sudo docker compose build --pull &amp;&amp; sudo docker compose up -d</code></div>
-  <p class="hilfe">{{ _("Steht in /opt/taleward/.env eine feste Fassung (TALEWARD_VERSION), diese vorher auf v{neu} ändern.", neu=server_neu.version) }}</p>
-  {% else %}
-  <div class="geheim"><code>cd ~/session-chronik-server &amp;&amp; git pull &amp;&amp; uv sync</code></div>
-  <p class="hilfe">{{ _("Danach den Server neu starten. Die Datenbank wird beim Start selbst auf den neuen Stand gebracht.") }}</p>
-  {% endif %}
   {% else %}
   <p><span class="marke-status marke-status--gut">{{ _("aktuell") }}</span> {{ _("Hier läuft die Fassung {jetzt}.", jetzt=eigene) }}</p>
+  {% endif %}
+  {% if docker %}
+  <form method="post" action="/verwaltung/updates/server-auto" class="formular">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="haken"><input type="checkbox" name="an" value="an" {% if server_auto %}checked{% endif %}>
+      <span><strong>{{ _("Automatisch aktualisieren") }}</strong> – {{ _("nachts zwischen 3 und 5 Uhr, mit Sicherung vorher. Startet die neue Fassung nicht, geht der Server von selbst auf die alte Fassung und die Daten von vorher zurück.") }}</span></label>
+    <div><button class="tw-btn tw-btn--secondary" type="submit">{{ _("Speichern") }}</button></div>
+  </form>
+  {% if server_neu %}
+  <form method="post" action="/verwaltung/updates/server-jetzt">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="tw-btn tw-btn--primary" type="submit" {% if server_jetzt %}disabled{% endif %}>{{ _("Jetzt aktualisieren") }}</button>
+    {% if server_jetzt %}<span class="hilfe">{{ _("Angefordert – startet in den nächsten Minuten.") }}</span>{% endif %}
+  </form>
+  {% endif %}
+  {% if server_status and server_status.ergebnis != "aktuell" %}
+  <div class="meldung {% if server_status.ergebnis != 'aktualisiert' %}meldung--fehler{% endif %}">
+    {% if server_status.ergebnis == "aktualisiert" %}{{ _("Zuletzt aktualisiert: {von} → {nach} ({zeit})", von=server_status.von, nach=server_status.nach, zeit=zeit(status_zeit)) }}
+    {% elif server_status.ergebnis == "zurueckgenommen" %}{{ _("Update auf {nach} zurückgenommen ({zeit}):", nach=server_status.nach, zeit=zeit(status_zeit)) }} {{ server_status.meldung }}
+    {% else %}{{ _("Update-Fehler ({zeit}):", zeit=zeit(status_zeit)) }} {{ server_status.meldung }}{% endif %}
+  </div>
+  {% endif %}
+  <p class="hilfe">{{ _("Von Hand auf dem Server:") }} <code>cd /opt/taleward &amp;&amp; sudo ./aktualisieren.sh --jetzt</code></p>
+  {% elif server_neu %}
+  <p>{{ _("Vorher eine Sicherung anlegen (Übersicht → Sicherung). Dann auf dem Server ausführen:") }}</p>
+  <div class="geheim"><code>cd ~/session-chronik-server &amp;&amp; git pull &amp;&amp; uv sync</code></div>
+  <p class="hilfe">{{ _("Danach den Server neu starten. Die Datenbank wird beim Start selbst auf den neuen Stand gebracht.") }}</p>
   {% endif %}
   <p class="hilfe">{{ _("Eine neue Server-Fassung meldet der Server auch per Benachrichtigung (Einstellungen → Benachrichtigungen).") }}</p>
 </div>

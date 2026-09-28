@@ -332,6 +332,7 @@ def pruefen(db: Session, klient: httpx.Client | None = None) -> dict:
 
 def automatisch(db: Session) -> None:
     """Aus der Wartung: einmal am Tag (nach einem Fehler nach 2 Stunden erneut)."""
+    server_status_melden(db)
     if not get_settings().update_check:
         return
     zuletzt = meta_lesen(db, "update.geprueft")
@@ -363,6 +364,62 @@ def _server_melden(db: Session) -> None:
         benachrichtigung.melden(db, "server_update", wichtig=False, version=neu["version"], jetzt=eigene_fassung())
     except Exception:  # noqa: BLE001 – Benachrichtigung ist Beiwerk
         log.exception("Hinweis auf neue Server-Fassung nicht gesendet")
+
+
+# ---------------------------------------------------------------- Server selbst (Docker-Paket)
+# Das Aktualisieren übernimmt deploy/aktualisieren.sh auf dem Host (systemd-Timer). Server und Skript verständigen
+# sich über Dateien im Datenordner: server-auto.txt (an|aus), server-jetzt (Auftrag), server-status.json (Ergebnis).
+def docker() -> bool:
+    import os
+
+    return bool(os.environ.get("TALEWARD_DOCKER"))
+
+
+def server_auto(db: Session | None = None) -> bool:
+    try:
+        return (ablage() / "server-auto.txt").read_text(encoding="utf-8").strip() != "aus"
+    except OSError:
+        return True
+
+
+def server_auto_setzen(an: bool) -> None:
+    ablage().mkdir(parents=True, exist_ok=True)
+    (ablage() / "server-auto.txt").write_text("an" if an else "aus", encoding="utf-8")
+
+
+def server_jetzt() -> None:
+    ablage().mkdir(parents=True, exist_ok=True)
+    (ablage() / "server-jetzt").write_text(utcnow().isoformat(), encoding="utf-8")
+
+
+def server_jetzt_angefordert() -> bool:
+    return (ablage() / "server-jetzt").exists()
+
+
+def server_status() -> dict | None:
+    try:
+        return json.loads((ablage() / "server-status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def server_status_melden(db: Session) -> None:
+    """Ergebnis eines Updates (vom Host-Skript) einmal per Benachrichtigung weitergeben."""
+    s = server_status()
+    if not s or s.get("ergebnis") not in ("aktualisiert", "zurueckgenommen", "fehler"):
+        return
+    if meta_lesen(db, "update.gemeldet.status") == s.get("zeit"):
+        return
+    meta_schreiben(db, "update.gemeldet.status", s.get("zeit") or "")
+    db.commit()
+    try:
+        from app import benachrichtigung
+
+        art = "server_aktualisiert" if s["ergebnis"] == "aktualisiert" else "server_update_fehler"
+        benachrichtigung.melden(db, art, wichtig=art != "server_aktualisiert", von=s.get("von", ""),
+                                nach=s.get("nach", ""), meldung=s.get("meldung") or "")
+    except Exception:  # noqa: BLE001
+        log.exception("Ergebnis des Server-Updates nicht gemeldet")
 
 
 # ---------------------------------------------------------------- Für App, Worker, Verwaltung

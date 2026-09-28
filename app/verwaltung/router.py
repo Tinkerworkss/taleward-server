@@ -93,6 +93,7 @@ MELDUNGEN = {
     "melden": "Benachrichtigungen gespeichert.",
     "melden_test": "Testnachricht verschickt.",
     "updates_geprueft": "Nach Updates gesucht.",
+    "server_jetzt": "Update angefordert – der Server aktualisiert sich in den nächsten Minuten und ist dabei kurz nicht erreichbar.",
     "freigegeben": "Fassung freigegeben – App und Worker bekommen sie jetzt angeboten.",
 }
 

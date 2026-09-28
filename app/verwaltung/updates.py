@@ -27,7 +27,10 @@ def seite(request: Request, user: User = Depends(verwalter), db: Session = Depen
                   modus=aktualisierung.modus(db), zeilen=aktualisierung.uebersicht(db),
                   geprueft=_zeitpunkt(meta_lesen(db, "update.geprueft")), fehler_pruefung=meta_lesen(db, "update.fehler"),
                   pruefung_an=get_settings().update_check,
-                  app_von_hand=bool(a.app_latest_version or a.app_download_url))
+                  app_von_hand=bool(a.app_latest_version or a.app_download_url),
+                  server_auto=aktualisierung.server_auto(), server_status=aktualisierung.server_status(),
+                  server_jetzt=aktualisierung.server_jetzt_angefordert(),
+                  status_zeit=_zeitpunkt((aktualisierung.server_status() or {}).get("zeit")))
 
 
 def _zeitpunkt(wert: str | None):
@@ -43,6 +46,19 @@ def _zeitpunkt(wert: str | None):
 def pruefen(user: User = Depends(verwalter), db: Session = Depends(get_db)):
     aktualisierung.pruefen(db)
     return _zurueck("/updates", "updates_geprueft")
+
+
+@router.post("/updates/server-auto", dependencies=[Depends(csrf_pruefen)])
+async def server_auto(request: Request, user: User = Depends(verwalter)):
+    form = await request.form()
+    aktualisierung.server_auto_setzen(form.get("an") == "an")
+    return _zurueck("/updates", "gespeichert")
+
+
+@router.post("/updates/server-jetzt", dependencies=[Depends(csrf_pruefen)])
+def server_jetzt(user: User = Depends(verwalter)):
+    aktualisierung.server_jetzt()
+    return _zurueck("/updates", "server_jetzt")
 
 
 @router.post("/updates/modus", dependencies=[Depends(csrf_pruefen)])

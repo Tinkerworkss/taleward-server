@@ -45,14 +45,16 @@ Alle Befehle im Ordner `/opt/taleward`:
 | Was | Befehl |
 |---|---|
 | Protokoll ansehen | `sudo docker compose logs -f server` |
-| Update | `sudo docker compose build --pull && sudo docker compose up -d` |
-| Bestimmte Version | in `.env` `TALEWARD_VERSION=v0.4.0` eintragen, dann Update-Befehl |
+| Update | läuft **automatisch** nachts (3–5 Uhr) mit Sicherung vorher; abschaltbar unter Verwaltung → Updates |
+| Update sofort | Verwaltung → Updates → „Jetzt aktualisieren“ oder `sudo ./aktualisieren.sh --jetzt` |
+| Bestimmte Version | in `.env` `TALEWARD_VERSION=v0.4.3` eintragen, `sudo docker compose build && sudo docker compose up -d` |
 | Neu starten | `sudo docker compose restart` |
 | Einrichtungscode neu | `sudo docker compose exec server chronik einrichtungscode` |
 | Andere Domain | `install.sh` nochmal ausführen – Daten bleiben |
 
-Vor einem Update legt die Verwaltung auf Wunsch eine Sicherung an (Übersicht → Sicherung). Die Datenbank wird
-beim Start selbst auf den neuen Stand gebracht.
+Das automatische Update legt vorher selbst eine Sicherung an. Startet die neue Fassung nicht, stellt es die alte
+Fassung und die Daten von vorher wieder her und meldet das (Benachrichtigung, Verwaltung → Updates). Die Datenbank
+wird beim Start selbst auf den neuen Stand gebracht.
 
 ## Sicherung
 

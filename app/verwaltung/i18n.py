@@ -17,6 +17,15 @@ STANDARD = "de"
 COOKIE = "tw_sprache"
 
 EN: dict[str, str] = {
+    "Automatisch aktualisieren": "Update automatically",
+    "nachts zwischen 3 und 5 Uhr, mit Sicherung vorher. Startet die neue Fassung nicht, geht der Server von selbst auf die alte Fassung und die Daten von vorher zurück.": "at night between 3 and 5 am, with a backup first. If the new version doesn't start, the server goes back to the old version and the data from before by itself.",
+    "Jetzt aktualisieren": "Update now",
+    "Angefordert – startet in den nächsten Minuten.": "Requested – starts within the next few minutes.",
+    "Zuletzt aktualisiert: {von} → {nach} ({zeit})": "Last updated: {von} → {nach} ({zeit})",
+    "Update auf {nach} zurückgenommen ({zeit}):": "Update to {nach} rolled back ({zeit}):",
+    "Update-Fehler ({zeit}):": "Update error ({zeit}):",
+    "Von Hand auf dem Server:": "By hand on the server:",
+    "Update angefordert – der Server aktualisiert sich in den nächsten Minuten und ist dabei kurz nicht erreichbar.": "Update requested – the server updates itself within the next few minutes and is briefly unavailable.",
     "Weitere Adressen für die Web-App": "Additional addresses for the web app",
     "Eine je Zeile. Nur nötig, wenn die Web-App noch woanders läuft. Die eigene Adresse ist immer erlaubt.": "One per line. Only needed if the web app also runs elsewhere. This server's own address is always allowed.",
     "Weitere Adressen bitte vollständig angeben, z. B. https://taleward.meinverein.de": "Please enter additional addresses in full, e.g. https://taleward.myclub.org",

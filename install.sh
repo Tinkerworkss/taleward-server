@@ -38,6 +38,7 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 docker compose version >/dev/null 2>&1 || abbruch "„docker compose“ fehlt. Bitte Docker neu installieren."
+command -v git >/dev/null 2>&1 || { apt-get update -q && apt-get install -y -q git; }
 gruen "Docker ist bereit."
 
 schritt "Angaben"
@@ -66,8 +67,12 @@ schritt "Dateien in $ZIEL"
 mkdir -p "$ZIEL/daten"
 curl -fsSL "$QUELLE/deploy/docker-compose.yml" -o "$ZIEL/docker-compose.yml"
 curl -fsSL "$QUELLE/deploy/Caddyfile" -o "$ZIEL/Caddyfile"
-VERSION=main
-if [ -f "$ZIEL/.env" ]; then VERSION=$(sed -n 's/^TALEWARD_VERSION=//p' "$ZIEL/.env"); VERSION=${VERSION:-main}; fi
+curl -fsSL "$QUELLE/deploy/aktualisieren.sh" -o "$ZIEL/aktualisieren.sh" && chmod +x "$ZIEL/aktualisieren.sh"
+# Feste Fassung: neuestes Tag v…; die automatischen Updates gehen von dort weiter
+VERSION=$(git ls-remote --tags --refs https://github.com/Tinkerworkss/taleward-server.git 'v*' 2>/dev/null \
+  | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+VERSION=${VERSION:-main}
+if [ -f "$ZIEL/.env" ]; then ALT=$(sed -n 's/^TALEWARD_VERSION=//p' "$ZIEL/.env"); VERSION=${ALT:-$VERSION}; fi
 umask 077
 cat > "$ZIEL/.env" <<ENV
 # Einstellungen für docker compose. Nach Änderungen: cd $ZIEL && docker compose up -d
@@ -79,6 +84,27 @@ ENV
 umask 022
 chown 1000:1000 "$ZIEL/daten"   # der Server im Container läuft als Nutzer 1000, nicht als root
 chmod 700 "$ZIEL/daten"
+
+# Automatische Updates: alle 5 Minuten nachsehen, ob die Verwaltung „Jetzt aktualisieren“ will; sonst nachts
+cat > /etc/systemd/system/taleward-aktualisieren.service <<UNIT
+[Unit]
+Description=Taleward-Server aktualisieren
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=$ZIEL/aktualisieren.sh
+UNIT
+cat > /etc/systemd/system/taleward-aktualisieren.timer <<UNIT
+[Unit]
+Description=Taleward-Server: nach Updates sehen
+[Timer]
+OnCalendar=*:0/5
+Persistent=false
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now taleward-aktualisieren.timer >/dev/null 2>&1 || true
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null; ufw allow 443/udp >/dev/null
@@ -108,7 +134,7 @@ Falls die Seite noch nicht lädt: Das HTTPS-Zertifikat kann ein, zwei Minuten br
 
 Nützliche Befehle (in $ZIEL):
   Protokoll ansehen:   sudo docker compose logs -f server
-  Update:              sudo docker compose build --pull && sudo docker compose up -d
+  Update:              automatisch nachts (Verwaltung → Updates), sofort: sudo ./aktualisieren.sh --jetzt
   Neu starten:         sudo docker compose restart
   Daten (sichern!):    $ZIEL/daten
 

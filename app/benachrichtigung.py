@@ -175,11 +175,25 @@ TEXTE = {
     "speicher": ("Speicherplatz knapp",
                  "Im Datenordner sind nur noch {gb} GB frei. Alte Sicherungen löschen oder den Speicher erweitern."),
     "test": ("Test", "Diese Testnachricht zeigt: Benachrichtigungen kommen an."),
+    "server_aktualisiert": ("Server aktualisiert auf {nach}",
+                            "Der Taleward-Server wurde automatisch von {von} auf {nach} aktualisiert. Vorher wurde eine "
+                            "Sicherung angelegt."),
+    "server_update_fehler": ("Server-Update hat nicht geklappt",
+                             "Das automatische Update von {von} auf {nach} hat nicht geklappt: {meldung} Mehr in der "
+                             "Verwaltung → Updates."),
     "server_update": ("Neue Server-Fassung {version}",
                       "Für Taleward gibt es die Server-Fassung {version} (hier läuft {jetzt}). Wie du aktualisierst, "
                       "steht in der Verwaltung → Updates."),
 }
 EN = {
+    "Server aktualisiert auf {nach}": "Server updated to {nach}",
+    "Der Taleward-Server wurde automatisch von {von} auf {nach} aktualisiert. Vorher wurde eine "
+    "Sicherung angelegt.":
+        "The Taleward server was updated automatically from {von} to {nach}. A backup was made first.",
+    "Server-Update hat nicht geklappt": "Server update failed",
+    "Das automatische Update von {von} auf {nach} hat nicht geklappt: {meldung} Mehr in der "
+    "Verwaltung → Updates.":
+        "The automatic update from {von} to {nach} failed: {meldung} More in Admin → Updates.",
     "Neue Server-Fassung {version}": "New server version {version}",
     "Für Taleward gibt es die Server-Fassung {version} (hier läuft {jetzt}). Wie du aktualisierst, "
     "steht in der Verwaltung → Updates.":

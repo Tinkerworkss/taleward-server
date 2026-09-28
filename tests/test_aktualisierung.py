@@ -134,7 +134,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch): 
     seite = client.get("/verwaltung/updates").text
     assert "Update verfügbar" in seite and "git pull" in seite
     monkeypatch.setenv("TALEWARD_DOCKER", "1")
-    assert "docker compose build --pull" in client.get("/verwaltung/updates").text
+    assert "aktualisieren.sh --jetzt" in client.get("/verwaltung/updates").text
     client.cookies.set("tw_sprache", "en")
     assert "Update available" in client.get("/verwaltung/updates").text
 
@@ -164,3 +164,30 @@ def test_automatisch_nur_einmal_am_tag(client, dbs, gh, monkeypatch):
     assert aufrufe == [1]
     get_settings.cache_clear()
     assert json  # Import genutzt
+
+
+def test_server_automatisch_im_docker_paket(client, dbs, admin, gh, monkeypatch):  # noqa: F811
+    """Das Host-Skript (deploy/aktualisieren.sh) liest server-auto.txt/server-jetzt und schreibt server-status.json."""
+    from app import aktualisierung, benachrichtigung
+
+    monkeypatch.setenv("TALEWARD_DOCKER", "1")
+    aktualisierung.pruefen(dbs, gh)
+    seite = client.get("/verwaltung/updates").text
+    assert "Automatisch aktualisieren" in seite and "checked" in seite and "Jetzt aktualisieren" in seite
+    client.post("/verwaltung/updates/server-auto", data={"csrf": admin}, follow_redirects=False)
+    assert (aktualisierung.ablage() / "server-auto.txt").read_text() == "aus"
+    client.post("/verwaltung/updates/server-auto", data={"csrf": admin, "an": "an"}, follow_redirects=False)
+    assert aktualisierung.server_auto()
+    r = client.post("/verwaltung/updates/server-jetzt", data={"csrf": admin}, follow_redirects=False)
+    assert "server_jetzt" in r.headers["location"] and (aktualisierung.ablage() / "server-jetzt").exists()
+    assert "Angefordert" in client.get("/verwaltung/updates").text
+    # Ergebnis des Skripts: einmal melden, in der Verwaltung zeigen
+    gemeldet = []
+    monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+    (aktualisierung.ablage() / "server-status.json").write_text(
+        '{"zeit": "2026-09-29T03:10:00Z", "ergebnis": "zurueckgenommen", "von": "v0.4.3", "nach": "v0.5.0", '
+        '"meldung": "Die neue Fassung startete nicht"}')
+    aktualisierung.server_status_melden(dbs)
+    aktualisierung.server_status_melden(dbs)
+    assert [g[0] for g in gemeldet] == ["server_update_fehler"] and gemeldet[0][1]["wichtig"] is True
+    assert "Update auf v0.5.0 zurückgenommen" in client.get("/verwaltung/updates").text

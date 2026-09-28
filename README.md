@@ -39,7 +39,7 @@ Kurzfassung für später:
 
 ```bash
 cd ~/session-chronik-server
-uv run pytest                  # erwartet: 241 passed
+uv run pytest                  # erwartet: 242 passed
 uv run chronik serve           # Server starten, Strg+C beendet
 uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
 uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
