@@ -1,4 +1,4 @@
-
+name: Patch einspielen
 # Lädt man eine *.patch-Datei ins Hauptverzeichnis hoch, spielt dieser Ablauf sie ein,
 # prüft mit den Tests und schiebt das Ergebnis auf main. Die Patch-Datei selbst wird wieder entfernt.
 on:
