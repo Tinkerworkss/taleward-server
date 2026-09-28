@@ -188,8 +188,18 @@ class Installation:
                      anteil_von=0.06, anteil_bis=0.95, erwartet_mb=self.erwartet_mb)
         else:
             torch = "cpu" if self.backend == "cpu" else "auto"  # auto: CUDA-Fassung passend zum Treiber
-            self._uv("pip", "install", "--python", py, "--torch-backend", torch, "-r", q["anforderungen"],
-                     "imageio-ffmpeg", anteil_von=0.06, anteil_bis=0.9, erwartet_mb=self.erwartet_mb)
+            basis, extra = anforderungen_aufteilen(anforderungen_lesen(q["anforderungen"]))
+            ordner = pfade.basis() / "cache"
+            ordner.mkdir(parents=True, exist_ok=True)
+            (ordner / "basis.txt").write_text(basis, encoding="utf-8")
+            (ordner / "extra.txt").write_text(extra, encoding="utf-8")
+            # Alle Versionen stehen fest (aus uv.lock) → ohne erneutes Auflösen installieren
+            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
+                     "-r", str(ordner / "basis.txt"), "imageio-ffmpeg",
+                     anteil_von=0.06, anteil_bis=0.88, erwartet_mb=self.erwartet_mb)
+            if extra.strip():
+                self._uv("pip", "install", "--python", py, "--no-deps", "-r", str(ordner / "extra.txt"),
+                         anteil_von=0.88, anteil_bis=0.9)
             self.phase = "taleward"
             self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
 
@@ -219,6 +229,32 @@ class Installation:
         (alt / "taleward-motor.json").write_text(json.dumps(
             {"fassung": self.fassung, "ref": q["ref"], "testmodus": self.testmodus, "backend": self.backend,
              "installiert": time.strftime("%Y-%m-%d %H:%M")}), encoding="utf-8")
+
+
+# Pakete, die es im PyTorch-Verzeichnis nicht für jedes System gibt (torchcodec cu128: nur Linux). Sie kommen von
+# PyPI in der gewöhnlichen Fassung – Taleward übergibt Audio im Speicher, torchcodec dekodiert nichts.
+OHNE_TORCH_VERZEICHNIS = ("torchcodec",)
+
+
+def anforderungen_lesen(quelle: str) -> str:
+    if quelle.startswith(("http://", "https://")):
+        try:
+            r = httpx.get(quelle, timeout=30, follow_redirects=True, headers={"User-Agent": f"TalewardWorker/{VERSION}"})
+        except httpx.HTTPError:
+            raise MotorFehler("github_nicht_erreichbar") from None
+        if r.status_code != 200:
+            raise MotorFehler("installation", f"engine-requirements.txt: HTTP {r.status_code}")
+        return r.text
+    return Path(quelle).read_text(encoding="utf-8")
+
+
+def anforderungen_aufteilen(text: str) -> tuple[str, str]:
+    """engine-requirements.txt → (über das PyTorch-Verzeichnis, direkt von PyPI)."""
+    basis, extra = [], []
+    for zeile in text.splitlines():
+        name = zeile.split("==")[0].split(";")[0].strip().lower()
+        (extra if name in OHNE_TORCH_VERZEICHNIS else basis).append(zeile)
+    return "\n".join(basis) + "\n", "\n".join(extra) + ("\n" if extra else "")
 
 
 def ffmpeg_einrichten(python: Path) -> Path:

@@ -205,3 +205,12 @@ def test_selbstupdate_abfragen_und_laden(monkeypatch):
         u2._laden()
     assert not list((pfade.basis() / "updates").glob("*.exe"))
     assert echt_get and echt_stream
+
+
+def test_anforderungen_aufteilen():
+    text = "torch==2.8.0\ntorchcodec==0.7.0\nwhisperx==3.8.6\nnvidia-cudnn-cu12==9.10.2.21 ; sys_platform == 'linux'\n"
+    basis, extra = motor.anforderungen_aufteilen(text)
+    assert "torchcodec" not in basis and "whisperx==3.8.6" in basis and "nvidia-cudnn" in basis
+    assert extra.strip() == "torchcodec==0.7.0"
+    b2, e2 = motor.anforderungen_aufteilen("torch==2.8.0\n")
+    assert e2 == "" and b2 == "torch==2.8.0\n"
