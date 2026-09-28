@@ -231,9 +231,46 @@ if [ "$WSL" -eq 1 ]; then
   fi
 fi
 
+# ------------------------------------------------------------------ Belegte Ports freimachen
+# Manche VPS-Vorlagen (z. B. Hostinger „Ubuntu mit Docker“) bringen schon einen Webserver wie Traefik mit.
+# Hält er Port 80/443, landet jeder Aufruf dort (404) und Caddy bekommt kein Zertifikat.
+port_frei() {
+  local p=$1 zeile pid name behaelter einheit
+  zeile=$(ss -Htlnp "sport = :$p" 2>/dev/null | head -1 || true)
+  [ -n "$zeile" ] || return 0
+  pid=$(printf '%s' "$zeile" | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+  name=$(printf '%s' "$zeile" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')
+  behaelter=""
+  if [ "$name" = "docker-proxy" ]; then
+    behaelter=$(docker ps --filter "publish=$p" --format '{{.Names}}' 2>/dev/null | head -1 || true)
+  elif [ -n "$pid" ]; then
+    local id
+    id=$(grep -o 'docker-[0-9a-f]\{64\}' "/proc/$pid/cgroup" 2>/dev/null | head -1 | sed 's/docker-//' || true)
+    [ -z "$id" ] || behaelter=$(docker inspect --format '{{.Name}}' "$id" 2>/dev/null | sed 's#^/##' || true)
+  fi
+  case "$behaelter" in taleward-*) return 0 ;; esac   # unser eigener Caddy/Server (erneuter Lauf)
+  echo
+  if [ -n "$behaelter" ]; then
+    rot "Port $p ist belegt durch den Docker-Container „$behaelter“ (${name:-?})."
+    if [ "$(frage "Diesen Container dauerhaft stoppen, damit Taleward den Port bekommt? (j/n)" "j")" = "j" ]; then
+      docker update --restart=no "$behaelter" >/dev/null 2>&1 || true
+      docker stop "$behaelter" >/dev/null && gruen "„$behaelter“ gestoppt." && return 0
+    fi
+  else
+    einheit=$(ps -o unit= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    rot "Port $p ist belegt durch „${name:-unbekannt}“${einheit:+ (Dienst $einheit)}."
+    if [ -n "$einheit" ] && [ "${einheit%.service}" != "$einheit" ] &&
+       [ "$(frage "Diesen Dienst dauerhaft abschalten, damit Taleward den Port bekommt? (j/n)" "j")" = "j" ]; then
+      systemctl disable --now "$einheit" >/dev/null 2>&1 && gruen "$einheit abgeschaltet." && return 0
+    fi
+  fi
+  abbruch "Port $p wird gebraucht. Bitte „${behaelter:-$name}“ beenden und das Skript nochmal starten."
+}
+
 # ------------------------------------------------------------------ Starten
 schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
 cd "$ZIEL"
+for p in $PORTS; do port_frei "$p"; done
 docker compose build --pull
 docker compose up -d
 
@@ -246,10 +283,49 @@ for _ in $(seq 1 60); do
   echo -n "."; sleep 2
 done
 
+# Namensauflösung in den Containern: Auf manchen Servern reicht Docker den lokalen DNS-Dienst (127.0.0.53)
+# durch, der im Container ins Leere zeigt – dann gehen Zertifikat, Updates und E-Mails nicht.
+# Abhilfe: Quad9 (Schweiz, speichert keine IP-Adressen) in einer Zusatzdatei, die Updates nicht überschreiben.
+if ! docker compose exec -T server python -c "import socket; socket.getaddrinfo('github.com', 443)" >/dev/null 2>&1; then
+  echo "Namensauflösung im Container klappt nicht – stelle auf Quad9 um."
+  {
+    echo "# Von install.sh angelegt: DNS für die Container (bleibt bei Updates erhalten)"
+    echo "services:"
+    echo "  server:"
+    echo "    dns: [9.9.9.9, 149.112.112.112]"
+    if [ "$MODUS" = "domain" ]; then
+      echo "  caddy:"
+      echo "    dns: [9.9.9.9, 149.112.112.112]"
+    fi
+  } > docker-compose.override.yml
+  docker compose up -d --force-recreate >/dev/null
+  sleep 5
+fi
+
+# Von außen erreichbar? (Domain: HTTPS mit gültigem Zertifikat über Caddy)
+if [ "$MODUS" = "domain" ]; then
+  echo -n "Warte auf das HTTPS-Zertifikat "
+  OK=0
+  for _ in $(seq 1 45); do
+    if curl -fsS --max-time 5 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/v1/health" >/dev/null 2>&1; then
+      OK=1; break
+    fi
+    echo -n "."; sleep 4
+  done
+  echo
+  if [ "$OK" -eq 1 ]; then
+    gruen "https://$DOMAIN ist erreichbar."
+  else
+    rot "https://$DOMAIN antwortet noch nicht mit gültigem Zertifikat."
+    echo "Meist wirkt der DNS-Eintrag noch nicht oder Port 80/443 ist in der Firewall des Anbieters zu."
+    echo "Caddy versucht es selbst weiter. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=30 caddy"
+  fi
+fi
+
 schritt "Fertig"
 docker compose exec -T server chronik einrichtungscode || true
 if [ "$MODUS" = "domain" ]; then
-  HINWEIS="Falls die Seite noch nicht lädt: Das HTTPS-Zertifikat kann ein, zwei Minuten brauchen."
+  HINWEIS="Falls die Seite noch nicht lädt: siehe Hinweise oben; das Zertifikat holt Caddy selbst, sobald die Domain passt."
 else
   HINWEIS="In der App als Server eintragen: $ADRESSE (Handy im selben WLAN)."
 fi

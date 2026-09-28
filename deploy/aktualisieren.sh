@@ -80,13 +80,14 @@ fi
 version_setzen "$NEU"
 if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""
-  # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen
+  # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
+  # fehlt eine in der Fassung, bleibt die vorhandene (docker-compose.override.yml wird nie angefasst)
   QUELLE="https://raw.githubusercontent.com/Tinkerworkss/taleward-server/$NEU/deploy"
   compose=docker-compose.yml
   [ "$(sed -n 's/^TALEWARD_MODUS=//p' .env)" = "heimnetz" ] && compose=docker-compose.heimnetz.yml
   for paar in aktualisieren.sh:aktualisieren.sh "$compose":docker-compose.yml Caddyfile:Caddyfile; do
     quelle=${paar%%:*}; datei=${paar##*:}
-    if curl -fsSL "$QUELLE/$quelle" -o "$datei.neu"; then mv "$datei.neu" "$datei"; else rm -f "$datei.neu"; fi
+    if curl -fsL "$QUELLE/$quelle" -o "$datei.neu"; then mv "$datei.neu" "$datei"; else rm -f "$datei.neu"; fi
   done
   [ -f aktualisieren.sh ] && chmod +x aktualisieren.sh
   docker compose up -d >/dev/null 2>&1

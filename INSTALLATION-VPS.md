@@ -106,5 +106,7 @@ Eine heruntergeladene Sicherung vorher nach `/opt/taleward/daten/sicherungen/` k
 |---|---|
 | „zeigt auf nichts“ / Zertifikatsfehler | A-Eintrag fehlt oder wirkt noch nicht. Warten, dann `sudo docker compose restart caddy`. |
 | Seite lädt nicht, Port 80/443 zu | In Hostinger unter VPS → Firewall die Ports 80 und 443 freigeben. |
+| 404 auf jeder Seite, Caddy ohne Zertifikat | Ein anderer Webserver (z. B. Traefik aus der Hostinger-Vorlage „Ubuntu mit Docker“) hält Port 80/443. `install.sh` nochmal starten – es erkennt das und bietet an, ihn abzuschalten. |
+| Caddy-Protokoll: `lookup … 127.0.0.53 … connection refused` | Docker reicht einen DNS-Dienst durch, den die Container nicht erreichen. `install.sh` nochmal starten – es legt dann `docker-compose.override.yml` mit Quad9 an. |
 | `permission denied` im Protokoll | `sudo chown -R 1000:1000 /opt/taleward/daten` |
 | Worker verbindet sich nicht | Die Adresse mit `https://` angeben, genau wie in der App. |
