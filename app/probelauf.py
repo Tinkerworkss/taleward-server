@@ -38,8 +38,66 @@ def fmt_dauer(sek: float) -> str:
     return f"{sek / 60:.1f} min"
 
 
+class _Nvml:
+    """Grafikspeicher direkt über die NVIDIA-Bibliothek (nvml) – ohne jede Sekunde ein Programm zu starten.
+
+    Unter Windows ist das wichtig: nvidia-smi per subprocess startet je Aufruf einen Prozess und zwei Lese-Threads.
+    Laufen die parallel zu einem großen Import (scipy, transformers …), können sich Windows-Lader und Thread-Start
+    gegenseitig blockieren – der Worker hing dann bei 15 %."""
+
+    class _Speicher(ctypes.Structure):
+        _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
+
+    _geladen = None  # None = noch nicht versucht, False = nicht verfügbar
+
+    @classmethod
+    def _handle(cls):
+        if cls._geladen is None:
+            cls._geladen = False
+            namen = (["nvml.dll", r"C:\Program Files\NVIDIA Corporation\NVSMI\nvml.dll"] if sys.platform == "win32"
+                     else ["libnvidia-ml.so.1", "libnvidia-ml.so"])
+            for name in namen:
+                try:
+                    lib = ctypes.CDLL(name)
+                    if lib.nvmlInit_v2() != 0:
+                        continue
+                    h = ctypes.c_void_p()
+                    if lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(h)) != 0:
+                        continue
+                    cls._geladen = (lib, h)
+                    break
+                except (OSError, AttributeError):
+                    continue
+        return cls._geladen or None
+
+    @classmethod
+    def speicher_mb(cls) -> tuple[int, int] | None:
+        """(belegt, gesamt) in MB oder None."""
+        gefunden = cls._handle()
+        if not gefunden:
+            return None
+        lib, h = gefunden
+        s = cls._Speicher()
+        if lib.nvmlDeviceGetMemoryInfo(h, ctypes.byref(s)) != 0:
+            return None
+        return int(s.used // 2 ** 20), int(s.total // 2 ** 20)
+
+
+def _nvidia_smi(abfrage: str) -> str | None:
+    """Ausweichweg ohne nvml: nvidia-smi ohne Eingabekanal und ohne Lese-Threads (nur stdout als Pipe)."""
+    extra = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+    try:
+        with subprocess.Popen(["nvidia-smi", f"--query-gpu={abfrage}", "--format=csv,noheader,nounits"],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, **extra) as p:
+            aus, _ = p.communicate(timeout=5)
+        return aus.strip().splitlines()[0] if aus.strip() else None
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return None
+
+
 class VramMesser:
-    """Misst den höchsten Grafikspeicherverbrauch über nvidia-smi (erfasst auch CTranslate2, nicht nur PyTorch)."""
+    """Misst den höchsten Grafikspeicherverbrauch der ganzen Karte (erfasst auch CTranslate2, nicht nur PyTorch)."""
 
     def __init__(self):
         self.start_mb: int | None = None
@@ -49,24 +107,24 @@ class VramMesser:
 
     @staticmethod
     def _lesen() -> int | None:
+        werte = _Nvml.speicher_mb()
+        if werte:
+            return werte[0]
+        aus = _nvidia_smi("memory.used")
         try:
-            out = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.strip().splitlines()[0]
-            return int(out.split(",")[0])
-        except Exception:
+            return int(aus.split(",")[0]) if aus else None
+        except ValueError:
             return None
 
     @staticmethod
     def gesamt_mb() -> int | None:
+        werte = _Nvml.speicher_mb()
+        if werte:
+            return werte[1]
+        aus = _nvidia_smi("memory.total")
         try:
-            out = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.strip().splitlines()[0]
-            return int(out)
-        except Exception:
+            return int(aus) if aus else None
+        except ValueError:
             return None
 
     def __enter__(self):

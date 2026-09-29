@@ -266,6 +266,16 @@ class WhisperXMotor:
             import whisperx  # noqa: F401
         except ImportError:
             raise EinrichtungsFehler("Die KI-Pakete fehlen. Installieren mit: uv sync --extra ki") from None
+        # whisperx lädt seine Teile erst beim ersten Aufruf nach (transformers, scipy, sklearn, pyannote …). Das
+        # passiert hier einmal beim Start statt mitten im ersten Auftrag, parallel zur Speichermessung (Windows:
+        # gleichzeitiges Laden großer DLLs und Starten von Threads kann sich gegenseitig blockieren).
+        import importlib
+
+        for teil in ("whisperx.asr", "whisperx.alignment", "whisperx.diarize"):
+            try:
+                importlib.import_module(teil)
+            except ImportError:
+                pass  # fehlt etwas wirklich, meldet es der Auftrag verständlich
         braucht_gpu = "cuda" in (self.geraet, self.geraet_ausrichten, self.geraet_sprecher)
         if braucht_gpu and not torch.cuda.is_available():
             raise EinrichtungsFehler("PyTorch sieht keine Grafikkarte. `nvidia-smi` prüfen und ggf. den NVIDIA-Treiber "
