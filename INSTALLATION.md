@@ -201,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
 uv run pytest
 ```
 
-✅ **Kontrolle:** Die letzte Zeile lautet **`242 passed`**. Der Lauf dauert etwa eine Minute.
+✅ **Kontrolle:** Die letzte Zeile lautet **`251 passed`**. Der Lauf dauert etwa eine Minute.
 
 ### 4.2 Eigenes Konto anlegen
 

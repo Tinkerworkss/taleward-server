@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app import belege
 from app.config import get_settings
 from app.db import utcnow
 from app.models import (
@@ -315,6 +316,10 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
     geheime_texte = [t for e in eintraege.values() for t in (e.gm_notes or "",
                                                               e.summary if e.visibility != "public" else "") if t]
     sprache = db.get(Campaign, s.campaign_id).language
+    # Qualitätsprüfung Stufe 1: Belege gegen das Transkript prüfen (erfundene Zitate fallen weg)
+    transkript = belege.Transkript([(seg.start, seg.text) for seg in db.scalars(
+        select(TranscriptSegment).where(TranscriptSegment.session_id == s.id).order_by(TranscriptSegment.position))])
+    ohne_beleg = 0
     for pos, v in enumerate(erg.vorschlaege):
         ziel = eintraege.get(v.target_entry_id or "")
         if v.action in ("update", "reveal") and ziel is None:
@@ -326,6 +331,13 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
             # Der geheime Teil kommt aus dem bisherigen Eintrag, nicht vom Sprachmodell
             gm_notes = "\n\n".join(t for t in (ziel.summary.strip(), (ziel.gm_notes or "").strip()) if t) or None
         sichtbar, grund, flags = v.suggested_visibility, v.visibility_reason, list(v.flags)
+        sicherheit = max(0.0, min(1.0, v.confidence))
+        geprueft = belege.pruefen(transkript, v.evidence)
+        if not geprueft:
+            ohne_beleg += 1
+            sicherheit = min(sicherheit, belege.KEIN_BELEG_SICHERHEIT)
+            if "low_confidence" not in flags:
+                flags.append("low_confidence")
         if sichtbar == "public" and _geheimes_im_detail(v.detail, geheime_texte):
             sichtbar, grund = "gm_only", GEHEIM_HINWEIS.get(sprache, GEHEIM_HINWEIS["de"])
             if "low_confidence" not in flags:
@@ -335,9 +347,12 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
             target_entry_id=v.target_entry_id if v.action != "create" else None, title=v.title.strip()[:300],
             detail=v.detail.strip(), gm_notes=(gm_notes or "").strip() or None,
             suggested_visibility=sichtbar, visibility_reason=grund,
-            confidence=max(0.0, min(1.0, v.confidence)), flags=json.dumps(flags),
-            evidence=json.dumps(v.evidence, ensure_ascii=False),
+            confidence=sicherheit, flags=json.dumps(flags),
+            evidence=json.dumps(geprueft, ensure_ascii=False),
         ))
+    if ohne_beleg:
+        log.info("Session %s: %d von %d Vorschlägen ohne auffindbaren Beleg im Transkript", s.id, ohne_beleg,
+                 len(erg.vorschlaege))
     db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="summary", engine=engine, model=erg.modell,
                     worker_id=worker_id, compute_seconds=rechenzeit, tokens_in=erg.tokens_in,
                     tokens_out=erg.tokens_out, cost_cents=erg.kosten_cent))

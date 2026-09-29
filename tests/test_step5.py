@@ -114,7 +114,9 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     s, oeff, geheim, teilweise = mit_geheimnissen(client, w, dbs, tmp_path)
     api.vorschlaege = [
         {"entryType": "npc", "action": "create", "title": "Der Wirt", "detail": "Brummig, schenkt Met aus.",
-         "suggestedVisibility": "public", "confidence": 0.9, "evidence": [{"start": "0:40", "quote": "Wir reiten"}]},
+         "suggestedVisibility": "public", "confidence": 0.9, "evidence": [
+             {"start": "0:40", "quote": "Wir reiten"},
+             {"start": "0:41", "quote": "Der Wirt verrät uns das Versteck der Verschwörer"}]},  # erfunden
         {"entryType": "npc", "action": "reveal", "targetEntryId": geheim["id"], "title": "Der Graue Fürst",
          "detail": "Ein Adliger in Grau.", "gmNotes": "vom Modell – wird ersetzt", "confidence": 0.8},
         {"entryType": "location", "action": "update", "targetEntryId": oeff["id"], "title": "Rabenfels",
@@ -147,7 +149,10 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert r["title"] == "Kapitel 1: Der Ritt" and r["openThreads"] == ["Wer hat den Brief geschrieben?"]
     vs = {v["title"]: v for v in client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()}
     assert set(vs) == {"Der Wirt", "Der Graue Fürst", "Rabenfels"}  # Ungültiges fällt weg
-    assert vs["Der Wirt"]["evidence"] == [{"start": 40.0, "quote": "Wir reiten"}]
+    assert vs["Der Wirt"]["evidence"] == [{"start": 40.0, "quote": "Wir reiten"}]  # erfundenes Zitat fällt weg
+    assert vs["Der Wirt"]["confidence"] == 0.9 and "low_confidence" not in vs["Der Wirt"]["flags"]
+    # Ohne auffindbaren Beleg: markiert, nicht gestrichen – die SL entscheidet
+    assert vs["Der Graue Fürst"]["confidence"] <= 0.3 and "low_confidence" in vs["Der Graue Fürst"]["flags"]
     assert vs["Der Graue Fürst"]["gmNotes"] == "MARKER-GEHEIMER-TEXT\n\nMARKER-GMNOTES-GEHEIM"  # vom Server
     assert vs["Der Graue Fürst"]["suggestedVisibility"] == "public"
     # Geheimes im öffentlichen Teil → nur für die SL, mit Hinweis
