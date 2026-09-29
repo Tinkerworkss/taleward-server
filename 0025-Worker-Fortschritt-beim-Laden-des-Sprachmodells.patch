@@ -1,0 +1,205 @@
+From 33e85c164d262624b583242f53888bbdc456ec78 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 30 Sep 2026 00:33:15 +0200
+Subject: [PATCH] Worker: Fortschritt beim Laden des Sprachmodells (Server
+ 0.4.17)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ollama pull lief ohne Rückmeldung (etwa 6 GB, je nach Leitung 20–40 min).
+Jetzt gestreamt: alle 10 % eine Zeile im Protokoll mit Größe; kein festes
+Gesamtzeitlimit mehr, nur eine lange Pause ohne Daten bricht ab.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 33 +++++++++++++++++++++++----
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_ollama_laden.py   | 43 ++++++++++++++++++++++++++++++++++++
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 8 files changed, 78 insertions(+), 10 deletions(-)
+ create mode 100644 tests/test_ollama_laden.py
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 49841d3..94b8790 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -127,15 +127,40 @@ class OllamaKlient:
+             kennung = suchen()
+             if kennung is None:
+                 melden(f"Lade Sprachmodell {self.modell} (einmalig, einige GB) …")
+-                r = self.client.post(f"{self.url}/api/pull", json={"model": self.modell, "stream": False},
+-                                     timeout=httpx.Timeout(3600.0, connect=10.0))
+-                if r.status_code >= 400:
+-                    raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {r.text[:200]}", erneut=False)
++                self._ziehen(melden)
+                 kennung = suchen() or "?"
+             return kennung
+         except httpx.HTTPError as e:
+             raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
+ 
++    def _ziehen(self, melden: Callable[[str], None]) -> None:
++        """Modell laden und alle 10 % eine Zeile melden (sonst bleibt das Protokoll bei ~6 GB lange stumm).
++        Kein Gesamtzeitlimit: Solange Daten kommen, läuft es weiter – nur eine lange Pause bricht ab."""
++        import json as _json
++
++        gemeldet = -10
++        with self.client.stream("POST", f"{self.url}/api/pull", json={"model": self.modell, "stream": True},
++                                timeout=httpx.Timeout(10.0, read=600.0)) as r:
++            if r.status_code >= 400:
++                raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {r.read().decode(errors='replace')[:200]}",
++                                         erneut=False)
++            for zeile in r.iter_lines():
++                if not zeile.strip():
++                    continue
++                try:
++                    d = _json.loads(zeile)
++                except ValueError:
++                    continue
++                if d.get("error"):
++                    raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {str(d['error'])[:200]}",
++                                             erneut=False)
++                gesamt, fertig = d.get("total") or 0, d.get("completed") or 0
++                if gesamt > 2 ** 27:  # nur die großen Teile (die Gewichte), nicht Vorlage/Lizenz
++                    prozent = int(fertig * 100 / gesamt)
++                    if prozent >= gemeldet + 10:
++                        gemeldet = prozent - prozent % 10
++                        melden(f"Sprachmodell {self.modell}: {gemeldet} % von {gesamt / 2 ** 30:.1f} GB")
++
+     def chat(self, system: str, nutzer: str) -> Antwort:
+         body = {"model": self.modell, "stream": False, "format": "json", "keep_alive": "2m",
+                 "options": {"num_ctx": self.kontext, "temperature": 0.3},
+diff --git a/pyproject.toml b/pyproject.toml
+index f249320..3a30685 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.16"
++version = "0.4.17"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 916d754..ff0719c 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.16"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.17"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 170255a..bd0b4c2 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.16"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.17"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index a324fab..a45cfb3 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.16"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.17"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_ollama_laden.py b/tests/test_ollama_laden.py
+new file mode 100644
+index 0000000..9624673
+--- /dev/null
++++ b/tests/test_ollama_laden.py
+@@ -0,0 +1,43 @@
++"""Sprachmodell laden: Fortschritt im Protokoll statt 20 Minuten Stille."""
++import json
++
++import httpx
++
++from app.sprachmodell import OllamaKlient, SprachmodellFehler
++
++
++def _klient(pull_zeilen, tags_danach=True):
++    zustand = {"geladen": False}
++
++    def antwort(req: httpx.Request):
++        if req.url.path == "/api/tags":
++            modelle = [{"name": "ministral-3:8b", "digest": "abcdef1234567890"}] if zustand["geladen"] else []
++            return httpx.Response(200, json={"models": modelle})
++        if req.url.path == "/api/pull":
++            assert json.loads(req.content)["stream"] is True
++            zustand["geladen"] = tags_danach
++            return httpx.Response(200, content="\n".join(json.dumps(z) for z in pull_zeilen).encode())
++        return httpx.Response(404)
++
++    return OllamaKlient("http://ollama:11434", "ministral-3:8b", client=httpx.Client(transport=httpx.MockTransport(antwort)))
++
++
++def test_fortschritt_alle_zehn_prozent():
++    gesamt = 6 * 2 ** 30
++    zeilen = [{"status": "pulling manifest"}, {"status": "pulling", "total": 1000, "completed": 1000}]
++    zeilen += [{"status": "pulling", "total": gesamt, "completed": gesamt * p // 100} for p in [*range(0, 100, 3), 100]]
++    zeilen += [{"status": "success"}]
++    gemeldet = []
++    assert _klient(zeilen).bereitstellen(gemeldet.append) == "abcdef123456"
++    prozente = [z for z in gemeldet if "%" in z]
++    assert prozente[0].endswith("0 % von 6.0 GB") and prozente[-1].startswith("Sprachmodell ministral-3:8b: 100 %")
++    assert len(prozente) == 11
++
++
++def test_fehler_von_ollama():
++    try:
++        _klient([{"error": "pull model manifest: file does not exist"}], tags_danach=False).bereitstellen()
++    except SprachmodellFehler as e:
++        assert "does not exist" in str(e)
++    else:
++        raise AssertionError("kein Fehler")
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index fdcce04..7c09f27 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.16"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.17"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index dd65bb2..b2ef6dd 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.16"
++version = "0.4.17"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
