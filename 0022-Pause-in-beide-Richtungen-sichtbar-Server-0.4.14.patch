@@ -1,0 +1,575 @@
+From d15be8f28c12700d79c3dbd1c9c20e80deeaf8c2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 22:48:59 +0200
+Subject: [PATCH] Pause in beide Richtungen sichtbar (Server 0.4.14)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- In der Worker-App pausiert: Der Worker meldet sich alle 30 s beim Server
+  (info.pausiert, holt nichts ab). Die Verwaltung zeigt „in der App pausiert“,
+  der Status in der App sagt „Der Worker ist gerade pausiert“, die
+  Benachrichtigung heißt „Worker pausiert“ statt „kein Worker erreichbar“, und
+  ein schon länger pausierter Worker hält die externe Transkription nicht auf.
+- In der Verwaltung pausiert: Die Antwort auf das Abholen trägt
+  X-Taleward-Pausiert; der Worker meldet das der Worker-App.
+- Migration d7f1b3c5e9a2 (workers.app_paused_since)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/benachrichtigung.py                       | 26 ++++--
+ app/errors.py                                 |  2 +
+ app/extern.py                                 |  3 +-
+ app/models.py                                 |  2 +
+ app/queue.py                                  | 13 ++-
+ app/routers/worker.py                         | 17 +++-
+ app/services.py                               |  3 +-
+ app/verwaltung/i18n.py                        |  1 +
+ app/verwaltung/router.py                      |  6 +-
+ app/verwaltung/templates/transkription.html   |  1 +
+ app/worker_prozess.py                         | 27 ++++++
+ .../d7f1b3c5e9a2_worker_in_app_pausiert.py    | 26 ++++++
+ pyproject.toml                                |  2 +-
+ tests/test_aktualisierung.py                  |  2 +-
+ tests/test_assistent.py                       |  2 +-
+ tests/test_modellablage.py                    |  2 +-
+ tests/test_worker_app.py                      |  2 +-
+ tests/test_worker_pause.py                    | 87 +++++++++++++++++++
+ uv.lock                                       |  2 +-
+ 19 files changed, 207 insertions(+), 19 deletions(-)
+ create mode 100644 migrations/versions/d7f1b3c5e9a2_worker_in_app_pausiert.py
+ create mode 100644 tests/test_worker_pause.py
+
+diff --git a/app/benachrichtigung.py b/app/benachrichtigung.py
+index 3fbc13a..fa7d77c 100644
+--- a/app/benachrichtigung.py
++++ b/app/benachrichtigung.py
+@@ -160,6 +160,9 @@ TEXTE = {
+     "worker_fehlt": ("Aufträge warten, kein Worker erreichbar",
+                      "{n} Auftrag/Aufträge warten seit über {h} Stunden, aber kein passender Worker ist verbunden. "
+                      "Bitte den lokalen Server und den Worker prüfen (Verwaltung → Transkription)."),
++    "worker_pausiert": ("Aufträge warten, Worker pausiert",
++                        "{n} Auftrag/Aufträge warten seit über {h} Stunden. Der Worker {namen} ist pausiert – in der "
++                        "Worker-App bzw. unter Verwaltung → Transkription auf „Fortsetzen“ tippen."),
+     "fehlschlag": ("Aufträge fehlgeschlagen",
+                    "{n} Auftrag/Aufträge sind endgültig fehlgeschlagen: {liste}. Details und „Neu starten“ in der "
+                    "Verwaltung → Warteschlange."),
+@@ -204,6 +207,11 @@ EN = {
+     "Bitte den lokalen Server und den Worker prüfen (Verwaltung → Transkription).":
+         "{n} job(s) have been waiting for more than {h} hours, but no suitable worker is connected. Please check "
+         "the local server and the worker (Admin → Transcription).",
++    "Aufträge warten, Worker pausiert": "Jobs waiting, worker paused",
++    "{n} Auftrag/Aufträge warten seit über {h} Stunden. Der Worker {namen} ist pausiert – in der "
++    "Worker-App bzw. unter Verwaltung → Transkription auf „Fortsetzen“ tippen.":
++        "{n} job(s) have been waiting for more than {h} hours. The worker {namen} is paused – tap “Resume” in the "
++        "worker app or under Admin → Transcription.",
+     "Aufträge fehlgeschlagen": "Jobs failed",
+     "{n} Auftrag/Aufträge sind endgültig fehlgeschlagen: {liste}. Details und „Neu starten“ in der "
+     "Verwaltung → Warteschlange.":
+@@ -287,7 +295,7 @@ def pruefen(db: Session) -> list[str]:
+     from app.einrichtung import betriebsart
+     from app.einstellungen import llm_konfig
+     from app.models import Job
+-    from app.queue import llm_worker_online, worker_online
++    from app.queue import llm_worker_online, pausierte_worker, worker_online
+ 
+     k = konfig(db)
+     if not k.aktiv:
+@@ -299,12 +307,20 @@ def pruefen(db: Session) -> list[str]:
+     grenze = jetzt - timedelta(hours=max(1, k.stunden))
+     alt = select(func.count()).select_from(Job).where(Job.state == "queued", Job.engine == "local",
+                                                       Job.created_at < grenze)
+-    n = 0
++    n, pausiert = 0, []
+     if betriebsart(db) != "cloud" and not worker_online(db, "asr"):
+-        n += db.scalar(alt.where(Job.required_capability == "asr")) or 0
++        wartend = db.scalar(alt.where(Job.required_capability == "asr")) or 0
++        n += wartend
++        pausiert += pausierte_worker(db, "asr") if wartend else []
+     if llm_konfig(db).art == "lokal" and not llm_worker_online(db):
+-        n += db.scalar(alt.where(Job.required_capability == "llm")) or 0
+-    if _zustand(db, "worker_fehlt", n > 0, n=n, h=k.stunden):
++        wartend = db.scalar(alt.where(Job.required_capability == "llm")) or 0
++        n += wartend
++        pausiert += pausierte_worker(db, "llm") if wartend else []
++    # Ist ein passender Worker nur pausiert, sagt die Meldung das – statt „kein Worker erreichbar“
++    namen = ", ".join(f"„{x}“" for x in dict.fromkeys(pausiert))
++    if _zustand(db, "worker_pausiert", n > 0 and bool(namen), n=n, h=k.stunden, namen=namen):
++        gemeldet.append("worker_pausiert")
++    if _zustand(db, "worker_fehlt", n > 0 and not namen, n=n, h=k.stunden):
+         gemeldet.append("worker_fehlt")
+ 
+     # Neue Fehlschläge (beim allerersten Lauf nur den Stand merken)
+diff --git a/app/errors.py b/app/errors.py
+index 5002fb1..b4ef638 100644
+--- a/app/errors.py
++++ b/app/errors.py
+@@ -196,6 +196,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
+     # Status-Hinweise (ProcessingStatus.message)
+     "status.no_worker": ("Zurzeit ist keine Transkription verfügbar. Die Aufnahme wird verarbeitet, sobald ein Worker bereitsteht.",
+                          "Transcription is not available right now. The recording will be processed as soon as a worker is ready."),
++    "status.worker_paused": ("Der Worker ist gerade pausiert. Die Aufnahme wird verarbeitet, sobald er fortgesetzt wird.",
++                             "The worker is paused right now. The recording will be processed as soon as it resumes."),
+     "status.external_planned": ("Zurzeit ist keine Transkription verfügbar. Steht bis {zeit} Uhr kein Worker bereit, übernimmt {anbieter} die Transkription (für diese Kampagne erlaubt).",
+                                 "Transcription is not available right now. If no worker is ready by {zeit}, {anbieter} will transcribe the recording (allowed for this campaign)."),
+     "status.failed_transcription": ("Die Transkription ist fehlgeschlagen: {detail}", "Transcription failed: {detail}"),
+diff --git a/app/extern.py b/app/extern.py
+index b5dd323..af25f0a 100644
+--- a/app/extern.py
++++ b/app/extern.py
+@@ -25,7 +25,7 @@ from datetime import timedelta
+ from pathlib import Path
+ 
+ import httpx
+-from sqlalchemy import func, select, update
++from sqlalchemy import func, or_, select, update
+ from sqlalchemy.orm import Session
+ 
+ from app import audio, storage
+@@ -59,6 +59,7 @@ def worker_seit(db: Session, zeitpunkt) -> bool:
+     """War seit `zeitpunkt` irgendein (nicht pausierter, nicht gesperrter) Worker erreichbar?"""
+     return db.scalar(select(func.count()).select_from(Worker).where(
+         Worker.revoked_at.is_(None), Worker.paused.is_(False), Worker.last_seen_at >= zeitpunkt,
++        or_(Worker.app_paused_since.is_(None), Worker.app_paused_since >= zeitpunkt),
+         Worker.capabilities.contains("asr"))) > 0
+ 
+ 
+diff --git a/app/models.py b/app/models.py
+index b07a478..a8c172b 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -338,6 +338,8 @@ class Worker(Base):
+     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+     paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")  # nimmt keine Aufträge an
+     local: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")  # von der Verwaltung gestartet
++    # In der Worker-App pausiert (seit wann) – der Worker meldet sich weiter, nimmt aber nichts an
++    app_paused_since: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+ 
+ 
+ class Job(Base):
+diff --git a/app/queue.py b/app/queue.py
+index 131ab0c..9b13a3f 100644
+--- a/app/queue.py
++++ b/app/queue.py
+@@ -70,7 +70,7 @@ def llm_worker_online(db: Session) -> bool:
+ 
+     grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
+     for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze,
+-                                             Worker.paused.is_(False))):
++                                             Worker.paused.is_(False), Worker.app_paused_since.is_(None))):
+         try:
+             if "llm" in w.capabilities.split(",") and json.loads(w.info or "{}").get("llm"):
+                 return True
+@@ -80,13 +80,22 @@ def llm_worker_online(db: Session) -> bool:
+ 
+ 
+ def worker_online(db: Session, capability: str = "asr") -> bool:
++    """Ist ein Worker mit dieser Fähigkeit verbunden und nimmt Aufträge an (nicht pausiert)?"""
+     grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
+-    for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze)):
++    for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze,
++                                             Worker.paused.is_(False), Worker.app_paused_since.is_(None))):
+         if capability in w.capabilities.split(","):
+             return True
+     return False
+ 
+ 
++def pausierte_worker(db: Session, capability: str = "asr") -> list[str]:
++    """Namen verbundener Worker, die gerade pausiert sind – in der Worker-App oder in der Verwaltung."""
++    grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
++    return [w.name for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze))
++            if capability in w.capabilities.split(",") and (w.paused or w.app_paused_since is not None)]
++
++
+ def kampagne_von(db: Session, job: Job):
+     from app.models import Campaign, CampaignDocument
+ 
+diff --git a/app/routers/worker.py b/app/routers/worker.py
+index ceed574..e5360e1 100644
+--- a/app/routers/worker.py
++++ b/app/routers/worker.py
+@@ -175,7 +175,13 @@ def _auftrag(db: Session, job: Job) -> dict:
+ @router.post("/jobs/claim")
+ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Session = Depends(get_db)):
+     erlaubt = set(worker.capabilities.split(","))
+-    caps = [c for c in body.capabilities if c in erlaubt] if not worker.paused else []  # pausiert: keine Aufträge
++    # In der Worker-App pausiert: Der Worker meldet sich nur (Lebenszeichen), holt nichts ab
++    app_pause = bool(body.info.pop("pausiert", False))
++    if app_pause:
++        worker.app_paused_since = worker.app_paused_since or utcnow()
++    else:
++        worker.app_paused_since = None
++    caps = [c for c in body.capabilities if c in erlaubt] if not (worker.paused or app_pause) else []
+     if "llm" in caps:
+         from app.einstellungen import llm_konfig
+ 
+@@ -184,6 +190,8 @@ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Sessi
+     worker.info = json.dumps(body.info, ensure_ascii=False)[:2000]
+     db.commit()
+     warte = get_settings().claim_wait_seconds if body.wait_seconds is None else body.wait_seconds
++    if app_pause:
++        return _ohne_auftrag(worker.paused)
+     ende = time.monotonic() + warte
+     while True:
+         if caps and db.get(Worker, worker.id).paused:  # während des Wartens pausiert
+@@ -192,13 +200,18 @@ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Sessi
+         if job is not None:
+             return _auftrag(db, job)
+         if time.monotonic() >= ende:
+-            return Response(status_code=204)
++            return _ohne_auftrag(db.get(Worker, worker.id).paused)
+         time.sleep(1)
+         db.expire_all()
+         worker.last_seen_at = utcnow()
+         db.commit()
+ 
+ 
++def _ohne_auftrag(in_verwaltung_pausiert: bool) -> Response:
++    """204 ohne Auftrag. Ist der Worker in der Verwaltung pausiert, steht das im Kopf – die Worker-App zeigt es an."""
++    return Response(status_code=204, headers={"X-Taleward-Pausiert": "verwaltung"} if in_verwaltung_pausiert else {})
++
++
+ @router.get("/jobs/{jobId}/files/{fileId}/chunks/{index}")
+ def download_chunk(jobId: str, fileId: str, index: int, worker: Worker = Depends(current_worker),
+                    db: Session = Depends(get_db)):
+diff --git a/app/services.py b/app/services.py
+index 7b03e8b..2944464 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -264,7 +264,8 @@ def processing_status(db: Session, s: GameSession, lang: str = "de") -> schemas.
+         if job is not None:
+             position = queue.queue_position(db, job)
+         if not queue.worker_online(db, "asr"):
+-            message = errors.ApiError(0, "status.no_worker").message(lang)
++            message = errors.ApiError(0, "status.worker_paused" if queue.pausierte_worker(db, "asr")
++                                      else "status.no_worker").message(lang)
+             from app import extern
+ 
+             name = extern.anbieter(db)
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 5bb6c5a..06d31de 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -72,6 +72,7 @@ EN: dict[str, str] = {
+     "Aufnahmen: bitte höchstens {n} Tage angeben.": "Recordings: please enter at most {n} days.",
+     "Die Aufnahmen sollen länger bleiben. Dann müssen alle Mitglieder neu zustimmen – bitte das Kästchen dazu ankreuzen.": "Recordings are to be kept longer. All members then have to consent again – please tick the box for this.",
+     "Aufnahmen": "Recordings",
++    "in der App pausiert": "paused in the app",
+     "Wie lange eine Aufnahme nach der Umwandlung in Text auf dem Server bleibt. Solange sie da ist, lässt sich die Zusammenfassung gegen sie prüfen und die Transkription wiederholen. Die App nennt die Frist im Einwilligungstext.": "How long a recording stays on the server after it has been turned into text. While it is there, the summary can be checked against it and the transcription repeated. The app states the period in the consent text.",
+     "Aufnahmen löschen": "Delete recordings",
+     "Wenn die Spielleitung den Recap freigibt, spätestens nach der Frist (empfohlen)": "When the GM releases the recap, at the latest after the period (recommended)",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 3b61542..42e8ba1 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -262,7 +262,8 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session =
+         "in_arbeit": zustaende.get("transcribing", 0) + zustaende.get("summarizing", 0),
+         "bei_sl": zustaende.get("awaiting_speakers", 0) + zustaende.get("awaiting_review", 0),
+         "fehlgeschlagen": zustaende.get("failed", 0),
+-        "knechte_online": sum(1 for w in workers if w.last_seen_at and w.last_seen_at > grenze and not w.paused),
++        "knechte_online": sum(1 for w in workers if w.last_seen_at and w.last_seen_at > grenze and not w.paused
++                              and w.app_paused_since is None),
+         "knechte": len(workers),
+     }
+     db_datei = s.data_dir / "chronik.db"
+@@ -637,7 +638,8 @@ def _llm_anzeige(db: Session) -> dict:
+     return {"k": k, "mistral": k.ist_mistral, "key_ende": (k.api_key or "")[-4:] if k.api_key else None,
+             "key_von_extern": bool(k.api_key) and not k.eigener_key,
+             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
+-             "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused for kn in worker)}
++             "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
++                                  for kn in worker)}
+ 
+ 
+ @router.get("/zusammenfassung", response_class=HTMLResponse)
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 69d7b62..16452fa 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -146,6 +146,7 @@
+         <td data-label="{{ _('Zustand') }}">
+           {% if k.w.revoked_at %}<span class="marke-status marke-status--fehler">{{ _("gesperrt") }}</span>
+           {% elif k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
++          {% elif k.online and k.w.app_paused_since %}<span class="marke-status marke-status--warten">{{ _("in der App pausiert") }}</span>
+           {% elif k.online %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>
+           {% else %}<span class="marke-status">{{ _("nicht verbunden") }}</span>{% endif %}
+           <br><span class="leise">{{ _("zuletzt {zeit}", zeit=zeit(k.w.last_seen_at)) }}</span>
+diff --git a/app/worker_prozess.py b/app/worker_prozess.py
+index 322289a..81ab4d9 100644
+--- a/app/worker_prozess.py
++++ b/app/worker_prozess.py
+@@ -23,6 +23,7 @@ from app import audio
+ from app.sprachmodell import SprachmodellFehler
+ 
+ log = logging.getLogger("worker")
++PAUSE_MELDEN_S = 30  # so oft meldet sich ein pausierter Worker beim Server
+ 
+ Fortschritt = Callable[[float], None]
+ Melden = Callable[..., None]  # melden("ereignis", **daten) – für die Worker-App (chronik worker --app)
+@@ -190,6 +191,7 @@ class WorkerProzess:
+         self._stop = threading.Event()
+         self.melden = melden
+         self._pause = threading.Event()  # gesetzt = keine neuen Aufträge annehmen (laufender wird fertig)
++        self.in_verwaltung_pausiert = False  # vom Server gemeldet (X-Taleward-Pausiert)
+         # Eingebauter Worker: zwischen den Aufträgen nachsehen, ob sich seine Einstellungen in der Verwaltung geändert
+         # haben – dann beendet er sich, und Docker startet ihn mit den neuen Werten neu
+         self.neustart_noetig = neustart_noetig
+@@ -218,11 +220,28 @@ class WorkerProzess:
+         if self.claim_wait is not None:
+             body["waitSeconds"] = self.claim_wait
+         r = self.client.post("/worker/v1/jobs/claim", json=body)
++        self._server_pause(r)
+         if r.status_code == 204:
+             return None
+         r.raise_for_status()
+         return r.json()
+ 
++    def pause_melden(self) -> None:
++        """In der App pausiert: dem Server Bescheid geben (Lebenszeichen, holt nichts ab). Ältere Server kennen
++        „pausiert“ nicht und antworten ohne Auftrag, weil keine Fähigkeiten mitgeschickt werden."""
++        r = self.client.post("/worker/v1/jobs/claim",
++                             json={"capabilities": [], "info": {**self.info, "pausiert": True}, "waitSeconds": 0})
++        self._server_pause(r)
++
++    def _server_pause(self, r: httpx.Response) -> None:
++        """In der Verwaltung pausiert oder fortgesetzt? Nur Änderungen melden (Protokoll und Worker-App)."""
++        an = r.headers.get("X-Taleward-Pausiert") == "verwaltung"
++        if an != self.in_verwaltung_pausiert:
++            self.in_verwaltung_pausiert = an
++            log.info("In der Verwaltung pausiert – nimmt keine Aufträge an" if an
++                     else "In der Verwaltung fortgesetzt")
++            self.melden("server_pausiert" if an else "server_fortgesetzt")
++
+     def herunterladen(self, auftrag: dict) -> list[Path]:
+         dateien = []
+         for f in sorted(auftrag["files"], key=lambda x: x["position"]):
+@@ -331,6 +350,7 @@ class WorkerProzess:
+         pause = 1.0
+         getrennt = False
+         zuletzt = time.monotonic()
++        pause_gemeldet = None  # wann der Server zuletzt von der Pause erfahren hat
+         while not self._stop.is_set():
+             if self.neustart_noetig is not None and time.monotonic() - zuletzt >= self.nachsehen_s:
+                 zuletzt = time.monotonic()
+@@ -342,8 +362,15 @@ class WorkerProzess:
+                 except httpx.HTTPError:
+                     pass  # Server gerade nicht erreichbar – beim nächsten Mal
+             if self._pause.is_set():
++                if pause_gemeldet is None or time.monotonic() - pause_gemeldet >= PAUSE_MELDEN_S:
++                    pause_gemeldet = time.monotonic()
++                    try:
++                        self.pause_melden()
++                    except httpx.HTTPError:
++                        pass  # nächster Versuch beim nächsten Takt
+                 self._stop.wait(1)
+                 continue
++            pause_gemeldet = None
+             try:
+                 if self.einen_auftrag():
+                     self.melden("warte")
+diff --git a/migrations/versions/d7f1b3c5e9a2_worker_in_app_pausiert.py b/migrations/versions/d7f1b3c5e9a2_worker_in_app_pausiert.py
+new file mode 100644
+index 0000000..5b36207
+--- /dev/null
++++ b/migrations/versions/d7f1b3c5e9a2_worker_in_app_pausiert.py
+@@ -0,0 +1,26 @@
++"""Worker in der Worker-App pausiert (workers.app_paused_since)
++
++Revision ID: d7f1b3c5e9a2
++Revises: c3e7a9d1f5b2
++Create Date: 2026-09-29 23:00:00
++
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = 'd7f1b3c5e9a2'
++down_revision: Union[str, Sequence[str], None] = 'c3e7a9d1f5b2'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    with op.batch_alter_table('workers') as b:
++        b.add_column(sa.Column('app_paused_since', sa.DateTime(), nullable=True))
++
++
++def downgrade() -> None:
++    with op.batch_alter_table('workers') as b:
++        b.drop_column('app_paused_since')
+diff --git a/pyproject.toml b/pyproject.toml
+index 1b5bd77..76b380b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.13"
++version = "0.4.14"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 8f4c713..588367d 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.13"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.14"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index d3d5a6d..e5f9810 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.13"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.14"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 7f41272..8c80e31 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.13"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.14"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index c947e9c..d9d861d 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.13"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.14"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/tests/test_worker_pause.py b/tests/test_worker_pause.py
+new file mode 100644
+index 0000000..68cab82
+--- /dev/null
++++ b/tests/test_worker_pause.py
+@@ -0,0 +1,87 @@
++"""Pause in beide Richtungen: in der Worker-App pausiert → sieht der Server; in der Verwaltung pausiert → sieht die App."""
++from datetime import timedelta
++
++import pytest
++from fastapi.testclient import TestClient
++
++from tests.test_betrieb import einrichten, ntfy  # noqa: F401 (Fixture)
++from tests.test_step2a import audio_abschnitte, hochladen, neue_session, status, worker_token
++from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++@pytest.fixture()
++def _kleine_teile(monkeypatch):
++    monkeypatch.setenv("CHUNK_SIZE_BYTES", str(64 * 1024))
++
++
++def _worker(client, token, tmp_path, ereignisse):
++    from app.worker_prozess import WorkerProzess, verarbeite_attrappe
++
++    return WorkerProzess("http://testserver", token, tmp_path / "knecht", verarbeite_attrappe,
++                         client=TestClient(client.app), claim_wait=0, info={"gpu": "Testkarte"},
++                         melden=lambda art, **d: ereignisse.append(art))
++
++
++def test_in_der_app_pausiert(client, world, dbs, tmp_path, admin, ntfy):  # noqa: F811
++    from app import benachrichtigung, queue
++    from app.db import utcnow
++    from app.models import Job, Worker
++
++    w = world
++    s = neue_session(client, w)
++    hochladen(client, w["gm"], s["id"], audio_abschnitte(tmp_path, (6,)))
++    ereignisse = []
++    knecht = _worker(client, worker_token(dbs), tmp_path, ereignisse)
++    knecht.pausieren(True)
++    knecht.pause_melden()  # das macht die Schleife alle 30 s
++    dbs.expire_all()
++    wk = dbs.query(Worker).one()
++    assert wk.app_paused_since is not None and "pausiert" not in (wk.info or "") and "Testkarte" in wk.info
++    assert dbs.query(Job).one().state == "queued"  # nichts abgeholt
++    assert not queue.worker_online(dbs) and queue.pausierte_worker(dbs) == [wk.name]
++    assert "pausiert" in status(client, w["gm"], s["id"])["message"]
++    seite = client.get("/verwaltung/transkription").text
++    assert "in der App pausiert" in seite
++
++    # Benachrichtigung: „pausiert“ statt „kein Worker erreichbar“
++    einrichten(dbs, stunden="1")
++    dbs.query(Job).one().created_at = utcnow() - timedelta(hours=2)
++    dbs.commit()
++    assert benachrichtigung.pruefen(dbs) == ["worker_pausiert"]
++    assert wk.name in ntfy[-1]["message"] and "Fortsetzen" in ntfy[-1]["message"]
++
++    # Externe Transkription: ein schon länger pausierter Worker zählt nicht als erreichbar
++    from app.extern import worker_seit
++
++    wk.app_paused_since = utcnow() - timedelta(hours=30)
++    dbs.commit()
++    assert not worker_seit(dbs, utcnow() - timedelta(hours=24))
++
++    # Fortsetzen: der nächste normale Abruf hebt die Pause auf und holt den Auftrag
++    knecht.pausieren(False)
++    assert knecht.einen_auftrag()
++    dbs.expire_all()
++    assert dbs.query(Worker).one().app_paused_since is None
++    assert ereignisse[:2] == ["pausiert", "fortgesetzt"]
++
++
++def test_in_der_verwaltung_pausiert(client, world, dbs, tmp_path, admin):  # noqa: F811
++    from app.models import Worker
++
++    ereignisse = []
++    knecht = _worker(client, worker_token(dbs), tmp_path, ereignisse)
++    wid = dbs.query(Worker).one().id
++    client.post(f"/verwaltung/worker/{wid}/pause", data={"csrf": admin})
++    assert knecht.einen_auftrag() is False
++    assert knecht.in_verwaltung_pausiert and ereignisse == ["server_pausiert"]
++    knecht.einen_auftrag()
++    assert ereignisse == ["server_pausiert"]  # nur Änderungen
++    client.post(f"/verwaltung/worker/{wid}/fortsetzen", data={"csrf": admin})
++    knecht.einen_auftrag()
++    assert not knecht.in_verwaltung_pausiert and ereignisse == ["server_pausiert", "server_fortgesetzt"]
++    # Auch ein in der App pausierter Worker erfährt es
++    client.post(f"/verwaltung/worker/{wid}/pause", data={"csrf": admin})
++    knecht.pause_melden()
++    assert ereignisse[-1] == "server_pausiert"
+diff --git a/uv.lock b/uv.lock
+index e83e2c6..4935192 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.13"
++version = "0.4.14"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
