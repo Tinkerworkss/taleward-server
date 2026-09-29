@@ -1,0 +1,623 @@
+From d898357ab8704317dab2eeb36baac6341214db9a Mon Sep 17 00:00:00 2001
+From: Taleward <twartanddesign@gmail.com>
+Date: Tue, 29 Sep 2026 13:28:40 +0200
+Subject: [PATCH] =?UTF-8?q?Taleward-Box:=20fertiges=20Abbild=20f=C3=BCr=20?=
+ =?UTF-8?q?den=20Raspberry=20Pi=20(Server=200.4.9)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- box/bauen.sh: Raspberry Pi OS Lite (64 Bit) + Docker + fertiges Server-Paket (ARM64, docker save) +
+  Einrichtung beim ersten Start; dazu Eintrag für den Raspberry Pi Imager und Release-Text.
+- box/erststart.sh + taleward-erststart.service: beim ersten Start einmalig Name taleward, Paket laden,
+  install.sh ohne Rückfragen im Heimnetz-Betrieb (auch ohne Internet).
+- Ersteinrichtung ohne Code, nur aus privaten Netzen und nur solange es keinen Verwalter gibt
+  (EINRICHTUNG_IM_HEIMNETZ, nur die Box schaltet es ein).
+- install.sh: TALEWARD_OHNE_FRAGEN und TALEWARD_OHNE_BAU für die Box.
+- Anleitung „Taleward-Box“ in INSTALLATION-VPS.md.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ .dockerignore                      |   1 +
+ INSTALLATION-VPS.md                |  37 ++++++
+ INSTALLATION.md                    |   2 +-
+ README.md                          |   3 +-
+ app/config.py                      |   3 +
+ app/einrichtung.py                 |  16 +++
+ app/verwaltung/assistent.py        |   2 +
+ box/bauen.sh                       | 179 +++++++++++++++++++++++++++++
+ box/erststart.sh                   |  40 +++++++
+ box/taleward-erststart.service     |  14 +++
+ deploy/docker-compose.heimnetz.yml |   2 +
+ install.sh                         |   5 +-
+ pyproject.toml                     |   2 +-
+ tests/test_aktualisierung.py       |   2 +-
+ tests/test_assistent.py            |   2 +-
+ tests/test_box.py                  |  59 ++++++++++
+ tests/test_modellablage.py         |   2 +-
+ tests/test_worker_app.py           |   2 +-
+ uv.lock                            |   2 +-
+ 19 files changed, 366 insertions(+), 9 deletions(-)
+ create mode 100755 box/bauen.sh
+ create mode 100755 box/erststart.sh
+ create mode 100644 box/taleward-erststart.service
+ create mode 100644 tests/test_box.py
+
+diff --git a/.dockerignore b/.dockerignore
+index aef966d..8f1d520 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -8,3 +8,4 @@ daten
+ .ruff_cache
+ tests
+ docs
++box
+diff --git a/INSTALLATION-VPS.md b/INSTALLATION-VPS.md
+index 4408463..cf7c8d2 100644
+--- a/INSTALLATION-VPS.md
++++ b/INSTALLATION-VPS.md
+@@ -56,6 +56,43 @@ koppeln.
+ Tipp: Im Router für diesen Server immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
+ bearbeiten), sonst ändert sich die Adresse für die App.
+ 
++## Taleward-Box: Raspberry Pi ohne Terminal
++
++Für einen Verein oder eine Runde, die einfach ein kleines Kästchen ins Netz stecken will: ein fertiges
++Speicherkarten-Abbild mit Raspberry Pi OS, Docker und dem Taleward-Server. Es gibt kein Terminal und keine Befehle.
++
++- **Du brauchst:**
++  - Raspberry Pi 4 oder 5 mit 4–8 GB
++  - Speicherkarte ab 16 GB (besser 32 GB) oder eine SSD
++  - Netzteil
++  - Netzwerkkabel oder WLAN
++- **Abbild:** auf GitHub unter *Releases* → „Taleward-Box v…“ → `Taleward-Box-v….img.xz`
++
++So geht's:
++
++1. **Raspberry Pi Imager** öffnen, Gerät wählen, bei „Betriebssystem“ ganz unten **„Eigenes Abbild“** und die
++   heruntergeladene Datei wählen. Dann die Speicherkarte wählen.
++2. Bei **„Einstellungen anpassen“**:
++   - als Name `taleward` eintragen
++   - Benutzer und Passwort vergeben
++   - WLAN nur, wenn die Box nicht am Kabel hängt
++3. Karte in den Pi, Netz und Strom anschließen. Beim ersten Start richtet sich die Box selbst ein, das dauert einige
++   Minuten.
++4. Im Browser **`http://taleward.local:8000`** öffnen. Klappt das nicht: die IP-Adresse der Box im Router nachsehen
++   (FRITZ!Box: Heimnetz → Netzwerk) und `http://<IP>:8000` öffnen.
++5. **Die Ersteinrichtung geht ohne Einrichtungscode**, aber nur aus dem eigenen Netz und nur einmal. Mach sie also
++   gleich nach dem ersten Start. In der App trägst du als Server `http://<IP>:8000` ein.
++
++Gut zu wissen:
++
++- **Transkription:** Die Box selbst transkribiert nicht, dafür ist der Pi zu schwach. Das macht ein PC im selben Netz
++  mit der Worker-App. Mit „Recaps auch auf diesem PC schreiben“ bleibt alles im Verein, ganz ohne Cloud.
++- **Feste IP-Adresse:** Im Router der Box immer dieselbe IP-Adresse geben, sonst ändert sich die Adresse für die App.
++- **Updates:** Mit Internet holt sich die Box neue Fassungen nachts selbst, wie jeder Taleward-Server. Auf dem Pi
++  dauert das einige Minuten.
++- **Ohne Internet** läuft die Box ganz normal. Updates kommen dann später über das Update-Paket (geplant).
++- **Protokoll des ersten Starts:** `/var/log/taleward-erststart.log`, falls du doch einmal per SSH nachsehen willst.
++
+ ## 2. Deinen PC als Worker verbinden
+ 
+ Auf dem PC die **Worker-App** installieren ([taleward-worker](https://github.com/Tinkerworkss/taleward-worker), Windows oder Linux). In der
+diff --git a/INSTALLATION.md b/INSTALLATION.md
+index e51d506..00a1811 100644
+--- a/INSTALLATION.md
++++ b/INSTALLATION.md
+@@ -201,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
+ uv run pytest
+ ```
+ 
+-✅ **Kontrolle:** Die letzte Zeile lautet **`266 passed`**. Der Lauf dauert etwa eine Minute.
++✅ **Kontrolle:** Die letzte Zeile lautet **`269 passed`**. Der Lauf dauert etwa eine Minute.
+ 
+ ### 4.2 Eigenes Konto anlegen
+ 
+diff --git a/README.md b/README.md
+index cccbda7..5e3b5ea 100644
+--- a/README.md
++++ b/README.md
+@@ -39,7 +39,7 @@ Kurzfassung für später:
+ 
+ ```bash
+ cd ~/session-chronik-server
+-uv run pytest                  # erwartet: 266 passed
++uv run pytest                  # erwartet: 269 passed
+ uv run chronik serve           # Server starten, Strg+C beendet
+ uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
+ uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
+@@ -97,6 +97,7 @@ app/
+ migrations/   Datenbank-Migrationen (Alembic)
+ tests/        pytest inkl. automatischer Vertragsprüfung
+ deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
++box/          Taleward-Box: Abbild für den Raspberry Pi (bauen.sh, Einrichtung beim ersten Start)
+ Dockerfile.worker  Worker als Container (Grafikkarte oder Prozessor), Compose-Profil „worker“/„worker-cpu“
+ engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
+ ```
+diff --git a/app/config.py b/app/config.py
+index 89c1e84..7f1e216 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -61,6 +61,9 @@ class Settings(BaseSettings):
+     # frischen Schlüssel für ihn an und schreibt ihn in diese Datei (gemeinsames Volume, nur Server und Worker).
+     eingebauter_worker: str = ""  # Inhalt von COMPOSE_PROFILES; leer = kein eingebauter Worker
+     eingebauter_worker_datei: Path = Path("/kopplung/worker-token")
++    # Taleward-Box (Raspberry Pi, ohne Bildschirm): Ersteinrichtung ohne Code, aber nur aus dem eigenen Netz und nur,
++    # solange es noch keinen Verwalter gibt
++    einrichtung_im_heimnetz: bool = False
+     # Hugging Face Zugangsschlüssel (für das pyannote-Sprechermodell)
+     hf_token: str | None = None
+     # Taleward-Spiegel des Sprechermodells (ohne Hugging-Face-Konto). Genutzt nur, wenn die Prüfsumme im Code steht.
+diff --git a/app/einrichtung.py b/app/einrichtung.py
+index 841480a..45cb50c 100644
+--- a/app/einrichtung.py
++++ b/app/einrichtung.py
+@@ -44,6 +44,22 @@ def code_pruefen(db: Session, code: str) -> bool:
+     return bool(soll) and braucht_einrichtung(db) and hmac.compare_digest(soll.replace("-", ""), ist.replace("-", ""))
+ 
+ 
++def heimnetz_ohne_code(request) -> bool:
++    """Taleward-Box: Ersteinrichtung ohne Code – nur wenn so eingeschaltet (EINRICHTUNG_IM_HEIMNETZ) und die Anfrage
++    aus einem privaten Netz kommt (Heimnetz, Vereins-WLAN). Aus dem Internet gilt weiter der Code."""
++    import ipaddress
++
++    from app.config import get_settings
++
++    if not get_settings().einrichtung_im_heimnetz or request.client is None:
++        return False
++    try:
++        adresse = ipaddress.ip_address(request.client.host)
++    except ValueError:
++        return False
++    return adresse.is_private or adresse.is_loopback or adresse.is_link_local
++
++
+ def code_verbrauchen(db: Session) -> None:
+     meta_schreiben(db, "einrichtung.code", "")
+ 
+diff --git a/app/verwaltung/assistent.py b/app/verwaltung/assistent.py
+index 9cdf426..cb6bc37 100644
+--- a/app/verwaltung/assistent.py
++++ b/app/verwaltung/assistent.py
+@@ -71,6 +71,8 @@ def einrichtung_seite(request: Request, code: str = "", db: Session = Depends(ge
+     alt = _alte_sitzung(request, db)
+     if alt is None and not einrichtung.braucht_einrichtung(db):
+         return RedirectResponse("/verwaltung/anmelden", status_code=303)
++    if not code and alt is None and einrichtung.heimnetz_ohne_code(request):
++        code = einrichtung.code_erzeugen(db)  # Taleward-Box: Code wird still ins Formular gelegt
+     gueltig = alt is not None or einrichtung.code_pruefen(db, code)
+     return _seite(request, "einrichtung.html", None, db, fehler=fehler, code=code if gueltig else "",
+                   code_falsch=bool(code) and not gueltig, alt=alt is not None,
+diff --git a/box/bauen.sh b/box/bauen.sh
+new file mode 100755
+index 0000000..5ad9717
+--- /dev/null
++++ b/box/bauen.sh
+@@ -0,0 +1,179 @@
++#!/usr/bin/env bash
++# shellcheck disable=SC1091,SC1111  # os-release erst zur Laufzeit; deutsche Anführungszeichen sind Absicht
++# Taleward-Box bauen: Raspberry Pi OS Lite (64 Bit) + Docker + fertiges Taleward-Server-Paket + Einrichtung beim
++# ersten Start. Läuft im GitHub-Ablauf „Taleward-Box“ auf einem ARM-Rechner (ubuntu-24.04-arm), als root.
++#
++#   sudo bash box/bauen.sh v0.4.9 ausgabe
++#
++# Ergebnis in <ausgabe>/:
++#   Taleward-Box-<fassung>.img.xz   Speicherkarten-Abbild (Raspberry Pi 4/5, 4–8 GB)
++#   taleward-box.json               Eintrag für den Raspberry Pi Imager („eigenes Repository“)
++#   HINWEISE.md                     Text für das GitHub-Release
++#
++# Nur für Tests: BOX_OS_URL (anderes Grundabbild), BOX_OHNE_DOCKER=1 (kein Server-Paket), BOX_OHNE_CHROOT=1
++# (keine Pakete im Abbild installieren).
++set -euo pipefail
++
++FASSUNG=${1:?Fassung fehlt, z. B. v0.4.9}
++AUSGABE=$(realpath -m "${2:-ausgabe}")
++WURZEL=$(cd "$(dirname "$0")/.." && pwd)
++OS_URL=${BOX_OS_URL:-https://downloads.raspberrypi.com/raspios_lite_arm64_latest}
++REPO=${BOX_REPO:-Tinkerworkss/taleward-server}
++ZUSATZ_GB=${BOX_ZUSATZ_GB:-3}   # Platz für Docker, Server-Paket und die ersten Daten
++ARBEIT=$(mktemp -d)
++MNT="$ARBEIT/mnt"
++NAME="Taleward-Box-$FASSUNG"
++
++schritt() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
++LOOP1=""; LOOP2=""
++aufraeumen() {
++  set +e
++  for m in "$MNT/boot/firmware" "$MNT/dev/pts" "$MNT/dev" "$MNT/proc" "$MNT/sys" "$MNT/run" "$MNT"; do
++    mountpoint -q "$m" && umount -l "$m"
++  done
++  [ -n "$LOOP1" ] && losetup -d "$LOOP1"
++  [ -n "$LOOP2" ] && losetup -d "$LOOP2"
++  rm -rf "$ARBEIT"
++}
++# Partition N als eigenes Loop-Gerät (über Versatz – braucht keine udev-Gerätedateien wie /dev/loop0p2)
++partition() {
++  local nr=$1 versatz groesse
++  read -r versatz groesse < <(parted -s -m "$BILD" unit B print | awk -F: -v n="$nr" '$1==n {sub("B","",$2); sub("B","",$4); print $2, $4}')
++  losetup --show -f -o "$versatz" --sizelimit "$groesse" "$BILD"
++}
++trap aufraeumen EXIT
++[ "$(id -u)" -eq 0 ] || { echo "Bitte mit sudo starten."; exit 1; }
++mkdir -p "$AUSGABE" "$MNT"
++
++# ------------------------------------------------------------------ 1. Server-Paket für ARM64
++if [ -z "${BOX_OHNE_DOCKER:-}" ]; then
++  schritt "Server-Paket $FASSUNG bauen (ARM64)"
++  [ "$(uname -m)" = "aarch64" ] || { echo "Das Server-Paket muss auf einem ARM64-Rechner gebaut werden."; exit 1; }
++  docker build -t "taleward-server:$FASSUNG" "$WURZEL"
++  docker save "taleward-server:$FASSUNG" | zstd -T0 -12 -q -o "$ARBEIT/taleward-server.tar.zst"
++fi
++
++# ------------------------------------------------------------------ 2. Grundabbild
++schritt "Raspberry Pi OS Lite (64 Bit) laden"
++curl -fL --retry 3 -o "$ARBEIT/os.img.xz" "$OS_URL"
++xz -d -T0 "$ARBEIT/os.img.xz"
++BILD="$ARBEIT/$NAME.img"
++mv "$ARBEIT/os.img" "$BILD"
++
++schritt "Abbild um ${ZUSATZ_GB} GB vergrößern"
++truncate -s "+${ZUSATZ_GB}G" "$BILD"
++parted -s "$BILD" resizepart 2 100%
++LOOP2=$(partition 2)
++e2fsck -pf "$LOOP2" || [ $? -le 1 ]
++resize2fs "$LOOP2"
++LOOP1=$(partition 1)
++
++mount "$LOOP2" "$MNT"
++mkdir -p "$MNT/boot/firmware"
++mount "$LOOP1" "$MNT/boot/firmware"
++. "$MNT/etc/os-release"
++CODENAME=${VERSION_CODENAME:-bookworm}
++echo "Grundsystem: ${PRETTY_NAME:-?} ($CODENAME)"
++
++# ------------------------------------------------------------------ 3. Docker, zstd, git ins Abbild
++if [ -z "${BOX_OHNE_CHROOT:-}" ]; then
++  schritt "Docker installieren (im Abbild)"
++  for m in dev dev/pts proc sys run; do mount --bind "/$m" "$MNT/$m"; done
++  cp "$MNT/etc/resolv.conf" "$ARBEIT/resolv.conf.alt" 2>/dev/null || true
++  rm -f "$MNT/etc/resolv.conf" && cp /etc/resolv.conf "$MNT/etc/resolv.conf"
++  printf '#!/bin/sh\nexit 101\n' > "$MNT/usr/sbin/policy-rc.d" && chmod +x "$MNT/usr/sbin/policy-rc.d"  # nichts starten
++  chroot "$MNT" /bin/bash -euo pipefail -c "
++    export DEBIAN_FRONTEND=noninteractive
++    apt-get update -q
++    apt-get install -y -q ca-certificates curl gnupg zstd git avahi-daemon
++    install -m 0755 -d /etc/apt/keyrings
++    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
++    echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable' \
++      > /etc/apt/sources.list.d/docker.list
++    apt-get update -q
++    apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
++    systemctl enable docker.service containerd.service avahi-daemon.service
++    apt-get clean
++    rm -rf /var/lib/apt/lists/*
++  "
++  rm -f "$MNT/usr/sbin/policy-rc.d"
++  rm -f "$MNT/etc/resolv.conf"
++  if [ -e "$ARBEIT/resolv.conf.alt" ] || [ -L "$ARBEIT/resolv.conf.alt" ]; then cp -P "$ARBEIT/resolv.conf.alt" "$MNT/etc/resolv.conf"; fi
++  for m in run sys proc dev/pts dev; do umount -l "$MNT/$m"; done
++fi
++
++# ------------------------------------------------------------------ 4. Taleward
++schritt "Taleward $FASSUNG einlegen"
++BOX="$MNT/opt/taleward-box"
++mkdir -p "$BOX/quelle/deploy"
++printf '%s\n' "$FASSUNG" > "$BOX/fassung"
++install -m 0755 "$WURZEL/box/erststart.sh" "$BOX/erststart.sh"
++install -m 0755 "$WURZEL/install.sh" "$BOX/quelle/install.sh"
++cp "$WURZEL"/deploy/* "$BOX/quelle/deploy/"
++[ -f "$ARBEIT/taleward-server.tar.zst" ] && mv "$ARBEIT/taleward-server.tar.zst" "$BOX/"
++install -D -m 0644 "$WURZEL/box/taleward-erststart.service" "$MNT/etc/systemd/system/taleward-erststart.service"
++mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
++ln -sf /etc/systemd/system/taleward-erststart.service \
++  "$MNT/etc/systemd/system/multi-user.target.wants/taleward-erststart.service"
++cat > "$MNT/boot/firmware/TALEWARD.txt" <<TEXT
++Taleward-Box $FASSUNG
++
++Nach dem ersten Start richtet sich die Box selbst ein (einige Minuten). Danach im Browser öffnen:
++  http://taleward.local:8000
++oder http://<IP-Adresse der Box>:8000  (die IP zeigt z. B. die FRITZ!Box unter Heimnetz → Netzwerk)
++
++Die Ersteinrichtung geht ohne Code, aber nur aus dem eigenen Netz und nur einmal.
++Protokoll des ersten Starts auf der Box: /var/log/taleward-erststart.log
++TEXT
++
++sync
++umount "$MNT/boot/firmware"
++umount "$MNT"
++losetup -d "$LOOP1" "$LOOP2"
++LOOP1=""; LOOP2=""
++
++# ------------------------------------------------------------------ 5. Packen, Prüfsummen, Imager-Eintrag
++schritt "Packen"
++BILD_GROESSE=$(stat -c %s "$BILD")
++BILD_SHA=$(sha256sum "$BILD" | cut -d' ' -f1)
++xz -T0 -6 -c "$BILD" > "$AUSGABE/$NAME.img.xz"
++XZ_GROESSE=$(stat -c %s "$AUSGABE/$NAME.img.xz")
++XZ_SHA=$(sha256sum "$AUSGABE/$NAME.img.xz" | cut -d' ' -f1)
++(cd "$AUSGABE" && sha256sum "$NAME.img.xz" > "$NAME.img.xz.sha256")
++# Trixie-basierte Abbilder nutzen cloud-init für Name, WLAN und Konto aus dem Imager, ältere firstrun.sh
++INIT=systemd
++[ "$CODENAME" = "bookworm" ] || INIT=cloudinit-rpi
++cat > "$AUSGABE/taleward-box.json" <<JSON
++{
++  "os_list": [
++    {
++      "name": "Taleward-Box $FASSUNG",
++      "description": "Taleward-Server für das Heimnetz (Raspberry Pi 4/5, 64 Bit). Nach dem Start: http://taleward.local:8000",
++      "url": "https://github.com/$REPO/releases/download/box-$FASSUNG/$NAME.img.xz",
++      "icon": "https://raw.githubusercontent.com/$REPO/main/app/verwaltung/static/marke/icon-192.png",
++      "release_date": "$(date -u +%Y-%m-%d)",
++      "extract_size": $BILD_GROESSE,
++      "extract_sha256": "$BILD_SHA",
++      "image_download_size": $XZ_GROESSE,
++      "image_download_sha256": "$XZ_SHA",
++      "devices": ["pi5-64bit", "pi4-64bit"],
++      "init_format": "$INIT"
++    }
++  ]
++}
++JSON
++cat > "$AUSGABE/HINWEISE.md" <<TEXT
++Taleward-Server **$FASSUNG** als fertiges Speicherkarten-Abbild für den Raspberry Pi 4 oder 5 (64 Bit, ab 4 GB).
++Grundlage: ${PRETTY_NAME:-Raspberry Pi OS Lite}.
++
++1. **Raspberry Pi Imager** öffnen → Gerät wählen → „Betriebssystem“ → ganz unten „Eigenes Abbild“ → \`$NAME.img.xz\`
++   (oder in den Imager-Einstellungen das Repository \`https://github.com/$REPO/releases/latest/download/taleward-box.json\`).
++2. Bei „Einstellungen anpassen“ als Name \`taleward\` eintragen, dazu Benutzer und Passwort; WLAN nur, wenn die Box
++   nicht per Kabel angeschlossen wird.
++3. Karte in den Pi, Netz und Strom anschließen, einige Minuten warten.
++4. Im Browser \`http://taleward.local:8000\` öffnen und den Assistenten durchgehen – ohne Einrichtungscode, aber nur
++   aus dem eigenen Netz.
++
++Prüfsumme (SHA-256): \`$XZ_SHA\`
++TEXT
++ls -la "$AUSGABE"
+diff --git a/box/erststart.sh b/box/erststart.sh
+new file mode 100755
+index 0000000..00f98a8
+--- /dev/null
++++ b/box/erststart.sh
+@@ -0,0 +1,40 @@
++#!/usr/bin/env bash
++# Taleward-Box: richtet beim ersten Start einmalig alles ein (läuft als systemd-Dienst taleward-erststart).
++# Schlägt etwas fehl (z. B. noch kein Netz), versucht es der Dienst beim nächsten Start erneut.
++set -euo pipefail
++BOX=/opt/taleward-box
++ZIEL=/opt/taleward
++exec >>/var/log/taleward-erststart.log 2>&1
++echo "===== $(date '+%Y-%m-%d %H:%M') – erster Start der Taleward-Box"
++FASSUNG=$(cat "$BOX/fassung")
++
++# Name im Netz: taleward.local – nur wenn beim Aufspielen kein eigener Name gewählt wurde
++if [ "$(hostname)" = "raspberrypi" ]; then
++  hostnamectl set-hostname taleward
++  sed -i 's/\braspberrypi\b/taleward/g' /etc/hosts
++  systemctl restart avahi-daemon 2>/dev/null || true
++fi
++
++# Auf eine Adresse im Heimnetz warten (bis zu 3 Minuten) – Internet ist nicht nötig
++for _ in $(seq 1 90); do
++  [ -n "$(hostname -I 2>/dev/null | tr -d ' ')" ] && break
++  sleep 2
++done
++[ -n "$(hostname -I 2>/dev/null | tr -d ' ')" ] || { echo "Noch keine Netzwerkadresse – nächster Versuch beim nächsten Start."; exit 1; }
++
++systemctl start docker
++if [ -f "$BOX/taleward-server.tar.zst" ]; then
++  echo "Server-Paket $FASSUNG laden …"
++  zstd -dc "$BOX/taleward-server.tar.zst" | docker load
++fi
++
++mkdir -p "$ZIEL"
++if [ ! -f "$ZIEL/.env" ]; then
++  printf 'TALEWARD_MODUS=heimnetz\nTALEWARD_VERSION=%s\nTALEWARD_EINRICHTUNG_IM_HEIMNETZ=true\n' "$FASSUNG" > "$ZIEL/.env"
++fi
++TALEWARD_OHNE_FRAGEN=1 TALEWARD_OHNE_BAU=1 TALEWARD_QUELLE="file://$BOX/quelle" bash "$BOX/quelle/install.sh"
++
++rm -f "$BOX/taleward-server.tar.zst"   # liegt jetzt in Docker – Platz sparen
++touch "$BOX/eingerichtet"
++systemctl disable taleward-erststart.service 2>/dev/null || true
++echo "Fertig. Im Browser: http://$(hostname).local:8000/verwaltung  (oder http://$(hostname -I | awk '{print $1}'):8000/verwaltung)"
+diff --git a/box/taleward-erststart.service b/box/taleward-erststart.service
+new file mode 100644
+index 0000000..3482060
+--- /dev/null
++++ b/box/taleward-erststart.service
+@@ -0,0 +1,14 @@
++[Unit]
++Description=Taleward-Box einrichten (einmalig beim ersten Start)
++After=network-online.target docker.service
++Wants=network-online.target
++ConditionPathExists=!/opt/taleward-box/eingerichtet
++
++[Service]
++Type=oneshot
++ExecStart=/opt/taleward-box/erststart.sh
++TimeoutStartSec=45min
++RemainAfterExit=yes
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/deploy/docker-compose.heimnetz.yml b/deploy/docker-compose.heimnetz.yml
+index 5ed7c38..339ee37 100644
+--- a/deploy/docker-compose.heimnetz.yml
++++ b/deploy/docker-compose.heimnetz.yml
+@@ -52,6 +52,8 @@ services:
+       DATA_DIR: /data
+       PUBLIC_URL: ${TALEWARD_ADRESSE}
+       EINGEBAUTER_WORKER: ${COMPOSE_PROFILES:-}
++      # Taleward-Box: Ersteinrichtung ohne Code aus dem eigenen Netz (setzt das Abbild beim ersten Start)
++      EINRICHTUNG_IM_HEIMNETZ: ${TALEWARD_EINRICHTUNG_IM_HEIMNETZ:-false}
+     volumes:
+       - ./daten:/data
+       - kopplung:/kopplung   # Schlüssel für den eingebauten Worker (nur Server und Worker)
+diff --git a/install.sh b/install.sh
+index e58a4f1..3707189 100755
+--- a/install.sh
++++ b/install.sh
+@@ -25,6 +25,8 @@ abbruch() { rot "Abgebrochen: $*"; exit 1; }
+ frage() {
+   local text=$1 vorgabe=${2:-} antwort
+   if [ -n "$vorgabe" ]; then text="$text [$vorgabe]"; fi
++  # Ohne Rückfragen (Taleward-Box beim ersten Start): immer die Vorgabe
++  if [ -n "${TALEWARD_OHNE_FRAGEN:-}" ]; then echo "$text: $vorgabe" >&2; printf '%s' "$vorgabe"; return; fi
+   read -r -p "$text: " antwort </dev/tty || true
+   printf '%s' "${antwort:-$vorgabe}"
+ }
+@@ -386,7 +388,8 @@ else
+ fi
+ cd "$ZIEL"
+ for p in $PORTS; do port_frei "$p"; done
+-docker compose build --pull
++# Taleward-Box: Das Server-Paket liegt schon fertig im Abbild (docker load) – nichts zu bauen, auch ohne Internet
++[ -n "${TALEWARD_OHNE_BAU:-}" ] || docker compose build --pull
+ docker compose up -d
+ 
+ echo -n "Warte auf den Server "
+diff --git a/pyproject.toml b/pyproject.toml
+index 9b3f163..53a2923 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.8"
++version = "0.4.9"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index dcaa501..a72defb 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.8"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.9"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 123741c..ef79a52 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.8"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.9"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_box.py b/tests/test_box.py
+new file mode 100644
+index 0000000..b8d66ea
+--- /dev/null
++++ b/tests/test_box.py
+@@ -0,0 +1,59 @@
++"""Taleward-Box (Raspberry Pi): Ersteinrichtung ohne Code aus dem Heimnetz, Abbild-Bauskript."""
++import re
++from pathlib import Path
++from types import SimpleNamespace
++
++WURZEL = Path(__file__).resolve().parent.parent
++
++
++def _anfrage(host):
++    return SimpleNamespace(client=SimpleNamespace(host=host) if host else None)
++
++
++def test_heimnetz_ohne_code_nur_wenn_eingeschaltet_und_privat(monkeypatch):
++    from app import config
++    from app.einrichtung import heimnetz_ohne_code
++
++    config.get_settings.cache_clear()
++    assert not heimnetz_ohne_code(_anfrage("192.168.178.20"))  # Standard: aus
++    monkeypatch.setenv("EINRICHTUNG_IM_HEIMNETZ", "true")
++    config.get_settings.cache_clear()
++    for privat in ("192.168.178.20", "10.0.0.5", "172.17.0.1", "127.0.0.1", "fe80::1", "fd00::5"):
++        assert heimnetz_ohne_code(_anfrage(privat)), privat
++    for fremd in ("8.8.8.8", "2a00:1450::1", "testclient", None):
++        assert not heimnetz_ohne_code(_anfrage(fremd)), fremd
++    config.get_settings.cache_clear()
++
++
++def test_box_einrichtung_ohne_code(client, dbs, monkeypatch):
++    from app import einrichtung
++
++    einrichtung.beim_start(dbs)
++    # ohne Freigabe: wie immer nur mit Code
++    assert 'name="username"' not in client.get("/verwaltung/einrichtung").text
++    monkeypatch.setattr(einrichtung, "heimnetz_ohne_code", lambda request: True)
++    seite = client.get("/verwaltung/einrichtung").text
++    assert 'name="username"' in seite
++    code = re.search(r'name="code" value="([^"]+)"', seite).group(1)
++    body = {"username": "vera", "display_name": "Vera", "password": "Drachenfeuer7", "password2": "Drachenfeuer7",
++            "code": code}
++    r = client.post("/verwaltung/einrichtung", data=body, follow_redirects=False)
++    assert r.status_code == 303 and r.headers["location"] == "/verwaltung/assistent/verein"
++    # nur einmal: danach führt die Seite zur Anmeldung
++    client.cookies.clear()
++    assert client.get("/verwaltung/einrichtung", follow_redirects=False).headers["location"] == "/verwaltung/anmelden"
++
++
++def test_box_dateien():
++    erst = (WURZEL / "box" / "erststart.sh").read_text(encoding="utf-8")
++    assert "TALEWARD_OHNE_FRAGEN=1" in erst and "TALEWARD_OHNE_BAU=1" in erst and "docker load" in erst
++    assert "TALEWARD_EINRICHTUNG_IM_HEIMNETZ=true" in erst and "TALEWARD_MODUS=heimnetz" in erst
++    dienst = (WURZEL / "box" / "taleward-erststart.service").read_text(encoding="utf-8")
++    assert "ConditionPathExists=!/opt/taleward-box/eingerichtet" in dienst
++    bauen = (WURZEL / "box" / "bauen.sh").read_text(encoding="utf-8")
++    assert 'docker build -t "taleward-server:$FASSUNG"' in bauen  # Name wie in docker-compose.heimnetz.yml
++    compose = (WURZEL / "deploy" / "docker-compose.heimnetz.yml").read_text(encoding="utf-8")
++    assert "image: taleward-server:${TALEWARD_VERSION:-main}" in compose
++    assert "EINRICHTUNG_IM_HEIMNETZ: ${TALEWARD_EINRICHTUNG_IM_HEIMNETZ:-false}" in compose
++    install = (WURZEL / "install.sh").read_text(encoding="utf-8")
++    assert "TALEWARD_OHNE_FRAGEN" in install and "TALEWARD_OHNE_BAU" in install
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 05c00f3..db11ec8 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.8"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.9"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index d4d0c66..1f9246a 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.8"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.9"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 67c2576..7418a1e 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.8"
++version = "0.4.9"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
