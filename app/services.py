@@ -85,7 +85,7 @@ def member_out(m: Member, viewer: Member | None) -> schemas.MemberOut:
     daten = dict(
         id=m.id, user_id=m.user_id or "", display_name=m.anzeigename, character_name=m.character_name,
         role=m.role, recording_consent_at=m.recording_consent_at, character_summary=m.character_summary,
-        portrait_updated_at=m.portrait_updated_at, deleted_at=m.deleted_at,
+        portrait_updated_at=m.portrait_updated_at, deleted_at=m.deleted_at, left_at=m.left_at,
     )
     if viewer is not None and may_see_backstory(viewer, m):
         daten["character_backstory"] = m.character_backstory
@@ -138,8 +138,8 @@ def _unread(db: Session, c: Campaign, me: Member) -> schemas.UnreadOut:
 def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
     from app.routers.miteinander import braucht_meine_stimme
 
-    member_count = db.scalar(select(func.count()).select_from(Member).where(Member.campaign_id == c.id,
-                                                                            Member.user_id.is_not(None)))
+    member_count = db.scalar(select(func.count()).select_from(Member).where(
+        Member.campaign_id == c.id, Member.user_id.is_not(None), Member.left_at.is_(None)))
     published = db.execute(
         select(func.count(), func.max(GameSession.published_at)).where(
             GameSession.campaign_id == c.id, GameSession.state == "published"
@@ -156,7 +156,7 @@ def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
         id=c.id, title=c.title,
         organization=schemas.OrgRef(id=c.organization.id, name=c.organization.name) if c.organization else None,
         my_role=me.role, my_character_name=me.character_name,
-        member_count=member_count, published_session_count=published[0], pending_review_count=pending,
+        member_count=member_count, archived_at=c.archived_at, published_session_count=published[0], pending_review_count=pending,
         last_published_at=_utc(published[1]), cover_preset=c.cover_preset, unread=_unread(db, c, me),
         cover_image_updated_at=c.cover_image_updated_at, next_session_at=c.next_session_at,
         date_poll_needs_my_vote=braucht_meine_stimme(db, me),

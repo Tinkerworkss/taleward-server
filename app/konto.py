@@ -216,7 +216,7 @@ def loeschen(db: Session, u: User, passwort: str | None, bestaetigung: str | Non
     mitglieder = list(db.scalars(select(Member).where(Member.user_id == u.id)))
     blockiert, allein = [], []
     for m in mitglieder:
-        if m.role != "gm":
+        if m.role != "gm" or m.left_at is not None:
             continue
         andere = [x for x in m.campaign.members if x.id != m.id and x.aktiv]
         if not andere:

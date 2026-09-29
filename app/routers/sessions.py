@@ -11,7 +11,7 @@ from app import errors, queue, schemas, storage
 from app.access import current_user, load_session, load_session_gm, require_gm, require_member
 from app.db import get_db, utcnow
 from app.errors import sprache
-from app.models import GameSession, GmNote, SessionSeen, Speaker, TranscriptSegment, User
+from app.models import Campaign, GameSession, GmNote, SessionSeen, Speaker, TranscriptSegment, Upload, User
 from app.services import (
     build_attendees, log_on_site_consents, next_session_number, processing_status,
     session_out, session_summary_out,
@@ -41,6 +41,8 @@ def create_session(
 ):
     me = require_member(db, campaignId, user)
     require_gm(me)
+    if db.get(Campaign, campaignId).archived_at is not None:
+        raise errors.conflict("campaign_archived")
     s = GameSession(
         campaign_id=campaignId, number=next_session_number(db, campaignId),
         title=(body.title or "").strip() or None, played_at=body.played_at, state="created",
@@ -52,6 +54,31 @@ def create_session(
     db.commit()
     db.refresh(s)
     return session_out(s)
+
+
+@router.delete("/sessions/{sessionId}", tags=["Sessions"], status_code=204)
+def delete_session(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Unveröffentlichtes Kapitel verwerfen (0.4.5): Session mit Aufnahme, Transkript, Hörproben, Vorschlägen und
+    Recap-Entwurf; laufende Aufträge verschwinden mit (ein Worker bekommt dann 404 und bricht ab)."""
+    acc = load_session(db, sessionId, user)
+    if not acc.is_gm:
+        raise errors.forbidden()
+    s = acc.session
+    if s.state == "published":
+        raise errors.conflict("session_published")
+    for up in db.scalars(select(Upload).where(Upload.session_id == s.id)):
+        storage.delete_upload_files(up.id)
+    storage.delete_samples(s.id)
+    campaign_id, nummer = s.campaign_id, s.number
+    db.delete(s)
+    db.flush()
+    # Die Nummer wird wieder frei: spätere Kapitel rücken auf (aufsteigend, damit die Eindeutigkeit hält)
+    for spaeter in db.scalars(select(GameSession).where(GameSession.campaign_id == campaign_id,
+                                                        GameSession.number > nummer).order_by(GameSession.number)):
+        spaeter.number -= 1
+        db.flush()
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/sessions/{sessionId}", tags=["Sessions"], response_model=schemas.SessionOut,

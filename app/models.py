@@ -92,6 +92,7 @@ class Campaign(Base):
     cover_preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
     cover_image_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     next_session_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # abgeschlossen (0.4.5)
     # darf der externe Anbieter (falls der Betreiber einen freigibt) für diese Kampagne transkribieren?
     allow_external_transcription: Mapped[bool] = mapped_column(Boolean, default=False)
     # 0.3.10: Recap/Vorschläge (und Unterlagen) über die Cloud-API nur, wenn die SL es erlaubt
@@ -111,6 +112,8 @@ class Member(Base):
     # Kommentare stimmig bleiben; Bild, Hintergrund und Zustimmung sind dann entfernt.
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # Verlassen oder entfernt (0.4.5): bleibt stehen wie ein gelöschtes Konto, user_id bleibt für die Rückkehr
+    left_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     role: Mapped[str] = mapped_column(String(16))  # gm | player
     character_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     character_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -127,7 +130,7 @@ class Member(Base):
 
     @property
     def aktiv(self) -> bool:
-        return self.user_id is not None
+        return self.user_id is not None and self.left_at is None
 
     @property
     def anzeigename(self) -> str:

@@ -102,6 +102,10 @@ class RegisterRequest(ApiModel):
     age_confirmed: bool = False
 
 
+class DeleteCampaignRequest(ApiModel):
+    confirm_title: str = Field(max_length=300)
+
+
 class DeleteMeRequest(ApiModel):
     password: str | None = Field(default=None, max_length=500)
     confirm_username: str | None = Field(default=None, max_length=200)
@@ -183,6 +187,7 @@ class MemberOut(ApiModel):
     character_backstory: str | None = None  # wird für Unbefugte weggelassen
     portrait_updated_at: datetime | None
     deleted_at: datetime | None = None
+    left_at: datetime | None = None
 
 
 class UnreadOut(ApiModel):
@@ -198,6 +203,7 @@ class CampaignSummaryOut(ApiModel):
     my_role: Role
     my_character_name: str | None
     member_count: int
+    archived_at: datetime | None = None
     published_session_count: int
     pending_review_count: int
     last_published_at: datetime | None
@@ -238,6 +244,7 @@ class CampaignPatch(ApiModel):
     cover_preset: CoverPreset | None = None
     allow_external_transcription: bool | None = None
     allow_cloud_summary: bool | None = None
+    archived: bool | None = None
 
 
 class JoinRequest(ApiModel):

@@ -203,6 +203,10 @@ def poll_get(campaignId: str, user: User = Depends(current_user), db: Session = 
 def poll_create(campaignId: str, body: schemas.DatePollCreate | None = None, user: User = Depends(current_user),
                 db: Session = Depends(get_db)):
     require_gm(require_member(db, campaignId, user))
+    from app.models import Campaign
+
+    if db.get(Campaign, campaignId).archived_at is not None:
+        raise errors.conflict("campaign_archived")
     if offene_umfrage(db, campaignId) is not None:
         raise errors.conflict("date_poll_open")
     p = DatePoll(campaign_id=campaignId, status="open", note=((body.note or "").strip() or None) if body else None,

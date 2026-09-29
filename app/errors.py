@@ -128,6 +128,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
     # Kampagne / Mitglieder
     "last_gm": ("Die Kampagne braucht mindestens eine Spielleitung. Ernenne zuerst eine andere Person.",
                 "The campaign needs at least one game master. Promote someone else first."),
+    "campaign_archived": ("Die Kampagne ist abgeschlossen. Nimm sie zuerst wieder auf.",
+                          "The campaign is closed. Reopen it first."),
+    "session_published": ("Veröffentlichte Kapitel lassen sich nicht verwerfen.",
+                          "Published chapters cannot be discarded."),
+    "confirmation_mismatch.title": ("Bitte zur Bestätigung den Titel der Kampagne genau eintippen.",
+                                    "Please type the campaign title exactly to confirm."),
     "organization_invalid": ("Du gehörst dieser Organisation nicht an.", "You are not a member of this organization."),
     "organization_required": ("Du gehörst mehreren Organisationen an. Bitte wähle eine aus.",
                               "You belong to several organizations. Please choose one."),

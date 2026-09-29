@@ -41,7 +41,17 @@ def current_user(
 
 
 def membership(db: Session, campaign_id: str, user: User) -> Member | None:
-    return db.scalar(select(Member).where(Member.campaign_id == campaign_id, Member.user_id == user.id))
+    """Aktive Mitgliedschaft – wer die Kampagne verlassen hat, sieht sie nicht mehr (404)."""
+    return db.scalar(select(Member).where(Member.campaign_id == campaign_id, Member.user_id == user.id,
+                                          Member.left_at.is_(None)))
+
+
+def aktive_sl_anzahl(db: Session, campaign_id: str) -> int:
+    from sqlalchemy import func
+
+    return db.scalar(select(func.count()).select_from(Member).where(
+        Member.campaign_id == campaign_id, Member.role == "gm", Member.user_id.is_not(None),
+        Member.left_at.is_(None))) or 0
 
 
 def require_member(db: Session, campaign_id: str, user: User) -> Member:

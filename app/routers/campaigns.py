@@ -2,11 +2,11 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import errors, schemas
-from app.access import current_user, membership, require_gm, require_member
+from app.access import aktive_sl_anzahl, current_user, membership, require_gm, require_member
 from app.db import get_db, utcnow
 from app.models import Campaign, Invite, Member, UsageLog, User
 from app.services import (
@@ -25,7 +25,8 @@ def _load(db: Session, campaign_id: str, user: User) -> tuple[Campaign, Member]:
 @router.get("/campaigns", response_model=list[schemas.CampaignSummaryOut])
 def list_campaigns(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = db.execute(
-        select(Campaign, Member).join(Member, Member.campaign_id == Campaign.id).where(Member.user_id == user.id)
+        select(Campaign, Member).join(Member, Member.campaign_id == Campaign.id)
+        .where(Member.user_id == user.id, Member.left_at.is_(None))
         .order_by(Campaign.created_at.desc())
     ).all()
     return [campaign_summary(db, c, m) for c, m in rows]
@@ -64,8 +65,16 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
     me = membership(db, c.id, user)
     char = (body.character_name or "").strip() or None
     if me is None:
-        me = Member(campaign_id=c.id, user_id=user.id, role="player", character_name=char)
-        db.add(me)
+        frueher = db.scalar(select(Member).where(Member.campaign_id == c.id, Member.user_id == user.id))
+        if frueher is not None:  # verlassen oder entfernt: mit neuer Einladung wieder aktiv (0.4.5), als Spieler
+            me = frueher
+            me.left_at, me.role, me.joined_at = None, "player", utcnow()
+            me.chronicle_seen_at = me.bible_seen_at = None
+            if char is not None:
+                me.character_name = char
+        else:
+            me = Member(campaign_id=c.id, user_id=user.id, role="player", character_name=char)
+            db.add(me)
     elif char is not None:
         me.character_name = char
     if c.organization_id:
@@ -107,6 +116,16 @@ def patch_campaign(
         c.allow_external_transcription = body.allow_external_transcription
     if "allow_cloud_summary" in f and body.allow_cloud_summary is not None:
         c.allow_cloud_summary = body.allow_cloud_summary
+    if "archived" in f and body.archived is not None:
+        if body.archived and c.archived_at is None:
+            c.archived_at = utcnow()
+            from app.routers.miteinander import offene_umfrage
+
+            offen = offene_umfrage(db, c.id)
+            if offen is not None:  # abgeschlossen: keine Terminabstimmung mehr
+                offen.status = "cancelled"
+        elif not body.archived:
+            c.archived_at = None
     if "cover_preset" in f:
         from app.bilder import cover_ordner, loeschen
 
@@ -153,16 +172,49 @@ def patch_member(
         target.character_backstory = (body.character_backstory or "").strip() or None
     if "role" in f and body.role is not None and body.role != target.role:
         if target.role == "gm":
-            gm_count = db.scalar(
-                select(func.count()).select_from(Member).where(Member.campaign_id == campaignId, Member.role == "gm",
-                                                              Member.user_id.is_not(None))
-            )
-            if gm_count <= 1:
+            if aktive_sl_anzahl(db, campaignId) <= 1:
                 raise errors.conflict("last_gm")
         target.role = body.role
     db.commit()
     db.refresh(me)
     return member_out(target, me)
+
+
+@router.delete("/campaigns/{campaignId}", status_code=204)
+def delete_campaign(campaignId: str, body: schemas.DeleteCampaignRequest, user: User = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    """Kampagne endgültig löschen – für alle, mit allen Dateien (0.4.5)."""
+    from app.konto import _kampagne_loeschen
+
+    c, me = _load(db, campaignId, user)
+    require_gm(me)
+    if " ".join(body.confirm_title.split()).casefold() != " ".join(c.title.split()).casefold():
+        raise errors.bad_request("confirmation_mismatch", "confirmation_mismatch.title")
+    _kampagne_loeschen(db, c)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/campaigns/{campaignId}/members/{memberId}", status_code=204)
+def remove_member(campaignId: str, memberId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Eigene memberId = verlassen, fremde = entfernen (nur SL). Das Mitglied bleibt mit leftAt stehen (0.4.5)."""
+    from app.models import DateVote, SessionSeen
+
+    _, me = _load(db, campaignId, user)
+    target = db.get(Member, memberId)
+    if target is None or target.campaign_id != campaignId or not target.aktiv:
+        raise errors.not_found("member")
+    if target.id != me.id and me.role != "gm":
+        raise errors.forbidden()
+    if target.role == "gm" and aktive_sl_anzahl(db, campaignId) <= 1:
+        raise errors.conflict("last_gm")
+    set_recording_consent(db, target, False)  # Widerruf bleibt als Nachweis im Protokoll
+    target.character_backstory = None
+    target.left_at = utcnow()
+    db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))
+    db.execute(DateVote.__table__.delete().where(DateVote.member_id == target.id))
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.put("/campaigns/{campaignId}/recording-consent", response_model=schemas.MemberOut,

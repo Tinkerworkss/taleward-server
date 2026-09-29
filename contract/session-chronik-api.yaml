@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Session-Chronik API
-  version: 0.4.4
+  version: 0.4.5
   description: |
     Schnittstelle zwischen der Session-Chronik-App (Android/PWA) und dem Verarbeitungsserver.
 
@@ -100,6 +100,9 @@ info:
     Änderungen in 0.4.4: `ServerInfo.audioRetention` (Aufbewahrung der Aufnahmen für die Prüfung der Zusammenfassung).
     Wird die Aufbewahrung in der Verwaltung verlängert, setzt der Server `recordingConsentAt` aller Mitglieder zurück;
     die App fragt dann mit dem neuen Wortlaut erneut.
+    Änderungen in 0.4.5: Kampagnen abschließen (PATCH archived, CampaignSummary.archivedAt) und löschen
+    (DELETE /campaigns/{id}), Mitglied entfernen bzw. selbst verlassen (DELETE …/members/{memberId}, Member.leftAt),
+    Regeln für Rollenwechsel (last_gm), unveröffentlichtes Kapitel verwerfen (DELETE /sessions/{id}).
 
 servers:
   - url: http://localhost:8000/api/v1
@@ -593,6 +596,28 @@ paths:
 
   /campaigns/{campaignId}:
     parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    delete:
+      tags: [Kampagnen]
+      summary: Kampagne endgültig löschen (nur SL, ab 0.4.5)
+      description: |
+        Löscht alles für alle: Kapitel, Recaps, Transkripte, Aufnahmen, Bibel, Unterlagen, Kommentare, Bilder, Termine.
+        confirmTitle muss dem Titel entsprechen (400 confirmation_mismatch; Groß-/Kleinschreibung und doppelte
+        Leerzeichen zählen nicht). Nicht rückgängig zu machen. Das Zustimmungsprotokoll bleibt als Nachweis.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmTitle]
+              properties:
+                confirmTitle: { type: string }
+      responses:
+        "204": { description: Gelöscht }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     get:
       tags: [Kampagnen]
       summary: Kampagne mit Mitgliedern
@@ -623,6 +648,12 @@ paths:
                 language: { $ref: "#/components/schemas/ContentLanguage" }
                 allowExternalTranscription: { type: boolean }
                 allowCloudSummary: { type: boolean }
+                archived:
+                  type: boolean
+                  description: |
+                    true = abschließen (archivedAt gesetzt): nur noch lesen und kommentieren, keine neuen Kapitel
+                    (POST …/sessions → 409 campaign_archived), keine Terminabstimmung (POST …/date-poll → 409
+                    campaign_archived; eine offene wird abgebrochen); false = wieder aufnehmen (ab 0.4.5)
                 system:
                   oneOf:
                     - { $ref: "#/components/schemas/GameSystem" }
@@ -667,9 +698,26 @@ paths:
     parameters:
       - { $ref: "#/components/parameters/campaignId" }
       - { $ref: "#/components/parameters/memberId" }
+    delete:
+      tags: [Kampagnen]
+      summary: Mitglied entfernen (SL) oder die Kampagne selbst verlassen (eigene memberId) (ab 0.4.5)
+      description: |
+        Das Mitglied bleibt mit leftAt stehen (wie ein gelöschtes Konto), Kommentare und Charakterbild bleiben; es
+        verliert den Zugriff (für die Person dann 404). Stehende Zustimmung (Widerruf wird protokolliert), Charakter-
+        Hintergrund, Terminstimmen und Lesemarker werden gelöscht. Die letzte aktive SL kann weder gehen noch entfernt
+        werden (409 last_gm). Wer über eine neue Einladung zurückkommt, wird als Spieler wieder aktiv (gleiche memberId).
+      responses:
+        "204": { description: Entfernt bzw. verlassen }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     patch:
       tags: [Kampagnen]
       summary: Charaktername oder Rolle ändern (Rolle nur durch SL)
+      description: |
+        Die letzte aktive SL kann nicht zum Spieler werden (409 last_gm). Wer SL wird, sieht ab sofort alles Geheime
+        der Kampagne.
       requestBody:
         required: true
         content:
@@ -937,6 +985,19 @@ paths:
 
   /sessions/{sessionId}:
     parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    delete:
+      tags: [Sessions]
+      summary: Unveröffentlichtes Kapitel verwerfen (nur SL, ab 0.4.5)
+      description: |
+        Löscht Session samt Upload-Teilen, Audio, Transkript, Hörproben, Vorschlägen und Recap-Entwurf; laufende Aufträge
+        werden abgebrochen. Veröffentlichte Kapitel → 409 session_published. Die Kapitelnummer wird wieder frei: spätere
+        Kapitel rücken um eins auf.
+      responses:
+        "204": { description: Verworfen }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     get:
       tags: [Sessions]
       summary: Session-Details inkl. Verarbeitungsstatus
@@ -2042,6 +2103,10 @@ components:
       properties:
         id: { type: string }
         userId: { type: string, description: 'Bei gelöschten Konten "" (leer)' }
+        leftAt:
+          type: [string, "null"]
+          format: date-time
+          description: Hat die Kampagne verlassen oder wurde entfernt (ab 0.4.5); wie deletedAt nirgends mehr anbieten
         deletedAt:
           type: [string, "null"]
           format: date-time
@@ -2074,6 +2139,10 @@ components:
       properties:
         id: { type: string }
         title: { type: string }
+        archivedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Abgeschlossen seit (ab 0.4.5); die App zeigt solche Kampagnen eingeklappt unter „Abgeschlossen“
         organization:
           type: [object, "null"]
           properties:
