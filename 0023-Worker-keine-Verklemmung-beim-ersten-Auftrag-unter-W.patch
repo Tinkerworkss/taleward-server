@@ -1,0 +1,282 @@
+From 6ee36b834000897de7805a5154c4aa538c5b43c9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 23:17:22 +0200
+Subject: [PATCH] Worker: keine Verklemmung beim ersten Auftrag unter Windows
+ (Server 0.4.15)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Die Grafikspeicher-Messung startete jede Sekunde nvidia-smi samt zwei
+Lese-Threads. Parallel lud der Worker im ersten Auftrag whisperx nach
+(transformers, sklearn, scipy); Windows-Lader und Thread-Start blockierten sich
+gegenseitig, der Auftrag stand bei 15 %.
+
+- Grafikspeicher direkt über nvml (ctypes), ohne Programmstart; Ausweichweg
+  nvidia-smi ohne Eingabekanal und ohne Lese-Threads
+- whisperx.asr/alignment/diarize schon beim Start des Workers laden
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/probelauf.py             | 84 ++++++++++++++++++++++++++++++------
+ app/transkription.py         | 10 +++++
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_vram_messer.py    | 33 ++++++++++++++
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 9 files changed, 120 insertions(+), 19 deletions(-)
+ create mode 100644 tests/test_vram_messer.py
+
+diff --git a/app/probelauf.py b/app/probelauf.py
+index c90ad1e..c57261a 100644
+--- a/app/probelauf.py
++++ b/app/probelauf.py
+@@ -38,8 +38,66 @@ def fmt_dauer(sek: float) -> str:
+     return f"{sek / 60:.1f} min"
+ 
+ 
++class _Nvml:
++    """Grafikspeicher direkt über die NVIDIA-Bibliothek (nvml) – ohne jede Sekunde ein Programm zu starten.
++
++    Unter Windows ist das wichtig: nvidia-smi per subprocess startet je Aufruf einen Prozess und zwei Lese-Threads.
++    Laufen die parallel zu einem großen Import (scipy, transformers …), können sich Windows-Lader und Thread-Start
++    gegenseitig blockieren – der Worker hing dann bei 15 %."""
++
++    class _Speicher(ctypes.Structure):
++        _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
++
++    _geladen = None  # None = noch nicht versucht, False = nicht verfügbar
++
++    @classmethod
++    def _handle(cls):
++        if cls._geladen is None:
++            cls._geladen = False
++            namen = (["nvml.dll", r"C:\Program Files\NVIDIA Corporation\NVSMI\nvml.dll"] if sys.platform == "win32"
++                     else ["libnvidia-ml.so.1", "libnvidia-ml.so"])
++            for name in namen:
++                try:
++                    lib = ctypes.CDLL(name)
++                    if lib.nvmlInit_v2() != 0:
++                        continue
++                    h = ctypes.c_void_p()
++                    if lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(h)) != 0:
++                        continue
++                    cls._geladen = (lib, h)
++                    break
++                except (OSError, AttributeError):
++                    continue
++        return cls._geladen or None
++
++    @classmethod
++    def speicher_mb(cls) -> tuple[int, int] | None:
++        """(belegt, gesamt) in MB oder None."""
++        gefunden = cls._handle()
++        if not gefunden:
++            return None
++        lib, h = gefunden
++        s = cls._Speicher()
++        if lib.nvmlDeviceGetMemoryInfo(h, ctypes.byref(s)) != 0:
++            return None
++        return int(s.used // 2 ** 20), int(s.total // 2 ** 20)
++
++
++def _nvidia_smi(abfrage: str) -> str | None:
++    """Ausweichweg ohne nvml: nvidia-smi ohne Eingabekanal und ohne Lese-Threads (nur stdout als Pipe)."""
++    extra = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
++    try:
++        with subprocess.Popen(["nvidia-smi", f"--query-gpu={abfrage}", "--format=csv,noheader,nounits"],
++                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
++                              text=True, **extra) as p:
++            aus, _ = p.communicate(timeout=5)
++        return aus.strip().splitlines()[0] if aus.strip() else None
++    except (OSError, subprocess.SubprocessError, IndexError):
++        return None
++
++
+ class VramMesser:
+-    """Misst den höchsten Grafikspeicherverbrauch über nvidia-smi (erfasst auch CTranslate2, nicht nur PyTorch)."""
++    """Misst den höchsten Grafikspeicherverbrauch der ganzen Karte (erfasst auch CTranslate2, nicht nur PyTorch)."""
+ 
+     def __init__(self):
+         self.start_mb: int | None = None
+@@ -49,24 +107,24 @@ class VramMesser:
+ 
+     @staticmethod
+     def _lesen() -> int | None:
++        werte = _Nvml.speicher_mb()
++        if werte:
++            return werte[0]
++        aus = _nvidia_smi("memory.used")
+         try:
+-            out = subprocess.run(
+-                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+-                capture_output=True, text=True, timeout=5,
+-            ).stdout.strip().splitlines()[0]
+-            return int(out.split(",")[0])
+-        except Exception:
++            return int(aus.split(",")[0]) if aus else None
++        except ValueError:
+             return None
+ 
+     @staticmethod
+     def gesamt_mb() -> int | None:
++        werte = _Nvml.speicher_mb()
++        if werte:
++            return werte[1]
++        aus = _nvidia_smi("memory.total")
+         try:
+-            out = subprocess.run(
+-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+-                capture_output=True, text=True, timeout=5,
+-            ).stdout.strip().splitlines()[0]
+-            return int(out)
+-        except Exception:
++            return int(aus) if aus else None
++        except ValueError:
+             return None
+ 
+     def __enter__(self):
+diff --git a/app/transkription.py b/app/transkription.py
+index c55c89d..1288944 100644
+--- a/app/transkription.py
++++ b/app/transkription.py
+@@ -266,6 +266,16 @@ class WhisperXMotor:
+             import whisperx  # noqa: F401
+         except ImportError:
+             raise EinrichtungsFehler("Die KI-Pakete fehlen. Installieren mit: uv sync --extra ki") from None
++        # whisperx lädt seine Teile erst beim ersten Aufruf nach (transformers, scipy, sklearn, pyannote …). Das
++        # passiert hier einmal beim Start statt mitten im ersten Auftrag, parallel zur Speichermessung (Windows:
++        # gleichzeitiges Laden großer DLLs und Starten von Threads kann sich gegenseitig blockieren).
++        import importlib
++
++        for teil in ("whisperx.asr", "whisperx.alignment", "whisperx.diarize"):
++            try:
++                importlib.import_module(teil)
++            except ImportError:
++                pass  # fehlt etwas wirklich, meldet es der Auftrag verständlich
+         braucht_gpu = "cuda" in (self.geraet, self.geraet_ausrichten, self.geraet_sprecher)
+         if braucht_gpu and not torch.cuda.is_available():
+             raise EinrichtungsFehler("PyTorch sieht keine Grafikkarte. `nvidia-smi` prüfen und ggf. den NVIDIA-Treiber "
+diff --git a/pyproject.toml b/pyproject.toml
+index 76b380b..15bd03e 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.14"
++version = "0.4.15"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 588367d..e520c4f 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.14"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.15"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index e5f9810..79151db 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.14"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.15"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 8c80e31..456703c 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.14"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.15"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_vram_messer.py b/tests/test_vram_messer.py
+new file mode 100644
+index 0000000..82de68e
+--- /dev/null
++++ b/tests/test_vram_messer.py
+@@ -0,0 +1,33 @@
++"""Speichermessung ohne Programmstarts im Sekundentakt (Windows: Lader und Thread-Start blockieren sich sonst)."""
++import subprocess
++
++from app import probelauf
++
++
++def test_nvml_wird_bevorzugt(monkeypatch):
++    monkeypatch.setattr(probelauf._Nvml, "speicher_mb", classmethod(lambda cls: (3000, 8192)))
++    monkeypatch.setattr(probelauf.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("kein Start")))
++    assert probelauf.VramMesser._lesen() == 3000 and probelauf.VramMesser.gesamt_mb() == 8192
++
++
++def test_ausweichweg_ohne_lese_threads(monkeypatch):
++    monkeypatch.setattr(probelauf._Nvml, "speicher_mb", classmethod(lambda cls: None))
++    aufrufe = []
++
++    class P:
++        def __init__(self, cmd, **kw):
++            aufrufe.append(kw)
++
++        def __enter__(self):
++            return self
++
++        def __exit__(self, *a):
++            return False
++
++        def communicate(self, timeout=None):
++            return "2048\n", None
++
++    monkeypatch.setattr(probelauf.subprocess, "Popen", P)
++    assert probelauf.VramMesser._lesen() == 2048
++    kw = aufrufe[0]
++    assert kw["stdin"] is subprocess.DEVNULL and kw["stderr"] is subprocess.DEVNULL and kw["stdout"] is subprocess.PIPE
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index d9d861d..b3cdc9d 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.14"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.15"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 4935192..846c995 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.14"
++version = "0.4.15"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
