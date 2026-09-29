@@ -30,6 +30,9 @@ from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben,
 
 # pyannote schickt sonst Nutzungsdaten (Audiodauer, Personenzahl) an pyannote.ai – hier nie
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
+# Fortschrittsbalken beim Laden von Modellen (tqdm, Hugging Face) schreiben sonst Hunderte Zeilen ins Protokoll
+os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 Fortschritt = Callable[[float], None]
 
@@ -350,6 +353,7 @@ class WhisperXMotor:
             from app import modelle
 
             name = str(modelle.bereitstellen(DEFAULT_ALIGN_MODELS_HF[sprache], self.hf_token).pfad)
+        log.info("Lade Ausrichtungsmodell für „%s“ (beim ersten Mal einige hundert MB) …", sprache)
         model_a, meta = whisperx.load_align_model(language_code=sprache, device=self.geraet_ausrichten, model_name=name)
         try:
             return whisperx.align(segmente, model_a, meta, daten, self.geraet_ausrichten, return_char_alignments=False,
