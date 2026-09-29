@@ -274,7 +274,7 @@ def result(jobId: str, body: ResultIn, worker: Worker = Depends(current_worker),
 def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, worker_id: str | None,
                          kosten_cent: int = 0) -> None:
     """Transkript übernehmen – gleicher Weg für eigene Worker (local) und externe Anbieter (external):
-    Stimmen, Hörproben, Transkript, Verbrauch, Audio löschen, Vorschläge bzw. weiter zur Zusammenfassung."""
+    Stimmen, Hörproben, Transkript, Verbrauch, Audio löschen (oder bis zur Freigabe behalten), Vorschläge bzw. weiter zur Zusammenfassung."""
     s = db.get(GameSession, job.session_id)
     up = db.get(Upload, job.upload_id)
     discord = up.source == "discord"
@@ -307,10 +307,13 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
     db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="transcription", engine=engine,
                     model=body.model, worker_id=worker_id, audio_seconds=body.audio_seconds,
                     compute_seconds=body.compute_seconds, cost_cents=kosten_cent))
-    # Audio löschen – ab jetzt bleiben nur Hörproben (bis zur Bestätigung) und der Text
-    storage.delete_upload_files(up.id)
+    # Audio: je nach Einstellung sofort löschen oder bis zur Freigabe behalten (app/aufbewahrung.py)
+    from app import aufbewahrung
+
+    if not aufbewahrung.lesen(db).bis_freigabe:
+        storage.delete_upload_files(up.id)
+        s.audio_deleted_at = utcnow()
     now = utcnow()
-    s.audio_deleted_at = now
     s.duration_seconds = int(round(body.audio_seconds))
     s.transcription_engine = engine
     job.state, job.finished_at, job.progress, job.engine = "done", now, 1.0, engine

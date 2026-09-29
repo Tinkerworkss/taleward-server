@@ -34,7 +34,7 @@ from app.db import get_db, server_id, utcnow
 from app.einstellungen import angaben, meta_schreiben, speichern
 from app.models import (
     CampaignDocument,
-    AuthMethod, Campaign, GameSession, Job, Organization, OrgMember, User, Worker,
+    AuthMethod, Campaign, GameSession, Job, Member, Organization, OrgMember, User, Worker,
 )
 from app.security import verify_password
 from app.verwaltung.i18n import SPRACHEN, sprache_von, uebersetzer
@@ -97,6 +97,8 @@ MELDUNGEN = {
     "updates_geprueft": "Nach Updates gesucht.",
     "server_jetzt": "Update angefordert – der Server aktualisiert sich in den nächsten Minuten und ist dabei kurz nicht erreichbar.",
     "freigegeben": "Fassung freigegeben – App und Worker bekommen sie jetzt angeboten.",
+    "aufbewahrung": "Gespeichert. Bitte den Datenschutzhinweis an die neue Aufbewahrung der Aufnahmen anpassen.",
+    "aufbewahrung_zustimmung": "Gespeichert. Alle Mitglieder werden in der App gebeten, der Aufnahme mit dem neuen Wortlaut erneut zuzustimmen. Bitte auch den Datenschutzhinweis anpassen.",
 }
 
 
@@ -760,8 +762,13 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
     from app import webapp
     from app.config import get_settings
 
+    from app import aufbewahrung
+
     return _seite(request, "einstellungen.html", user, db, orgs=orgs, fehler=fehler,
                   registrierung=registrierung(db), limit_euro=(limit or 0) / 100,
+                  aufbewahrung=aufbewahrung.lesen(db), hoechstens_tage=aufbewahrung.HOECHSTENS_TAGE,
+                  zustimmungen=db.scalar(select(func.count()).select_from(Member)
+                                         .where(Member.recording_consent_at.is_not(None))) or 0,
                   melden=benachrichtigung.konfig(db), web_zentral=webapp.zentral_erlaubt(db),
                   web_herkuenfte="\n".join(webapp.zusaetzliche(db)),
                   zentrale_webapp=webapp.herkunft(get_settings().central_web_origin))
@@ -774,7 +781,8 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
                             app_latest_version: str = Form(""), app_download_url: str = Form(""),
                             app_release_notes: str = Form(""), registrierung: str = Form(""), limit_euro: str = Form(""),
                             public_url: str = Form(""), web_zentral: str = Form(""), web_zentral_feld: str = Form(""),
-                            web_herkuenfte: str = Form(""),
+                            web_herkuenfte: str = Form(""), audio_modus: str = Form(""),
+                            audio_tage: str = Form(""), audio_bestaetigt: str = Form(""),
                             user: User = Depends(verwalter),
                             db: Session = Depends(get_db)):
     from app.einstellungen import mindestversion_vergessen, version_tupel
@@ -813,6 +821,19 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
     for v in (app_min_version, app_latest_version):
         if v.strip() and version_tupel(v) is None:
             return fehler(_("Versionen bitte als Zahlen mit Punkten angeben, z. B. 0.9.0."))
+    from app import aufbewahrung
+
+    alt_frist = aufbewahrung.lesen(db)
+    neue_frist = alt_frist
+    if audio_modus:
+        try:
+            neue_frist = aufbewahrung.Aufbewahrung(audio_modus, int(audio_tage or alt_frist.tage))
+            if neue_frist.modus not in aufbewahrung.MODI or not 1 <= neue_frist.tage <= aufbewahrung.HOECHSTENS_TAGE:
+                raise ValueError
+        except ValueError:
+            return fehler(_("Aufnahmen: bitte höchstens {n} Tage angeben.", n=aufbewahrung.HOECHSTENS_TAGE))
+        if neue_frist.laenger_als(alt_frist) and audio_bestaetigt != "ja":
+            return fehler(_("Die Aufnahmen sollen länger bleiben. Dann müssen alle Mitglieder neu zustimmen – bitte das Kästchen dazu ankreuzen."))
     speichern(db, server_name=server_name.strip()[:100], server_operator=server_operator.strip()[:200],
               server_contact=server_contact.strip()[:200] or None, privacy_policy_url=url[:500] or None,
               min_age=alter, app_min_version=app_min_version.strip() or None,
@@ -828,6 +849,10 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
     if any(herkunft(z) is None for z in zeilen):
         return fehler(_("Weitere Adressen bitte vollständig angeben, z. B. https://taleward.meinverein.de"))
     meta_schreiben(db, "web.herkuenfte", "\n".join(herkunft(z) for z in zeilen[:20]))
+    zurueckgesetzt = 0
+    geaendert = neue_frist.api() != alt_frist.api()
+    if geaendert:
+        zurueckgesetzt = aufbewahrung.speichern(db, neue_frist.modus, neue_frist.tage, user.id)
     orgs = db.scalars(select(Organization).order_by(Organization.created_at)).all()
     if org_name.strip() and len(orgs) == 1:
         orgs[0].name = org_name.strip()[:200]
@@ -836,6 +861,8 @@ def einstellungen_speichern(request: Request, server_name: str = Form(""), serve
     from app import webapp
 
     webapp.vergessen()
+    if geaendert:
+        return _zurueck("/einstellungen#aufnahmen", "aufbewahrung_zustimmung" if zurueckgesetzt else "aufbewahrung")
     return _zurueck("/einstellungen", "gespeichert")
 
 

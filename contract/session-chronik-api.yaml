@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Session-Chronik API
-  version: 0.4.3
+  version: 0.4.4
   description: |
     Schnittstelle zwischen der Session-Chronik-App (Android/PWA) und dem Verarbeitungsserver.
 
@@ -12,7 +12,8 @@ info:
       offene Vorschläge, SL-Notizen und Transkripte werden an Spieler nie ausgeliefert
       (auch nicht in Listen oder als Anzahl).
     - Ein Upload wird nur angenommen, wenn alle Anwesenden der Session eingewilligt haben.
-    - Audio wird nach erfolgreicher Transkription gelöscht (siehe `audioDeletedAt`).
+    - Audio bleibt je nach Einstellung des Servers (`/info` → `audioRetention`) bis zur Freigabe des Recaps, höchstens
+      `maxDays` Tage, oder wird gleich nach der Transkription gelöscht (siehe `audioDeletedAt`).
     - Stimmprofile sind freiwillig. Speaker.source `voice_match` heißt: über ein Stimmprofil erkannt.
     - Zeitangaben in ISO 8601 (UTC), IDs als UUID-Strings.
     - Die App kann mit mehreren Servern gleichzeitig arbeiten. Jeder Server hat eigene Konten; Tokens sind an
@@ -96,6 +97,9 @@ info:
     CORS-Regeln, Parameter `returnTo` bei /auth/oidc/{provider}/start für den Rückweg in den Browser.
     Änderungen in 0.4.3: CoverPreset um 19 Titelbilder erweitert (dark-fantasy bis riverside-mystery), bestehende
     IDs unverändert.
+    Änderungen in 0.4.4: `ServerInfo.audioRetention` (Aufbewahrung der Aufnahmen für die Prüfung der Zusammenfassung).
+    Wird die Aufbewahrung in der Verwaltung verlängert, setzt der Server `recordingConsentAt` aller Mitglieder zurück;
+    die App fragt dann mit dem neuen Wortlaut erneut.
 
 servers:
   - url: http://localhost:8000/api/v1
@@ -1924,6 +1928,17 @@ components:
             null = dieser Server transkribiert nur selbst. Sonst Name des externen Anbieters (z. B. "mistral"),
             den der Betreiber als Ersatz freigegeben hat. Nur dann zeigt die App der SL den Schalter
             allowExternalTranscription und nennt den Anbieter im Hinweis.
+        audioRetention:
+          type: object
+          description: |
+            Wie lange Aufnahmen auf dem Server bleiben (ab 0.4.4, in der Verwaltung einstellbar). Die App nennt die Frist
+            im Einwilligungstext. Fehlt das Feld (ältere Server), gilt `immediate`.
+            until_release = bis die SL den Recap freigibt, höchstens maxDays Tage (Standard für neue Server);
+            immediate = gleich nach der Transkription (maxDays null). Wird die Aufbewahrung verlängert
+            (immediate → until_release oder mehr Tage), setzt der Server `recordingConsentAt` aller Mitglieder zurück.
+          properties:
+            mode: { type: string, enum: [until_release, immediate] }
+            maxDays: { type: [integer, "null"], minimum: 1, maximum: 7, example: 7 }
 
     Organization:
       type: object

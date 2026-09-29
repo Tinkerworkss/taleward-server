@@ -32,6 +32,22 @@
       <span class="hilfe">{{ _("Bei der Registrierung bestätigt jede Person den Datenschutzhinweis und das Mindestalter; beides wird mit Zeitpunkt gespeichert.") }}</span></label>
   </div>
 </div>
+<div class="karte" id="aufnahmen">
+  <h2>{{ _("Aufnahmen") }}</h2>
+  <p class="leise">{{ _("Wie lange eine Aufnahme nach der Umwandlung in Text auf dem Server bleibt. Solange sie da ist, lässt sich die Zusammenfassung gegen sie prüfen und die Transkription wiederholen. Die App nennt die Frist im Einwilligungstext.") }}</p>
+  <div class="formular">
+    <label>{{ _("Aufnahmen löschen") }}
+      <select name="audio_modus">
+        <option value="until_release" {% if aufbewahrung.bis_freigabe %}selected{% endif %}>{{ _("Wenn die Spielleitung den Recap freigibt, spätestens nach der Frist (empfohlen)") }}</option>
+        <option value="immediate" {% if not aufbewahrung.bis_freigabe %}selected{% endif %}>{{ _("Sofort nach der Umwandlung in Text") }}</option>
+      </select></label>
+    <label>{{ _("Höchstens (Tage)") }} <input type="number" name="audio_tage" value="{{ aufbewahrung.tage }}" min="1" max="{{ hoechstens_tage }}">
+      <span class="hilfe">{{ _("Gilt nur für „Wenn die Spielleitung den Recap freigibt“. Höchstens {n} Tage.", n=hoechstens_tage) }}</span></label>
+    <label class="haken"><input type="checkbox" name="audio_bestaetigt" value="ja">
+      <span>{{ _("Mir ist klar: Sollen Aufnahmen länger bleiben als bisher, müssen alle Mitglieder in der App neu zustimmen (zurzeit {n} Zustimmungen).", n=zustimmungen) }}</span></label>
+    <span class="hilfe">{{ _("Nur nötig, wenn die Aufbewahrung verlängert wird. Kürzer stellen geht jederzeit ohne neue Zustimmung. Danach den Datenschutzhinweis anpassen.") }} <a href="/verwaltung/assistent/datenschutz">{{ _("Datenschutzhinweis") }}</a></span>
+  </div>
+</div>
 <div class="karte" id="kosten">
   <h2>{{ _("Kosten") }}</h2>
   <div class="formular">

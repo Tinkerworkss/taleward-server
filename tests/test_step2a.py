@@ -115,8 +115,9 @@ def test_tischaufnahme_von_upload_bis_stimmen(client, world, dbs, tmp_path):
     assert st["state"] == "awaiting_speakers" and st["message"] is None
 
     sess = client.get(f"{API}/sessions/{s['id']}", headers=w["gm"]).json()
-    assert 69 <= sess["durationSeconds"] <= 71 and sess["audioDeletedAt"] and sess["transcriptionEngine"] == "local"
-    assert not storage.upload_dir(up["uploadId"]).exists()  # Audio gelöscht
+    assert 69 <= sess["durationSeconds"] <= 71 and sess["transcriptionEngine"] == "local"
+    # Neuer Server: Audio bleibt bis zur Freigabe des Recaps (höchstens 7 Tage) – siehe test_aufbewahrung.py
+    assert sess["audioDeletedAt"] is None and storage.upload_dir(up["uploadId"]).exists()
     assert dbs.get(Upload, up["uploadId"]).state == "completed"
 
     sprecher = client.get(f"{API}/sessions/{s['id']}/speakers", headers=w["gm"]).json()

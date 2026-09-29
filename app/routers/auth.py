@@ -13,14 +13,14 @@ from app.models import AuthMethod, Organization, OrgMember, User
 from app.security import create_token, verify_password
 from app.services import user_out
 
-API_VERSION = "0.4.3"
+API_VERSION = "0.4.4"
 
 router = APIRouter(tags=["Auth"])
 
 
 @router.get("/info", response_model=schemas.ServerInfoOut)
 def info(request: Request, db: Session = Depends(get_db)):
-    from app import aktualisierung, anmeldedienste, mail
+    from app import aktualisierung, anmeldedienste, aufbewahrung, mail
     from app.einstellungen import oeffentliche_adresse
     from app.einrichtung import betriebsart
     from app.einstellungen import llm_konfig
@@ -46,6 +46,7 @@ def info(request: Request, db: Session = Depends(get_db)):
         cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],
         password_reset=mail.kann_senden(db),
+        audio_retention=schemas.AudioRetentionOut(**aufbewahrung.lesen(db).api()),
     )
 
 

@@ -62,6 +62,12 @@ class ServerInfoOut(ApiModel):
     cloud_summary: str | None = None
     auth_providers: list["AuthProviderOut"] = []
     password_reset: bool = False
+    audio_retention: "AudioRetentionOut | None" = None
+
+
+class AudioRetentionOut(ApiModel):
+    mode: Literal["until_release", "immediate"]
+    max_days: int | None
 
 
 class AuthProviderOut(ApiModel):

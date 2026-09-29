@@ -93,7 +93,7 @@ def test_tischaufnahme_extern(client, world, dbs, tmp_path):
     st = status(client, w["gm"], s["id"])
     assert st["state"] == "awaiting_speakers"
     sess = client.get(f"{API}/sessions/{s['id']}", headers=w["gm"]).json()
-    assert sess["transcriptionEngine"] == "external" and sess["audioDeletedAt"]
+    assert sess["transcriptionEngine"] == "external" and sess["audioDeletedAt"] is None  # bis zur Freigabe
     zeilen = client.get(f"{API}/sessions/{s['id']}/transcript", headers=w["gm"]).json()
     assert [z["text"] for z in zeilen] == ["Ich bin Anna, ich leite heute.", "Und ich spiele Mira.",
                                            "Wir gehen in die Taverne."]  # „Musik Musik“ entfernt

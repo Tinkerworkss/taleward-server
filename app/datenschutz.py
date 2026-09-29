@@ -24,6 +24,9 @@ def vorlage(db: Session, hosting: str = "") -> str:
     mistral_llm = k.art == "api" and k.ist_mistral
     anderer_llm = k.art == "api" and not k.ist_mistral
     tage = get_settings().audio_retention_days
+    from app.aufbewahrung import lesen as aufbewahrung
+
+    frist = aufbewahrung(db)
     from app import anmeldedienste, mail
 
     email = mail.kann_senden(db)
@@ -61,8 +64,11 @@ def vorlage(db: Session, hosting: str = "") -> str:
          "Stimmprofilen Art. 6 Abs. 1 lit. a bzw. Art. 9 Abs. 2 lit. a DSGVO – Einwilligung). Aufgenommen wird nur, "
          "wenn alle Anwesenden zugestimmt haben; die Zustimmung lässt sich in der App jederzeit widerrufen.",
          "## Wie lange wir Daten speichern",
-         f"- Aufnahmen: werden gelöscht, sobald sie in Text umgewandelt sind, spätestens nach {tage} Tagen. Kurze "
-         "Hörproben je Stimme bleiben nur, bis die Spielleitung die Stimmen zugeordnet hat.",
+         (f"- Aufnahmen: werden in Text umgewandelt und bleiben zur Prüfung der Zusammenfassung auf dem Server, bis "
+          f"die Spielleitung den Recap freigibt, höchstens {frist.tage} {'Tag' if frist.tage == 1 else 'Tage'}, und "
+          "werden dann gelöscht." if frist.bis_freigabe else
+          f"- Aufnahmen: werden gelöscht, sobald sie in Text umgewandelt sind, spätestens nach {tage} Tagen.")
+         + " Kurze Hörproben je Stimme bleiben nur, bis die Spielleitung die Stimmen zugeordnet hat.",
          "- Stimmprofile: bis zum Widerruf; Löschen entfernt auch alles daraus Gelernte.",
          "- Konto und Inhalte: bis zur Löschung des Kontos (in der App möglich). Beiträge zu gemeinsamen "
          "Kampagnen (Kommentare, Zusammenfassungen) bleiben danach ohne Namen als „Gelöschtes Konto“ stehen.",

@@ -256,6 +256,9 @@ def publish(sessionId: str, user: User = Depends(current_user), db: Session = De
         s.title = r.title
     s.published_at = utcnow()
     set_state(s, "published")
+    from app.aufbewahrung import audio_loeschen
+
+    audio_loeschen(db, s)  # Recap freigegeben: die Aufnahme wird nicht mehr gebraucht
     db.commit()
     db.refresh(s)
     return session_out(s)

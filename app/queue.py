@@ -215,14 +215,10 @@ def sweep(db: Session) -> dict:
     for job in db.scalars(select(Job).where(Job.state == "leased", Job.lease_expires_at < now)):
         fail_job(db, job, "lease_expired", "Der Worker hat sich nicht mehr gemeldet.", retryable=True)
         ergebnis["leases"] += 1
-    # 2. Audio fehlgeschlagener Sessions spätestens nach audio_retention_days löschen
-    grenze = now - timedelta(days=s.audio_retention_days)
-    for up in db.scalars(select(Upload).where(Upload.state == "completed", Upload.completed_at < grenze)):
-        sess = db.get(GameSession, up.session_id)
-        if sess and sess.audio_deleted_at is None:
-            storage.delete_upload_files(up.id)
-            sess.audio_deleted_at = now
-            ergebnis["audio"] += 1
+    # 2. Aufnahmen nach Frist löschen (bis zur Freigabe: höchstens maxDays; sonst nur noch fehlgeschlagene)
+    from app.aufbewahrung import abgelaufene_loeschen
+
+    ergebnis["audio"] = abgelaufene_loeschen(db, s.audio_retention_days)
     # 3. Nie abgeschlossene Uploads verwerfen
     grenze = now - timedelta(days=s.upload_abandon_days)
     for up in db.scalars(select(Upload).where(Upload.state == "open", Upload.created_at < grenze)):

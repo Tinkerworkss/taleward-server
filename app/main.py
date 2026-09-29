@@ -91,6 +91,9 @@ async def lifespan(_app: FastAPI):
 
     with session_factory()() as db:
         beim_start(db)  # noch kein Verwalter: Einrichtungscode ins Protokoll
+        from app.aufbewahrung import festlegen
+
+        festlegen(db)  # Aufbewahrung der Aufnahmen: neue Server bis zur Freigabe, bestehende wie bisher
     from app.extern import arbeitsprozess_starten as extern_starten
 
     if get_settings().worker_art:
