@@ -56,6 +56,43 @@ koppeln.
 Tipp: Im Router für diesen Server immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
 bearbeiten), sonst ändert sich die Adresse für die App.
 
+## Taleward-Box: Raspberry Pi ohne Terminal
+
+Für einen Verein oder eine Runde, die einfach ein kleines Kästchen ins Netz stecken will: ein fertiges
+Speicherkarten-Abbild mit Raspberry Pi OS, Docker und dem Taleward-Server. Es gibt kein Terminal und keine Befehle.
+
+- **Du brauchst:**
+  - Raspberry Pi 4 oder 5 mit 4–8 GB
+  - Speicherkarte ab 16 GB (besser 32 GB) oder eine SSD
+  - Netzteil
+  - Netzwerkkabel oder WLAN
+- **Abbild:** auf GitHub unter *Releases* → „Taleward-Box v…“ → `Taleward-Box-v….img.xz`
+
+So geht's:
+
+1. **Raspberry Pi Imager** öffnen, Gerät wählen, bei „Betriebssystem“ ganz unten **„Eigenes Abbild“** und die
+   heruntergeladene Datei wählen. Dann die Speicherkarte wählen.
+2. Bei **„Einstellungen anpassen“**:
+   - als Name `taleward` eintragen
+   - Benutzer und Passwort vergeben
+   - WLAN nur, wenn die Box nicht am Kabel hängt
+3. Karte in den Pi, Netz und Strom anschließen. Beim ersten Start richtet sich die Box selbst ein, das dauert einige
+   Minuten.
+4. Im Browser **`http://taleward.local:8000`** öffnen. Klappt das nicht: die IP-Adresse der Box im Router nachsehen
+   (FRITZ!Box: Heimnetz → Netzwerk) und `http://<IP>:8000` öffnen.
+5. **Die Ersteinrichtung geht ohne Einrichtungscode**, aber nur aus dem eigenen Netz und nur einmal. Mach sie also
+   gleich nach dem ersten Start. In der App trägst du als Server `http://<IP>:8000` ein.
+
+Gut zu wissen:
+
+- **Transkription:** Die Box selbst transkribiert nicht, dafür ist der Pi zu schwach. Das macht ein PC im selben Netz
+  mit der Worker-App. Mit „Recaps auch auf diesem PC schreiben“ bleibt alles im Verein, ganz ohne Cloud.
+- **Feste IP-Adresse:** Im Router der Box immer dieselbe IP-Adresse geben, sonst ändert sich die Adresse für die App.
+- **Updates:** Mit Internet holt sich die Box neue Fassungen nachts selbst, wie jeder Taleward-Server. Auf dem Pi
+  dauert das einige Minuten.
+- **Ohne Internet** läuft die Box ganz normal. Updates kommen dann später über das Update-Paket (geplant).
+- **Protokoll des ersten Starts:** `/var/log/taleward-erststart.log`, falls du doch einmal per SSH nachsehen willst.
+
 ## 2. Deinen PC als Worker verbinden
 
 Auf dem PC die **Worker-App** installieren ([taleward-worker](https://github.com/Tinkerworkss/taleward-worker), Windows oder Linux). In der

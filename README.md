@@ -39,7 +39,7 @@ Kurzfassung für später:
 
 ```bash
 cd ~/session-chronik-server
-uv run pytest                  # erwartet: 266 passed
+uv run pytest                  # erwartet: 269 passed
 uv run chronik serve           # Server starten, Strg+C beendet
 uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
 uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
@@ -97,6 +97,7 @@ app/
 migrations/   Datenbank-Migrationen (Alembic)
 tests/        pytest inkl. automatischer Vertragsprüfung
 deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
+box/          Taleward-Box: Abbild für den Raspberry Pi (bauen.sh, Einrichtung beim ersten Start)
 Dockerfile.worker  Worker als Container (Grafikkarte oder Prozessor), Compose-Profil „worker“/„worker-cpu“
 engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
 ```

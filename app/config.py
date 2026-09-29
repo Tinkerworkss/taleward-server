@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # frischen Schlüssel für ihn an und schreibt ihn in diese Datei (gemeinsames Volume, nur Server und Worker).
     eingebauter_worker: str = ""  # Inhalt von COMPOSE_PROFILES; leer = kein eingebauter Worker
     eingebauter_worker_datei: Path = Path("/kopplung/worker-token")
+    # Taleward-Box (Raspberry Pi, ohne Bildschirm): Ersteinrichtung ohne Code, aber nur aus dem eigenen Netz und nur,
+    # solange es noch keinen Verwalter gibt
+    einrichtung_im_heimnetz: bool = False
     # Hugging Face Zugangsschlüssel (für das pyannote-Sprechermodell)
     hf_token: str | None = None
     # Taleward-Spiegel des Sprechermodells (ohne Hugging-Face-Konto). Genutzt nur, wenn die Prüfsumme im Code steht.

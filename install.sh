@@ -25,6 +25,8 @@ abbruch() { rot "Abgebrochen: $*"; exit 1; }
 frage() {
   local text=$1 vorgabe=${2:-} antwort
   if [ -n "$vorgabe" ]; then text="$text [$vorgabe]"; fi
+  # Ohne Rückfragen (Taleward-Box beim ersten Start): immer die Vorgabe
+  if [ -n "${TALEWARD_OHNE_FRAGEN:-}" ]; then echo "$text: $vorgabe" >&2; printf '%s' "$vorgabe"; return; fi
   read -r -p "$text: " antwort </dev/tty || true
   printf '%s' "${antwort:-$vorgabe}"
 }
@@ -386,7 +388,8 @@ else
 fi
 cd "$ZIEL"
 for p in $PORTS; do port_frei "$p"; done
-docker compose build --pull
+# Taleward-Box: Das Server-Paket liegt schon fertig im Abbild (docker load) – nichts zu bauen, auch ohne Internet
+[ -n "${TALEWARD_OHNE_BAU:-}" ] || docker compose build --pull
 docker compose up -d
 
 echo -n "Warte auf den Server "

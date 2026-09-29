@@ -71,6 +71,8 @@ def einrichtung_seite(request: Request, code: str = "", db: Session = Depends(ge
     alt = _alte_sitzung(request, db)
     if alt is None and not einrichtung.braucht_einrichtung(db):
         return RedirectResponse("/verwaltung/anmelden", status_code=303)
+    if not code and alt is None and einrichtung.heimnetz_ohne_code(request):
+        code = einrichtung.code_erzeugen(db)  # Taleward-Box: Code wird still ins Formular gelegt
     gueltig = alt is not None or einrichtung.code_pruefen(db, code)
     return _seite(request, "einrichtung.html", None, db, fehler=fehler, code=code if gueltig else "",
                   code_falsch=bool(code) and not gueltig, alt=alt is not None,

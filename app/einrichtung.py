@@ -44,6 +44,22 @@ def code_pruefen(db: Session, code: str) -> bool:
     return bool(soll) and braucht_einrichtung(db) and hmac.compare_digest(soll.replace("-", ""), ist.replace("-", ""))
 
 
+def heimnetz_ohne_code(request) -> bool:
+    """Taleward-Box: Ersteinrichtung ohne Code – nur wenn so eingeschaltet (EINRICHTUNG_IM_HEIMNETZ) und die Anfrage
+    aus einem privaten Netz kommt (Heimnetz, Vereins-WLAN). Aus dem Internet gilt weiter der Code."""
+    import ipaddress
+
+    from app.config import get_settings
+
+    if not get_settings().einrichtung_im_heimnetz or request.client is None:
+        return False
+    try:
+        adresse = ipaddress.ip_address(request.client.host)
+    except ValueError:
+        return False
+    return adresse.is_private or adresse.is_loopback or adresse.is_link_local
+
+
 def code_verbrauchen(db: Session) -> None:
     meta_schreiben(db, "einrichtung.code", "")
 

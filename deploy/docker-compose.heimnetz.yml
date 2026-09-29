@@ -52,6 +52,8 @@ services:
       DATA_DIR: /data
       PUBLIC_URL: ${TALEWARD_ADRESSE}
       EINGEBAUTER_WORKER: ${COMPOSE_PROFILES:-}
+      # Taleward-Box: Ersteinrichtung ohne Code aus dem eigenen Netz (setzt das Abbild beim ersten Start)
+      EINRICHTUNG_IM_HEIMNETZ: ${TALEWARD_EINRICHTUNG_IM_HEIMNETZ:-false}
     volumes:
       - ./daten:/data
       - kopplung:/kopplung   # Schlüssel für den eingebauten Worker (nur Server und Worker)

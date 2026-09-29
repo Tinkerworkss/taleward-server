@@ -1,0 +1,14 @@
+[Unit]
+Description=Taleward-Box einrichten (einmalig beim ersten Start)
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=!/opt/taleward-box/eingerichtet
+
+[Service]
+Type=oneshot
+ExecStart=/opt/taleward-box/erststart.sh
+TimeoutStartSec=45min
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
