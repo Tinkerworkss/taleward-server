@@ -202,3 +202,55 @@ def test_worker_beendet_sich_bei_geaenderten_einstellungen(tmp_path):
                       neustart_noetig=lambda: True, nachsehen_s=0)
     k.laufen()  # kehrt zurück, statt auf Aufträge zu warten – Docker startet ihn neu
     assert k.neustart and aufrufe == []
+
+
+# ---------------------------------------------------------------- Ollama für lokale Recaps
+def test_compose_ollama_profile():
+    for name in ("docker-compose.yml", "docker-compose.heimnetz.yml"):
+        d = yaml.safe_load((WURZEL / "deploy" / name).read_text(encoding="utf-8"))
+        dienste = d["services"]
+        gpu, cpu = dienste["ollama"], dienste["ollama-cpu"]
+        assert gpu["profiles"] == ["ollama"] and cpu["profiles"] == ["ollama-cpu"]
+        for o in (gpu, cpu):
+            assert o["image"].startswith("ollama/ollama:") and "ollama-modelle:/root/.ollama" in o["volumes"]
+            assert o["healthcheck"]["test"] == ["CMD", "ollama", "list"]
+        assert gpu["deploy"]["resources"]["reservations"]["devices"][0]["driver"] == "nvidia"
+        assert "deploy" not in cpu and cpu["networks"]["default"]["aliases"] == ["ollama"]
+        for w in (dienste["worker"], dienste["worker-cpu"]):
+            assert w["environment"]["WORKER_LLM_URL"] == "http://ollama:11434"
+            assert w["depends_on"]["ollama"] == {"condition": "service_healthy", "required": False}
+            assert w["depends_on"]["ollama-cpu"]["required"] is False
+        assert "ollama-modelle" in d["volumes"]
+
+
+def test_ollama_art():
+    from app.config import Settings
+
+    assert Settings(eingebauter_worker="worker").ollama_art == ""
+    assert Settings(eingebauter_worker="worker,ollama").ollama_art == "gpu"
+    assert Settings(eingebauter_worker="worker-cpu,ollama-cpu").ollama_art == "cpu"
+    assert Settings(eingebauter_worker="worker,ollama").worker_art == "gpu"
+
+
+def test_verwaltung_zeigt_lokale_recaps(client, dbs, admin, monkeypatch, tmp_path):  # noqa: F811
+    import json
+
+    from app import config
+    from app.einstellungen import meta_schreiben
+    from app.models import Worker
+    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
+
+    _eingebaut(monkeypatch, tmp_path, "worker,ollama")
+    eingebauten_worker_koppeln(dbs)
+    seite = client.get("/verwaltung/transkription").text
+    assert "Ollama läuft mit" in seite and 'href="/verwaltung/zusammenfassung"' in seite
+    w = dbs.query(Worker).filter_by(local=True).one()
+    w.info = json.dumps({"gpu": "RTX", "vramMb": 8192, "llm": "ministral-3:8b"})
+    from app.db import utcnow
+
+    w.last_seen_at = utcnow()
+    meta_schreiben(dbs, "llm.art", "lokal")
+    dbs.commit()
+    seite = client.get("/verwaltung/transkription").text
+    assert "vom Worker erkannt" in seite and "mit dem lokalen Sprachmodell" in seite
+    config.get_settings.cache_clear()

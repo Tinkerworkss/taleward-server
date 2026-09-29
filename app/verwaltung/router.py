@@ -379,7 +379,11 @@ def _eingebaut_anzeige(db: Session) -> dict | None:
     knecht = next((k for k in _knechte(db) if k["w"].local), None)
     info = knecht["info"] if knecht else {}
     vram_karte = info.get("vramMb") if isinstance(info.get("vramMb"), int) else None
+    from app.einstellungen import llm_konfig
+
     return {"werte": eingebaut.lesen(db), "knecht": knecht, "vram_karte": vram_karte,
+            "ollama": get_settings().ollama_art, "llm_lokal": llm_konfig(db).art == "lokal",
+            "llm_bereit": bool(knecht and knecht["info"].get("llm")),
             "regler_max": vram_karte or 24576,
             "messung": eingebaut.messung(db, knecht["w"].id) if knecht else None}
 

@@ -132,7 +132,21 @@ Was dort nicht gesetzt ist, kommt aus der `.env` (danach `sudo docker compose up
 | `TALEWARD_WORKER_MODELL=large-v3` | festes Modell statt `auto` (auch `large-v3-turbo`) |
 | `TALEWARD_WORKER_CPUS=4` | nur `worker-cpu`: so viele Rechenkerne (Standard 2), der Rest bleibt für den Server |
 
-Wieder ausschalten: `sudo docker compose rm -sf worker` (bzw. `worker-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
+**Lokale Recaps mit Ollama:** Auf Wunsch läuft neben dem Worker ein zweiter Container mit Ollama. Dann schreibt der
+Worker auch die Recaps, ganz ohne Cloud.
+
+- `install.sh` fragt danach, sobald der Worker gewählt ist.
+- Von Hand: `COMPOSE_PROFILES=worker,ollama` (bzw. `worker-cpu,ollama-cpu`) in die `.env`, dann
+  `sudo docker compose up -d`.
+- In der Verwaltung unter **Zusammenfassung** „Lokales Modell“ wählen.
+- Das Sprachmodell (`ministral-3:8b`, etwa 5 GB) lädt der Worker beim ersten Recap.
+- Transkription und Recap wechseln sich auf der Grafikkarte ab. Reicht der Grafikspeicher nicht für beides, rechnet
+  Ollama teilweise mit dem Prozessor – langsamer, aber es geht.
+- Mit nur dem Prozessor dauert ein Recap grob eine Stunde oder mehr.
+- Das Bild von Ollama frischt das automatische Update mit auf; eine feste Fassung legt
+  `TALEWARD_OLLAMA_VERSION=…` in der `.env` fest.
+
+Wieder ausschalten: `sudo docker compose rm -sf worker ollama` (bzw. `worker-cpu ollama-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
 aus der `.env` löschen.
 
 ## Alltag

@@ -114,6 +114,12 @@ class Settings(BaseSettings):
         return "cpu" if "worker-cpu" in profile else "gpu" if "worker" in profile else ""
 
     @property
+    def ollama_art(self) -> str:
+        """Ollama im Docker-Paket (Profil „ollama“ / „ollama-cpu“): "gpu", "cpu" oder ""."""
+        profile = {p.strip() for p in self.eingebauter_worker.split(",")}
+        return "cpu" if "ollama-cpu" in profile else "gpu" if "ollama" in profile else ""
+
+    @property
     def db_url(self) -> str:
         return self.database_url or f"sqlite:///{self.data_dir / 'chronik.db'}"
 

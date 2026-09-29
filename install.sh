@@ -182,7 +182,7 @@ if [ "$NVIDIA" -eq 1 ]; then
   echo "NVIDIA-Grafikkarte gefunden${KARTE:+: $KARTE}."
   echo "Der Worker kann direkt hier mitlaufen und die Aufnahmen umwandeln (einmalig etwa 8 GB, dazu 5 GB Modelle)."
   VORGABE_W=j
-  [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "worker" ] && VORGABE_W=n
+  [ -n "$ALT_PROFIL" ] && [[ ",$ALT_PROFIL," != *",worker,"* ]] && VORGABE_W=n
   if [ "$(frage "Worker mit der Grafikkarte hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
     if ! nvidia_smi -L >/dev/null 2>&1; then
       if [ "$WSL" -eq 1 ]; then
@@ -214,7 +214,7 @@ else
     echo "Ohne passende Grafikkarte kann der Worker auch mit dem Prozessor rechnen – langsam: grob einen halben bis"
     echo "ganzen Tag für 4 Stunden Aufnahme. Er nutzt dann $WORKER_CPUS von $KERNE Kernen, der Rest bleibt für den Server."
     VORGABE_W=n
-    [ "$ALT_PROFIL" = "worker-cpu" ] && VORGABE_W=j
+    [[ ",$ALT_PROFIL," == *",worker-cpu,"* ]] && VORGABE_W=j
     if [ "$(frage "Worker mit dem Prozessor hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
       PROFIL=worker-cpu
     fi
@@ -222,8 +222,22 @@ else
     echo "Keine passende Grafikkarte. Transkribiert wird auf einem PC mit der Worker-App oder über die Cloud."
   fi
 fi
+# Lokale Recaps: Ollama als weiterer Container neben dem Worker (Profil „ollama“ bzw. „ollama-cpu“)
+if [ -n "$PROFIL" ]; then
+  OLLAMA_PROFIL=ollama; VORGABE_O=j
+  if [ "$PROFIL" = "worker-cpu" ]; then OLLAMA_PROFIL=ollama-cpu; VORGABE_O=n; fi
+  if [ -n "$ALT_PROFIL" ]; then
+    if [[ ",$ALT_PROFIL," == *",ollama"* ]]; then VORGABE_O=j; else VORGABE_O=n; fi
+  fi
+  echo
+  echo "Die Recaps kann der Worker auch hier schreiben – mit einem lokalen Sprachmodell (Ollama, etwa 5 GB), ohne Cloud."
+  [ "$PROFIL" = "worker-cpu" ] && echo "Mit dem Prozessor dauert ein Recap allerdings lange, grob eine Stunde oder mehr."
+  if [ "$(frage "Ollama für lokale Recaps mit einrichten? (j/n)" "$VORGABE_O")" = "j" ]; then
+    PROFIL="$PROFIL,$OLLAMA_PROFIL"
+  fi
+fi
 if [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "$PROFIL" ] && [ -f "$ZIEL/docker-compose.yml" ]; then
-  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu >/dev/null 2>&1 || true)
+  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu ollama ollama-cpu >/dev/null 2>&1 || true)
 fi
 
 # ------------------------------------------------------------------ Dateien
@@ -258,10 +272,10 @@ TALEWARD_DOMAIN=$DOMAIN
 ACME_EMAIL=$MAIL
 # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
 TALEWARD_VERSION=$VERSION
-# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner)
+# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner); dazu ollama bzw. ollama-cpu
 COMPOSE_PROFILES=$PROFIL
 ENV
-if [ "$PROFIL" = "worker-cpu" ] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
+if [[ "$PROFIL" == worker-cpu* ]] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
   EXTRA=$(printf '%s\nTALEWARD_WORKER_CPUS=%s' "$EXTRA" "$WORKER_CPUS" | sed '/^$/d')
 fi
 [ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
@@ -425,10 +439,15 @@ fi
 
 if [ -n "$PROFIL" ]; then
   sleep 5
-  if docker compose ps --status running --services 2>/dev/null | grep -qx "$PROFIL"; then
-    gruen "Worker läuft ($PROFIL). Beim ersten Auftrag lädt er die Sprachmodelle (einmalig etwa 5 GB)."
+  DIENST=${PROFIL%%,*}
+  if docker compose ps --status running --services 2>/dev/null | grep -qx "$DIENST"; then
+    gruen "Worker läuft ($DIENST). Beim ersten Auftrag lädt er die Modelle für die Transkription (einmalig etwa 5 GB)."
   else
-    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $PROFIL"
+    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $DIENST"
+  fi
+  if [[ "$PROFIL" == *ollama* ]]; then
+    echo "Ollama läuft mit. Damit der Worker die Recaps schreibt: in der Verwaltung unter „Zusammenfassung“"
+    echo "„Lokales Modell“ wählen. Das Sprachmodell lädt er beim ersten Recap (einmalig etwa 5 GB)."
   fi
 fi
 

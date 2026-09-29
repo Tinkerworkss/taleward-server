@@ -81,7 +81,9 @@ fi
 version_setzen "$NEU"
 # Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
 # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
+# Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
 if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
+   && { docker compose pull --ignore-buildable --quiet >>/tmp/taleward-bau.log 2>&1 || true; } \
    && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""
   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –

@@ -11,13 +11,37 @@ x-worker: &worker
   restart: unless-stopped
   depends_on:
     server: { condition: service_healthy }
+    # Nur wenn das Profil „ollama“ bzw. „ollama-cpu“ an ist: erst Ollama, dann der Worker (er prüft beim Start,
+    # ob ein Sprachmodell da ist, und übernimmt dann auch Recaps)
+    ollama: { condition: service_healthy, required: false }
+    ollama-cpu: { condition: service_healthy, required: false }
   environment:
     GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
     WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
+    WORKER_LLM_URL: http://ollama:11434
   volumes:
     - kopplung:/kopplung:ro
     - worker-modelle:/modelle
   shm_size: 1gb
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+# Gemeinsame Angaben der beiden Ollama-Varianten
+x-ollama: &ollama
+  image: ollama/ollama:${TALEWARD_OLLAMA_VERSION:-latest}
+  restart: unless-stopped
+  environment:
+    OLLAMA_KEEP_ALIVE: 2m          # Modell nicht dauerhaft im Speicher halten
+    OLLAMA_MAX_LOADED_MODELS: "1"
+  volumes:
+    - ollama-modelle:/root/.ollama
+  healthcheck:
+    test: ["CMD", "ollama", "list"]
+    interval: 15s
+    timeout: 10s
+    start_period: 20s
+    retries: 5
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "5" }
@@ -92,12 +116,35 @@ services:
     environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
       WHISPER_DEVICE: cpu
       WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
+      WORKER_LLM_URL: http://ollama:11434
       CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
     cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
     cpu_shares: 256                    # niedrigere Priorität als der Server
 
+  # ---------------------------------------------------------------- Ollama für lokale Recaps (optional)
+  # Profil „ollama“ (mit Grafikkarte) bzw. „ollama-cpu“, zusätzlich zum Worker: COMPOSE_PROFILES=worker,ollama
+  # Das Sprachmodell (Verwaltung → Zusammenfassung → Lokales Modell) lädt der Worker beim ersten
+  # Recap selbst herunter (ministral-3:8b etwa 5 GB) und entlädt es danach wieder, damit die Grafikkarte frei wird.
+  ollama:
+    profiles: ["ollama"]
+    <<: *ollama
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  ollama-cpu:
+    profiles: ["ollama-cpu"]
+    <<: *ollama
+    cpus: ${TALEWARD_WORKER_CPUS:-2}
+    cpu_shares: 256
+    networks:
+      default:
+        aliases: [ollama]   # der Worker erreicht beide Varianten unter http://ollama:11434
+
 volumes:
   kopplung:
   worker-modelle:
+  ollama-modelle:
   caddy-daten:
   caddy-config:
