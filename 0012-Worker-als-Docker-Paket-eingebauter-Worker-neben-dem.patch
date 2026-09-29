@@ -1,0 +1,974 @@
+From 9d4fb925ca1de26d489592c23c648d4f9e1331f5 Mon Sep 17 00:00:00 2001
+From: Taleward <twartanddesign@gmail.com>
+Date: Tue, 29 Sep 2026 09:34:46 +0200
+Subject: [PATCH] Worker als Docker-Paket: eingebauter Worker neben dem Server
+ (Server 0.4.6)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Dockerfile.worker: derselbe Worker ohne Fenster, KI-Paket aus engine-requirements.txt
+  (TORCH_BACKEND cu128 für NVIDIA, cpu für nur Prozessor), Modelle im Volume „worker-modelle“.
+- Compose-Profile „worker“ (Grafikkarte) und „worker-cpu“ (Kerne begrenzt, niedrige Priorität) in
+  beiden Compose-Dateien; eingeschaltet über COMPOSE_PROFILES in der .env.
+- Kopplung ohne Code: Der Server schreibt bei jedem Start einen frischen Schlüssel in das gemeinsame
+  Volume „kopplung“, der Worker liest ihn (WORKER_TOKEN_FILE).
+- chronik worker --automatisch: Modell, Stapel und Geräte nach dem Grafikspeicher (wie die Worker-App).
+- Updates bauen den Worker mit; install.sh behält eigene Zeilen der .env.
+- Verwaltung im Docker-Betrieb: Karte „Eingebauter Worker“ bzw. Hinweis auf die Worker-App statt
+  der alten Anleitung (Testmodus eingeklappt).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ Dockerfile                                  |   2 +-
+ Dockerfile.worker                           |  55 ++++++++
+ INSTALLATION-VPS.md                         |  51 ++++++++
+ INSTALLATION.md                             |   2 +-
+ README.md                                   |   3 +-
+ app/arbeitsweise.py                         |  58 +++++++++
+ app/cli.py                                  |  41 +++++-
+ app/config.py                               |  12 ++
+ app/main.py                                 |   9 ++
+ app/verwaltung/i18n.py                      |  10 ++
+ app/verwaltung/lokaler_worker.py            |  30 +++++
+ app/verwaltung/router.py                    |   9 +-
+ app/verwaltung/templates/transkription.html |  37 ++++++
+ deploy/aktualisieren.sh                     |   5 +-
+ deploy/docker-compose.heimnetz.yml          |  53 ++++++++
+ deploy/docker-compose.yml                   |  51 ++++++++
+ install.sh                                  |   6 +
+ pyproject.toml                              |   2 +-
+ tests/test_aktualisierung.py                |   2 +-
+ tests/test_assistent.py                     |   2 +-
+ tests/test_eingebauter_worker.py            | 136 ++++++++++++++++++++
+ tests/test_modellablage.py                  |   2 +-
+ tests/test_worker_app.py                    |   2 +-
+ uv.lock                                     |   2 +-
+ 24 files changed, 566 insertions(+), 16 deletions(-)
+ create mode 100644 Dockerfile.worker
+ create mode 100644 app/arbeitsweise.py
+ create mode 100644 tests/test_eingebauter_worker.py
+
+diff --git a/Dockerfile b/Dockerfile
+index 9cc14e0..4271844 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -25,7 +25,7 @@ RUN uv sync --frozen --no-dev --no-install-project
+ COPY . .
+ RUN uv sync --frozen --no-dev \
+  && useradd --system --uid 1000 --create-home taleward \
+- && mkdir -p /data && chown taleward:taleward /data
++ && mkdir -p /data /kopplung && chown taleward:taleward /data /kopplung
+ 
+ USER taleward
+ VOLUME /data
+diff --git a/Dockerfile.worker b/Dockerfile.worker
+new file mode 100644
+index 0000000..ecee310
+--- /dev/null
++++ b/Dockerfile.worker
+@@ -0,0 +1,55 @@
++# Taleward-Worker als Container (ohne Fenster): holt Aufträge beim Server ab, transkribiert, trennt Sprecher.
++# Derselbe Code und dasselbe KI-Paket wie in der Worker-App, nur ohne Oberfläche.
++#
++#   Grafikkarte (NVIDIA): docker build -f Dockerfile.worker -t taleward-worker .
++#   Nur Prozessor:        docker build -f Dockerfile.worker --build-arg TORCH_BACKEND=cpu -t taleward-worker:cpu .
++#
++# Gestartet wird er über das Compose-Profil „worker“ bzw. „worker-cpu“ (deploy/docker-compose.yml). Für die
++# Grafikkarte braucht der Rechner den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
++# bringt PyTorch mit, deshalb reicht ein schlankes Grundbild.
++FROM python:3.11-slim-bookworm
++
++# cu128 = CUDA 12.8 (NVIDIA-Treiber ab 525, wie in der Worker-App), cpu = ohne Grafikkarte (kleiner)
++ARG TORCH_BACKEND=cu128
++
++ENV PYTHONUNBUFFERED=1 \
++    PYTHONDONTWRITEBYTECODE=1 \
++    UV_COMPILE_BYTECODE=1 \
++    UV_LINK_MODE=copy \
++    VIRTUAL_ENV=/opt/venv \
++    PATH=/opt/venv/bin:$PATH \
++    TALEWARD_DOCKER=1 \
++    WORKER_SERVER_URL=http://server:8000 \
++    WORKER_TOKEN_FILE=/kopplung/worker-token \
++    WORKER_WORK_DIR=/arbeit \
++    HF_HOME=/modelle/huggingface \
++    TORCH_HOME=/modelle/torch \
++    NLTK_DATA=/modelle/nltk \
++    XDG_CACHE_HOME=/modelle/cache
++
++# ffmpeg: Aufnahmen dekodieren; libgomp1: Rechnen auf dem Prozessor (CTranslate2)
++RUN apt-get update \
++ && apt-get install -y --no-install-recommends ffmpeg libgomp1 \
++ && rm -rf /var/lib/apt/lists/* \
++ && pip install --no-cache-dir uv \
++ && uv venv /opt/venv
++
++WORKDIR /app
++# Erst nur das KI-Paket (mehrere GB, ändert sich selten → bei Updates meist aus dem Zwischenspeicher).
++# Feste Versionen aus uv.lock; torchcodec kommt wie in der Worker-App von PyPI (gibt es nicht für jede CUDA-Fassung).
++COPY engine-requirements.txt ./
++RUN grep -viE '^torchcodec==' engine-requirements.txt > /tmp/basis.txt \
++ && (grep -iE '^torchcodec==' engine-requirements.txt > /tmp/extra.txt || true) \
++ && uv pip install --no-cache --no-deps --torch-backend "$TORCH_BACKEND" -r /tmp/basis.txt \
++ && if [ -s /tmp/extra.txt ]; then uv pip install --no-cache --no-deps -r /tmp/extra.txt; fi
++COPY . .
++RUN uv pip install --no-cache --no-deps . \
++ && python -c "import app.cli, torch; print('torch', torch.__version__)" \
++ && useradd --system --uid 1000 --create-home taleward \
++ && mkdir -p /arbeit /modelle /kopplung \
++ && chown taleward:taleward /arbeit /modelle /kopplung
++
++USER taleward
++VOLUME /modelle
++# --unsicher: Server und Worker sprechen im internen Docker-Netz (http://server:8000), nicht über das Internet
++CMD ["chronik", "worker", "--automatisch", "--unsicher"]
+diff --git a/INSTALLATION-VPS.md b/INSTALLATION-VPS.md
+index 023a187..48d760e 100644
+--- a/INSTALLATION-VPS.md
++++ b/INSTALLATION-VPS.md
+@@ -64,6 +64,57 @@ eintragen. Der PC braucht keine
+ Portfreigabe im Router – er fragt beim Server nach Arbeit. Ist er aus, warten die Aufnahmen, bis er wieder läuft
+ (auf Wunsch meldet der Server das, Teil 14).
+ 
++## Worker auf demselben Rechner (Docker)
++
++Hat der Rechner, auf dem der Server läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
++als eigener Container, ohne Worker-App und ohne Kopplungscode. Das passt für einen gemieteten GPU-Server oder einen
++Vereins-PC mit Linux (auch Ubuntu unter Windows 11). Ohne Grafikkarte geht es auch mit dem Prozessor, dann aber
++langsam: grob 4–10 Stunden für 4 Stunden Aufnahme auf einem Desktop-Prozessor, auf einem kleinen VPS eher einen Tag.
++
++> Bald fragt `install.sh` danach und erledigt die Schritte 1 und 2 selbst. Bis dahin von Hand:
++
++**1. NVIDIA-Treiber** (unter Windows 11 mit Ubuntu kommt er von Windows, dort überspringen):
++
++```bash
++sudo ubuntu-drivers install && sudo reboot
++nvidia-smi          # nach dem Neustart: zeigt die Karte
++```
++
++**2. Grafikkarte für Docker freigeben** (nvidia-container-toolkit):
++
++```bash
++curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
++curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
++  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
++  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
++sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
++sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
++```
++
++**3. Worker einschalten:**
++
++```bash
++cd /opt/taleward
++echo "COMPOSE_PROFILES=worker" | sudo tee -a .env      # nur Prozessor: COMPOSE_PROFILES=worker-cpu
++sudo docker compose up -d --build                       # beim ersten Mal 10–20 Minuten, etwa 8 GB
++sudo docker compose logs -f worker                      # „Worker bereit, warte auf Aufträge …“
++```
++
++Der Server legt beim Start selbst einen Schlüssel für den Worker an; in der Verwaltung erscheint er unter
++Transkription als „Lokaler Worker“. Den Zugang zum Sprechermodell trägst du wie gewohnt im Assistenten ein. Updates
++bekommt der Worker zusammen mit dem Server, immer in derselben Fassung.
++
++Einstellungen in der `.env` (danach `sudo docker compose up -d`):
++
++| Einstellung | Bedeutung |
++|---|---|
++| `TALEWARD_WORKER_VRAM_MB=6000` | höchstens so viel Grafikspeicher (Standard 0 = alles) |
++| `TALEWARD_WORKER_MODELL=large-v3` | festes Modell statt `auto` (auch `large-v3-turbo`) |
++| `TALEWARD_WORKER_CPUS=4` | nur `worker-cpu`: so viele Rechenkerne (Standard 2), der Rest bleibt für den Server |
++
++Wieder ausschalten: `sudo docker compose rm -sf worker` (bzw. `worker-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
++aus der `.env` löschen.
++
+ ## Alltag
+ 
+ Alle Befehle im Ordner `/opt/taleward`:
+diff --git a/INSTALLATION.md b/INSTALLATION.md
+index 170f2bb..db1c8ec 100644
+--- a/INSTALLATION.md
++++ b/INSTALLATION.md
+@@ -201,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
+ uv run pytest
+ ```
+ 
+-✅ **Kontrolle:** Die letzte Zeile lautet **`251 passed`**. Der Lauf dauert etwa eine Minute.
++✅ **Kontrolle:** Die letzte Zeile lautet **`260 passed`**. Der Lauf dauert etwa eine Minute.
+ 
+ ### 4.2 Eigenes Konto anlegen
+ 
+diff --git a/README.md b/README.md
+index 3a73995..a6663cb 100644
+--- a/README.md
++++ b/README.md
+@@ -39,7 +39,7 @@ Kurzfassung für später:
+ 
+ ```bash
+ cd ~/session-chronik-server
+-uv run pytest                  # erwartet: 251 passed
++uv run pytest                  # erwartet: 260 passed
+ uv run chronik serve           # Server starten, Strg+C beendet
+ uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
+ uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
+@@ -97,6 +97,7 @@ app/
+ migrations/   Datenbank-Migrationen (Alembic)
+ tests/        pytest inkl. automatischer Vertragsprüfung
+ deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
++Dockerfile.worker  Worker als Container (Grafikkarte oder Prozessor), Compose-Profil „worker“/„worker-cpu“
+ engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
+ ```
+ 
+diff --git a/app/arbeitsweise.py b/app/arbeitsweise.py
+new file mode 100644
+index 0000000..e756f1e
+--- /dev/null
++++ b/app/arbeitsweise.py
+@@ -0,0 +1,58 @@
++"""Wie ein Worker arbeitet: Modell, Stapelgröße und Gerät je Schritt – passend zum Grafikspeicher.
++
++Dieselben Stufen wie in der Worker-App (taleward-worker, hardware.py). Hier für Worker ohne Oberfläche, z. B. den
++eingebauten Worker im Docker-Paket („chronik worker --automatisch“).
++"""
++from __future__ import annotations
++
++import shutil
++import subprocess
++
++# Stufen nach verfügbarem Grafikspeicher (MB). Gemessen: large-v3 mit Stapel 8 braucht auf der RTX 3060 Ti höchstens
++# ~5,5 GB. Die übrigen Werte sind vorsichtige Schätzungen.
++STUFEN = [
++    # ab MB, Modell,          Stapel, Ausrichtung, Sprecher
++    (10000, "large-v3",       16,     "cuda",      "cuda"),
++    (6000,  "large-v3",       8,      "cuda",      "cuda"),
++    (4500,  "large-v3",       4,      "cuda",      "cuda"),
++    (3500,  "large-v3-turbo", 4,      "cuda",      "cuda"),
++    (2000,  "large-v3-turbo", 2,      "cpu",       "cpu"),
++]
++MIN_GRAFIK_MB = 2000  # darunter lohnt die Grafikkarte nicht – dann Prozessor
++
++
++def profil(vram_mb: int | None, grenze_mb: int = 0, modell_wunsch: str = "auto", prozessor: bool = False) -> dict:
++    """vram_mb: Grafikspeicher der Karte (None = keine NVIDIA-Karte); grenze_mb: erlaubter Anteil (0 = alles)."""
++    budget = min(vram_mb, grenze_mb) if (vram_mb and grenze_mb) else (vram_mb or 0)
++    if prozessor or not vram_mb or budget < MIN_GRAFIK_MB:
++        modell = modell_wunsch if modell_wunsch in ("large-v3", "large-v3-turbo") else "large-v3-turbo"
++        return {"stufe": "cpu", "modell": modell, "batch": 4, "genauigkeit": "int8", "geraet": "cpu",
++                "ausrichten": "cpu", "sprecher": "cpu", "grenzeMb": 0}
++    ab, modell, batch, ausrichten, sprecher = next(s for s in STUFEN if budget >= s[0])
++    if modell_wunsch == "large-v3" and modell != "large-v3":
++        modell, batch, ausrichten, sprecher = "large-v3", max(1, batch // 2), "cpu", "cpu"
++    elif modell_wunsch == "large-v3-turbo":
++        modell = "large-v3-turbo"
++    return {"stufe": f"gpu{ab}", "modell": modell, "batch": batch, "genauigkeit": "int8_float16", "geraet": "cuda",
++            "ausrichten": ausrichten, "sprecher": sprecher, "grenzeMb": grenze_mb or 0}
++
++
++def grafikspeicher_mb() -> int | None:
++    """Grafikspeicher der ersten NVIDIA-Karte (nvidia-smi, sonst PyTorch); None ohne nutzbare Karte."""
++    programm = shutil.which("nvidia-smi")
++    if programm:
++        try:
++            aus = subprocess.run([programm, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
++                                 capture_output=True, text=True, timeout=15).stdout.strip().splitlines()
++            if aus:
++                return int(float(aus[0].strip()))
++        except (OSError, subprocess.SubprocessError, ValueError):
++            pass
++    try:
++        import torch
++
++        if torch.cuda.is_available():
++            return int(torch.cuda.get_device_properties(0).total_memory / 2 ** 20)
++    except Exception:  # noqa: BLE001 – ohne KI-Paket oder Treiber: keine Karte
++        return None
++    return None
+diff --git a/app/cli.py b/app/cli.py
+index 0f585f0..e559f56 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -306,6 +306,8 @@ def worker(
+     name: str = typer.Option(None, "--name", help="Nur mit --koppeln: Name dieses Workers (Standard: Gerätename)"),
+     app_modus: bool = typer.Option(False, "--app", hidden=True,
+                                    help="Für die Worker-App: Ereignisse als JSON-Zeilen, Steuerung über stdin"),
++    automatisch: bool = typer.Option(False, "--automatisch", help="Modell, Stapelgröße und Geräte selbst nach dem "
++                                     "Grafikspeicher wählen (GPU_MEMORY_LIMIT_MB, WORKER_MODELL, WHISPER_DEVICE=cpu)"),
+ ):
+     """Worker starten: holt Aufträge vom Server und verarbeitet sie."""
+     import logging
+@@ -322,7 +324,7 @@ def worker(
+     logging.getLogger("httpx").setLevel(logging.WARNING)  # nicht jede Anfrage protokollieren
+     s = get_settings()
+     server = server or s.worker_server_url
+-    token = token or s.worker_token
++    token = token or s.worker_token or _token_aus_datei(s.worker_token_file)
+     if koppeln:
+         token = _koppeln(server, koppeln, name, unsicher)
+     if not token and not selbsttest:
+@@ -347,10 +349,20 @@ def worker(
+         melden("pruefe")
+         hf_token = s.hf_token or (_hf_vom_server(server, token) if token else None)
+         quelle = ServerQuelle(server, token) if token else None  # Sprechermodell vom Server
+-        motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
+-                              geraet=s.whisper_device, geraet_ausrichten=s.align_device,
+-                              geraet_sprecher=s.diarize_device, grenze_mb=s.gpu_memory_limit_mb,
+-                              threads=s.cpu_threads)
++        if automatisch:
++            from app.arbeitsweise import grafikspeicher_mb, profil
++
++            p = profil(grafikspeicher_mb(), s.gpu_memory_limit_mb, s.worker_modell, prozessor=s.whisper_device == "cpu")
++            typer.echo(f"Arbeitsweise: {p['stufe']} – {p['modell']}, Stapel {p['batch']}, Geräte {p['geraet']}/"
++                       f"{p['ausrichten']}/{p['sprecher']}")
++            motor = WhisperXMotor(p["modell"], p["genauigkeit"], p["batch"], hf_token, quelle, geraet=p["geraet"],
++                                  geraet_ausrichten=p["ausrichten"], geraet_sprecher=p["sprecher"],
++                                  grenze_mb=p["grenzeMb"], threads=s.cpu_threads)
++        else:
++            motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
++                                  geraet=s.whisper_device, geraet_ausrichten=s.align_device,
++                                  geraet_sprecher=s.diarize_device, grenze_mb=s.gpu_memory_limit_mb,
++                                  threads=s.cpu_threads)
+         try:
+             info = motor.pruefen()
+         except EinrichtungsFehler as e:
+@@ -394,6 +406,25 @@ def worker(
+         melden("beendet")
+ 
+ 
++def _token_aus_datei(datei: Path | None, warten_s: float = 60.0) -> str | None:
++    """Eingebauter Worker: Schlüssel aus der Datei, die der Server beim Start schreibt (wartet kurz darauf)."""
++    import time
++
++    if datei is None:
++        return None
++    ende = time.monotonic() + warten_s
++    while True:
++        try:
++            wert = datei.read_text(encoding="utf-8").strip()
++            if wert:
++                return wert
++        except OSError:
++            pass
++        if time.monotonic() >= ende:
++            return None
++        time.sleep(2)
++
++
+ def _env_setzen(werte: dict[str, str], datei: Path = Path(".env")) -> None:
+     """Schlüssel in der .env setzen oder ersetzen, alles andere bleibt, wie es ist."""
+     zeilen = datei.read_text(encoding="utf-8").splitlines() if datei.exists() else []
+diff --git a/app/config.py b/app/config.py
+index a50d792..4b003c6 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -55,6 +55,12 @@ class Settings(BaseSettings):
+     worker_server_url: str = "http://127.0.0.1:8000"
+     worker_token: str | None = None
+     worker_work_dir: Path = Path("./data/worker")
++    worker_token_file: Path | None = None  # Worker liest seinen Schlüssel aus dieser Datei (eingebauter Worker)
++    worker_modell: str = "auto"  # nur mit „chronik worker --automatisch“: auto | large-v3 | large-v3-turbo
++    # Eingebauter Worker im Docker-Paket (Compose-Profil „worker“ oder „worker-cpu“): Der Server legt beim Start einen
++    # frischen Schlüssel für ihn an und schreibt ihn in diese Datei (gemeinsames Volume, nur Server und Worker).
++    eingebauter_worker: str = ""  # Inhalt von COMPOSE_PROFILES; leer = kein eingebauter Worker
++    eingebauter_worker_datei: Path = Path("/kopplung/worker-token")
+     # Hugging Face Zugangsschlüssel (für das pyannote-Sprechermodell)
+     hf_token: str | None = None
+     # Taleward-Spiegel des Sprechermodells (ohne Hugging-Face-Konto). Genutzt nur, wenn die Prüfsumme im Code steht.
+@@ -101,6 +107,12 @@ class Settings(BaseSettings):
+     def cors_origin_list(self) -> list[str]:
+         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+ 
++    @property
++    def worker_art(self) -> str:
++        """Eingebauter Worker: "gpu", "cpu" oder "" (keiner). Aus dem Compose-Profil („worker“ / „worker-cpu“)."""
++        profile = {p.strip() for p in self.eingebauter_worker.split(",")}
++        return "cpu" if "worker-cpu" in profile else "gpu" if "worker" in profile else ""
++
+     @property
+     def db_url(self) -> str:
+         return self.database_url or f"sqlite:///{self.data_dir / 'chronik.db'}"
+diff --git a/app/main.py b/app/main.py
+index 33eed7b..601171c 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -93,6 +93,15 @@ async def lifespan(_app: FastAPI):
+         beim_start(db)  # noch kein Verwalter: Einrichtungscode ins Protokoll
+     from app.extern import arbeitsprozess_starten as extern_starten
+ 
++    if get_settings().worker_art:
++        from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
++
++        try:
++            with session_factory()() as db:
++                datei = eingebauten_worker_koppeln(db)
++            log.info("Eingebauter Worker (%s): Schlüssel liegt in %s", get_settings().worker_art, datei)
++        except OSError:
++            log.exception("Eingebauter Worker: Schlüssel ließ sich nicht schreiben")
+     stops = [_wartung_starten(), arbeitsprozess_starten(session_factory()), extern_starten(session_factory())]
+     if get_settings().local_worker_autostart:  # in Tests aus
+         from app.verwaltung.lokaler_worker import KNECHT
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index baf6300..67ca33b 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -82,6 +82,16 @@ EN: dict[str, str] = {
+     "Ohne App: Befehl für die Kommandozeile": "Without the app: command line",
+     "Die Worker-App richtet alles Nötige selbst ein und passt sich dem PC an: am schnellsten mit einer NVIDIA-Grafikkarte, sonst langsamer mit dem Prozessor.": "The worker app sets up everything it needs and adapts to the PC: fastest with an NVIDIA graphics card, otherwise slower on the processor.",
+     "Für Windows herunterladen": "Download for Windows",
++    "Eingebauter Worker": "Built-in worker",
++    "Läuft als eigener Container neben dem Server": "Runs as its own container next to the server",
++    "nur Prozessor": "processor only",
++    "Grafikkarte": "graphics card",
++    "Er verbindet sich von selbst mit dem Server; seinen Zustand zeigt die Liste „Alle Worker“ unter „Lokaler Worker“.": "It connects to the server by itself; its status appears in “All workers” as “Local worker”.",
++    "Protokoll auf dem Server:": "Log on the server:",
++    "Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d": "Settings for now in the .env file: TALEWARD_WORKER_VRAM_MB (graphics memory, 0 = all), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (processor only). Then: sudo docker compose up -d",
++    "Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.": "No worker runs on this server. Transcription happens on a PC with the worker app – that may be the machine the server runs on – or in the cloud.",
++    "Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).": "If this machine has an NVIDIA graphics card, the worker can also run here as a container (INSTALLATION-VPS.md, “Worker on the same machine”).",
++    "Testmodus (Platzhaltertext, ohne KI)": "Test mode (placeholder text, without AI)",
+     "Linux": "Linux",
+     "Adresse des Servers": "Server address",
+     "Kopplungscode": "Pairing code",
+diff --git a/app/verwaltung/lokaler_worker.py b/app/verwaltung/lokaler_worker.py
+index e223c8f..ad77e11 100644
+--- a/app/verwaltung/lokaler_worker.py
++++ b/app/verwaltung/lokaler_worker.py
+@@ -127,9 +127,39 @@ class LokalerKnecht:
+     def autostart(self, db: Session) -> None:
+         from app.einstellungen import meta_lesen
+ 
++        if get_settings().worker_art:
++            return  # der eingebaute Worker läuft als eigener Container und nutzt denselben Eintrag
++
+         modus = meta_lesen(db, META_KEY, "aus")
+         if modus in ("echt", "attrappe") and not self.laeuft():
+             self.starten(db, modus)
+ 
+ 
+ KNECHT = LokalerKnecht()
++
++
++# ---------------------------------------------------------------- eingebauter Worker (Docker-Paket)
++def eingebauten_worker_koppeln(db: Session) -> Path | None:
++    """Docker-Paket mit eingebautem Worker: bei jedem Serverstart einen frischen Schlüssel anlegen und in die Datei
++    schreiben, die nur Server und Worker-Container sehen (Volume „kopplung“). Kein Kopplungscode nötig.
++
++    Der Worker liest die Datei beim Start; lehnt der Server einen alten Schlüssel ab, beendet er sich, Docker startet
++    ihn neu, und er liest den neuen. Gespeichert wird wie bei allen Workern nur die Prüfsumme.
++    """
++    s = get_settings()
++    if not s.worker_art:
++        return None
++    geheim = secrets.token_urlsafe(32)
++    w = KNECHT._worker_zeile(db, geheim)
++    w.capabilities = "asr,llm"
++    db.commit()
++    datei = s.eingebauter_worker_datei
++    datei.parent.mkdir(parents=True, exist_ok=True)
++    neu = datei.with_suffix(".neu")
++    alt_umask = os.umask(0o077)
++    try:
++        neu.write_text(f"wk.{w.id}.{geheim}\n", encoding="utf-8")
++    finally:
++        os.umask(alt_umask)
++    os.replace(neu, datei)  # nie halb geschrieben lesen
++    return datei
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 113c72c..d218a29 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -368,6 +368,12 @@ def verwalter_umschalten(request: Request, user_id: str, user: User = Depends(ve
+ 
+ 
+ # ---------------------------------------------------------------- Transkription (Worker + extern)
++def _docker() -> bool:
++    from app.aktualisierung import docker
++
++    return docker()
++
++
+ def _knechte(db: Session) -> list[dict]:
+     grenze = _online_grenze()
+     auftraege = {j.lease_worker_id: j for j in db.scalars(select(Job).where(Job.state == "leased"))}
+@@ -411,7 +417,8 @@ def transkription(request: Request, user: User = Depends(verwalter), db: Session
+                   koppel=aktueller_code(db), server_url=str(request.base_url).rstrip("/"),
+                   hf_ende=(_meta(db, "hf.token") or "")[-4:] or None, modell=_modell_anzeige(db),
+                   neuer_name=neuer_name, fehler=fehler, lokal=KNECHT.zustand(), log=KNECHT.log_ende(),
+-                  autostart=meta_lesen(db, META_KEY, "aus"), ki=ki_verfuegbar(), ext=_extern_anzeige(db))
++                  autostart=meta_lesen(db, META_KEY, "aus"), ki=ki_verfuegbar(), ext=_extern_anzeige(db),
++                  docker=_docker(), worker_art=get_settings().worker_art)
+ 
+ 
+ def _modell_anzeige(db: Session) -> dict:
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 37982e6..877fab3 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -13,6 +13,42 @@
+ {% endif %}
+ 
+ <div class="karte">
++{% if worker_art %}
++  <h2>{{ _("Eingebauter Worker") }}</h2>
++  <p>{{ _("Läuft als eigener Container neben dem Server") }} ({{ _("nur Prozessor") if worker_art == "cpu" else _("Grafikkarte") }}). {{ _("Er verbindet sich von selbst mit dem Server; seinen Zustand zeigt die Liste „Alle Worker“ unter „Lokaler Worker“.") }}</p>
++  <p class="hilfe">{{ _("Protokoll auf dem Server:") }} <code>cd /opt/taleward && sudo docker compose logs -f {{ "worker-cpu" if worker_art == "cpu" else "worker" }}</code></p>
++  <p class="hilfe">{{ _("Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d") }}</p>
++{% elif docker %}
++  <h2>{{ _("Transkription") }}</h2>
++  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
++  <p><a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
++    <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
++  <p class="hilfe">{{ _("Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).") }}</p>
++  <details {% if lokal.laeuft %}open{% endif %}><summary>{{ _("Testmodus (Platzhaltertext, ohne KI)") }}</summary>
++  {% if lokal.laeuft %}
++    <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
++    <form method="post" action="/verwaltung/worker/lokal/stop"><input type="hidden" name="csrf" value="{{ csrf }}">
++      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Beenden") }}</button></form>
++    <p class="hilfe">{{ _("Ein laufender Auftrag wird zurückgegeben und später fortgesetzt.") }}</p>
++  {% else %}
++    {% if lokal.exitcode is not none and lokal.exitcode != 0 %}<p><span class="marke-status marke-status--fehler">{{ _("beendet mit Fehler") }}</span> {{ _("– siehe Protokoll unten.") }}</p>{% endif %}
++    <form class="formular" method="post" action="/verwaltung/worker/lokal/start">
++      <input type="hidden" name="csrf" value="{{ csrf }}">
++      <label>{{ _("Art") }}
++        <select name="modus">
++          <option value="echt" {% if not ki %}disabled{% endif %}>{{ _("Echte Transkription (Grafikkarte)") }}{% if not ki %} – {{ _("KI-Pakete fehlen") }}{% endif %}</option>
++          <option value="attrappe" {% if not ki %}selected{% endif %}>{{ _("Testmodus (Platzhaltertext)") }}</option>
++        </select></label>
++      <label class="haken"><input type="checkbox" name="autostart" value="1" {% if autostart != "aus" %}checked{% endif %}> {{ _("Beim Start des Servers automatisch mitstarten") }}</label>
++      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Starten") }}</button></div>
++    </form>
++    {% if not ki %}<p class="hilfe">{{ _("Für die echte Transkription: „uv sync --extra ki“ und den Zugang zum Sprechermodell (HF_TOKEN in der .env, INSTALLATION.md Teil 5), dann den Server neu starten.") }}</p>{% endif %}
++  {% endif %}
++  {% if log %}
++  <details {% if lokal.exitcode %}open{% endif %}><summary>{{ _("Protokoll (letzte Zeilen)") }}</summary><pre class="log">{{ log|join("\n") }}</pre></details>
++  {% endif %}
++  </details>
++{% else %}
+   <h2>{{ _("Lokaler Worker (auf diesem Server)") }}</h2>
+   {% if lokal.laeuft %}
+     <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
+@@ -36,6 +72,7 @@
+   {% if log %}
+   <details {% if lokal.exitcode %}open{% endif %}><summary>{{ _("Protokoll (letzte Zeilen)") }}</summary><pre class="log">{{ log|join("\n") }}</pre></details>
+   {% endif %}
++{% endif %}
+ </div>
+ 
+ <div class="karte tabelle-huelle">
+diff --git a/deploy/aktualisieren.sh b/deploy/aktualisieren.sh
+index 93c111e..bed5563 100755
+--- a/deploy/aktualisieren.sh
++++ b/deploy/aktualisieren.sh
+@@ -79,7 +79,10 @@ if [ -z "$SICHERUNG" ]; then
+ fi
+ 
+ version_setzen "$NEU"
+-if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose up -d && gesund; then
++# Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
++# KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
++if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
++   && docker compose up -d && gesund; then
+   melden "aktualisiert" "$ALT" "$NEU" ""
+   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
+   # fehlt eine in der Fassung, bleibt die vorhandene (docker-compose.override.yml wird nie angefasst)
+diff --git a/deploy/docker-compose.heimnetz.yml b/deploy/docker-compose.heimnetz.yml
+index a7e2930..6c60c8f 100644
+--- a/deploy/docker-compose.heimnetz.yml
++++ b/deploy/docker-compose.heimnetz.yml
+@@ -2,6 +2,22 @@
+ # http://<IP dieses Rechners>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
+ # Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
+ 
++# Gemeinsame Angaben der beiden Worker-Varianten
++x-worker: &worker
++  restart: unless-stopped
++  depends_on:
++    server: { condition: service_healthy }
++  environment:
++    GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
++    WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++  volumes:
++    - kopplung:/kopplung:ro
++    - worker-modelle:/modelle
++  shm_size: 1gb
++  logging:
++    driver: json-file
++    options: { max-size: "10m", max-file: "5" }
++
+ services:
+   server:
+     build:
+@@ -11,10 +27,47 @@ services:
+     environment:
+       DATA_DIR: /data
+       PUBLIC_URL: ${TALEWARD_ADRESSE}
++      EINGEBAUTER_WORKER: ${COMPOSE_PROFILES:-}
+     volumes:
+       - ./daten:/data
++      - kopplung:/kopplung   # Schlüssel für den eingebauten Worker (nur Server und Worker)
+     ports:
+       - "8000:8000"
+     logging:
+       driver: json-file
+       options: { max-size: "10m", max-file: "5" }
++
++  # ---------------------------------------------------------------- eingebauter Worker (optional)
++  # Nur aktiv, wenn in der .env COMPOSE_PROFILES=worker (Grafikkarte, NVIDIA) oder =worker-cpu (nur Prozessor) steht.
++  # Er holt sich die Aufträge beim Server wie jeder andere Worker; den Schlüssel legt der Server beim Start selbst an.
++  worker:
++    profiles: ["worker"]
++    <<: *worker
++    build:
++      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
++      dockerfile: Dockerfile.worker
++      args: { TORCH_BACKEND: cu128 }
++    image: taleward-worker:${TALEWARD_VERSION:-main}
++    deploy:
++      resources:
++        reservations:
++          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
++
++  worker-cpu:
++    profiles: ["worker-cpu"]
++    <<: *worker
++    build:
++      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
++      dockerfile: Dockerfile.worker
++      args: { TORCH_BACKEND: cpu }
++    image: taleward-worker:${TALEWARD_VERSION:-main}-cpu
++    environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
++      WHISPER_DEVICE: cpu
++      WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++      CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
++    cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
++    cpu_shares: 256                    # niedrigere Priorität als der Server
++
++volumes:
++  kopplung:
++  worker-modelle:
+diff --git a/deploy/docker-compose.yml b/deploy/docker-compose.yml
+index 652b2b7..96fb9e1 100644
+--- a/deploy/docker-compose.yml
++++ b/deploy/docker-compose.yml
+@@ -6,6 +6,22 @@
+ #   Protokoll:                  docker compose logs -f server
+ #   Einrichtungscode:           docker compose exec server chronik einrichtungscode
+ 
++# Gemeinsame Angaben der beiden Worker-Varianten
++x-worker: &worker
++  restart: unless-stopped
++  depends_on:
++    server: { condition: service_healthy }
++  environment:
++    GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
++    WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++  volumes:
++    - kopplung:/kopplung:ro
++    - worker-modelle:/modelle
++  shm_size: 1gb
++  logging:
++    driver: json-file
++    options: { max-size: "10m", max-file: "5" }
++
+ services:
+   server:
+     build:
+@@ -16,11 +32,13 @@ services:
+     environment:
+       DATA_DIR: /data
+       PUBLIC_URL: https://${TALEWARD_DOMAIN}
++      EINGEBAUTER_WORKER: ${COMPOSE_PROFILES:-}
+       # Nur Caddy erreicht den Server (kein Port nach außen) – dessen Angaben zu HTTPS und Absender gelten
+       FORWARDED_ALLOW_IPS: "*"
+     volumes:
+       # Datenbank, Bilder, Unterlagen, Sicherungen, Geheimnis – alles, was gesichert werden muss
+       - ./daten:/data
++      - kopplung:/kopplung   # Schlüssel für den eingebauten Worker (nur Server und Worker)
+     expose:
+       - "8000"
+     logging:
+@@ -47,6 +65,39 @@ services:
+       driver: json-file
+       options: { max-size: "10m", max-file: "5" }
+ 
++  # ---------------------------------------------------------------- eingebauter Worker (optional)
++  # Nur aktiv, wenn in der .env COMPOSE_PROFILES=worker (Grafikkarte, NVIDIA) oder =worker-cpu (nur Prozessor) steht.
++  # Er holt sich die Aufträge beim Server wie jeder andere Worker; den Schlüssel legt der Server beim Start selbst an.
++  worker:
++    profiles: ["worker"]
++    <<: *worker
++    build:
++      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
++      dockerfile: Dockerfile.worker
++      args: { TORCH_BACKEND: cu128 }
++    image: taleward-worker:${TALEWARD_VERSION:-main}
++    deploy:
++      resources:
++        reservations:
++          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
++
++  worker-cpu:
++    profiles: ["worker-cpu"]
++    <<: *worker
++    build:
++      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
++      dockerfile: Dockerfile.worker
++      args: { TORCH_BACKEND: cpu }
++    image: taleward-worker:${TALEWARD_VERSION:-main}-cpu
++    environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
++      WHISPER_DEVICE: cpu
++      WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++      CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
++    cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
++    cpu_shares: 256                    # niedrigere Priorität als der Server
++
+ volumes:
++  kopplung:
++  worker-modelle:
+   caddy-daten:
+   caddy-config:
+diff --git a/install.sh b/install.sh
+index fc95d80..d93e39e 100755
+--- a/install.sh
++++ b/install.sh
+@@ -158,6 +158,11 @@ if [ -z "$VERSION" ]; then
+     | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+   VERSION=${VERSION:-main}
+ fi
++# Eigene Zusätze in der .env behalten (z. B. COMPOSE_PROFILES=worker für den eingebauten Worker)
++EXTRA=""
++if [ -f "$ZIEL/.env" ]; then
++  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=)' "$ZIEL/.env" || true)
++fi
+ umask 077
+ cat > "$ZIEL/.env" <<ENV
+ # Einstellungen für docker compose. Nach Änderungen: cd $ZIEL && docker compose up -d
+@@ -168,6 +173,7 @@ ACME_EMAIL=$MAIL
+ # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
+ TALEWARD_VERSION=$VERSION
+ ENV
++[ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
+ umask 022
+ chown 1000:1000 "$ZIEL/daten"   # der Server im Container läuft als Nutzer 1000, nicht als root
+ chmod 700 "$ZIEL/daten"
+diff --git a/pyproject.toml b/pyproject.toml
+index d17c1fe..2cb88dd 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.5"
++version = "0.4.6"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 7b5a2c2..abbd7b4 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.5"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.6"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 452d3dd..1626165 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.5"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.6"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_eingebauter_worker.py b/tests/test_eingebauter_worker.py
+new file mode 100644
+index 0000000..f62ebfc
+--- /dev/null
++++ b/tests/test_eingebauter_worker.py
+@@ -0,0 +1,136 @@
++"""Worker als Docker-Paket: Arbeitsweise nach Grafikspeicher, automatische Kopplung, Compose-Profile, Verwaltung."""
++import os
++import stat
++from pathlib import Path
++
++import yaml
++
++from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
++
++WURZEL = Path(__file__).resolve().parent.parent
++
++
++# ---------------------------------------------------------------- Arbeitsweise
++def test_stufen_wie_in_der_worker_app():
++    from app.arbeitsweise import profil
++
++    assert profil(12288)["modell"] == "large-v3" and profil(12288)["batch"] == 16
++    assert (profil(8192)["modell"], profil(8192)["batch"]) == ("large-v3", 8)
++    assert profil(8192, grenze_mb=4000)["modell"] == "large-v3-turbo"          # Grenze zählt
++    klein = profil(3000)
++    assert (klein["modell"], klein["ausrichten"], klein["sprecher"]) == ("large-v3-turbo", "cpu", "cpu")
++    for p in (profil(None), profil(1500), profil(8192, prozessor=True)):
++        assert (p["geraet"], p["genauigkeit"], p["modell"]) == ("cpu", "int8", "large-v3-turbo")
++    assert profil(None, modell_wunsch="large-v3")["modell"] == "large-v3"
++    assert profil(4000, modell_wunsch="large-v3")["ausrichten"] == "cpu"       # erzwungen großes Modell
++    assert profil(12288, modell_wunsch="large-v3-turbo")["modell"] == "large-v3-turbo"
++
++
++def test_worker_art_aus_dem_compose_profil(monkeypatch):
++    from app.config import Settings
++
++    assert Settings(eingebauter_worker="").worker_art == ""
++    assert Settings(eingebauter_worker="worker").worker_art == "gpu"
++    assert Settings(eingebauter_worker="worker-cpu").worker_art == "cpu"
++    assert Settings(eingebauter_worker="andere,worker").worker_art == "gpu"
++
++
++# ---------------------------------------------------------------- Kopplung ohne Code
++def _eingebaut(monkeypatch, tmp_path, art="worker"):
++    from app import config
++
++    datei = tmp_path / "kopplung" / "worker-token"
++    monkeypatch.setenv("EINGEBAUTER_WORKER", art)
++    monkeypatch.setenv("EINGEBAUTER_WORKER_DATEI", str(datei))
++    config.get_settings.cache_clear()
++    return datei
++
++
++def test_server_legt_schluessel_fuer_den_eingebauten_worker_an(client, dbs, monkeypatch, tmp_path):
++    from app.models import Worker
++    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
++
++    datei = _eingebaut(monkeypatch, tmp_path)
++    assert eingebauten_worker_koppeln(dbs) == datei
++    erster = datei.read_text().strip()
++    if os.name == "posix":
++        assert stat.S_IMODE(datei.stat().st_mode) == 0o600  # nur für den Besitzer
++    assert client.get("/worker/v1/config", headers={"Authorization": f"Bearer {erster}"}).status_code == 200
++    w = dbs.query(Worker).filter_by(local=True).one()
++    assert w.capabilities == "asr,llm"
++
++    # Neustart des Servers: neuer Schlüssel, der alte gilt nicht mehr
++    eingebauten_worker_koppeln(dbs)
++    zweiter = datei.read_text().strip()
++    assert zweiter != erster
++    assert client.get("/worker/v1/config", headers={"Authorization": f"Bearer {erster}"}).status_code == 401
++    assert client.get("/worker/v1/config", headers={"Authorization": f"Bearer {zweiter}"}).status_code == 200
++    assert dbs.query(Worker).filter_by(local=True).count() == 1  # kein zweiter Eintrag
++
++
++def test_ohne_profil_kein_schluessel(client, dbs, tmp_path):
++    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
++
++    assert eingebauten_worker_koppeln(dbs) is None
++
++
++def test_worker_liest_den_schluessel_aus_der_datei(tmp_path):
++    from app.cli import _token_aus_datei
++
++    datei = tmp_path / "worker-token"
++    assert _token_aus_datei(None) is None
++    assert _token_aus_datei(datei, warten_s=0) is None
++    datei.write_text("wk.1.abc\n")
++    assert _token_aus_datei(datei, warten_s=0) == "wk.1.abc"
++
++
++# ---------------------------------------------------------------- Compose-Dateien
++def test_compose_profile_fuer_den_worker():
++    for name in ("docker-compose.yml", "docker-compose.heimnetz.yml"):
++        d = yaml.safe_load((WURZEL / "deploy" / name).read_text(encoding="utf-8"))
++        dienste = d["services"]
++        server = dienste["server"]
++        assert "kopplung:/kopplung" in " ".join(server["volumes"]), name
++        assert server["environment"]["EINGEBAUTER_WORKER"] == "${COMPOSE_PROFILES:-}"
++        assert "profiles" not in server  # der Server läuft immer
++        gpu, cpu = dienste["worker"], dienste["worker-cpu"]
++        assert gpu["profiles"] == ["worker"] and cpu["profiles"] == ["worker-cpu"]
++        for w in (gpu, cpu):
++            assert w["build"]["dockerfile"] == "Dockerfile.worker"
++            assert "kopplung:/kopplung:ro" in w["volumes"] and "worker-modelle:/modelle" in w["volumes"]
++            assert w["depends_on"]["server"]["condition"] == "service_healthy"
++            assert "WORKER_MODELL" in w["environment"]
++        assert gpu["build"]["args"]["TORCH_BACKEND"] == "cu128" and cpu["build"]["args"]["TORCH_BACKEND"] == "cpu"
++        assert gpu["deploy"]["resources"]["reservations"]["devices"][0]["driver"] == "nvidia"
++        assert "deploy" not in cpu and cpu["environment"]["WHISPER_DEVICE"] == "cpu"
++        assert {"kopplung", "worker-modelle"} <= set(d["volumes"])
++
++
++def test_dockerfile_worker():
++    text = (WURZEL / "Dockerfile.worker").read_text(encoding="utf-8")
++    assert "engine-requirements.txt" in text and "ARG TORCH_BACKEND=cu128" in text
++    assert text.index("COPY engine-requirements.txt") < text.index("COPY . .")  # KI-Paket zuerst (Zwischenspeicher)
++    assert '"--automatisch"' in text and "USER taleward" in text
++    assert "/kopplung" in (WURZEL / "Dockerfile").read_text(encoding="utf-8")
++
++
++# ---------------------------------------------------------------- Verwaltung
++def test_verwaltung_im_docker_betrieb(client, admin, monkeypatch, tmp_path):  # noqa: F811
++    from app import config
++
++    monkeypatch.setenv("TALEWARD_DOCKER", "1")
++    seite = client.get("/verwaltung/transkription").text
++    assert "Auf diesem Server läuft kein Worker" in seite and "taleward-worker/releases" in seite
++    assert "uv sync --extra ki" in seite  # alte Anleitung nur noch im eingeklappten Testmodus
++    assert seite.index("<details") < seite.index("uv sync --extra ki")
++
++    _eingebaut(monkeypatch, tmp_path, "worker-cpu")
++    seite = client.get("/verwaltung/transkription").text
++    assert "Eingebauter Worker" in seite and "logs -f worker-cpu" in seite
++    assert "Auf diesem Server läuft kein Worker" not in seite
++    config.get_settings.cache_clear()
++
++
++def test_verwaltung_ohne_docker_wie_bisher(client, admin):  # noqa: F811
++    seite = client.get("/verwaltung/transkription").text
++    assert "Lokaler Worker (auf diesem Server)" in seite and "Auf diesem Server läuft kein Worker" not in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index d0ed74f..f446dc5 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.5"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.6"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 95675fc..0f3fb4e 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.5"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.6"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 332ff78..fea8ee8 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.5"
++version = "0.4.6"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
