@@ -25,7 +25,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev \
  && useradd --system --uid 1000 --create-home taleward \
- && mkdir -p /data && chown taleward:taleward /data
+ && mkdir -p /data /kopplung && chown taleward:taleward /data /kopplung
 
 USER taleward
 VOLUME /data

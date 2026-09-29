@@ -368,6 +368,12 @@ def verwalter_umschalten(request: Request, user_id: str, user: User = Depends(ve
 
 
 # ---------------------------------------------------------------- Transkription (Worker + extern)
+def _docker() -> bool:
+    from app.aktualisierung import docker
+
+    return docker()
+
+
 def _knechte(db: Session) -> list[dict]:
     grenze = _online_grenze()
     auftraege = {j.lease_worker_id: j for j in db.scalars(select(Job).where(Job.state == "leased"))}
@@ -411,7 +417,8 @@ def transkription(request: Request, user: User = Depends(verwalter), db: Session
                   koppel=aktueller_code(db), server_url=str(request.base_url).rstrip("/"),
                   hf_ende=(_meta(db, "hf.token") or "")[-4:] or None, modell=_modell_anzeige(db),
                   neuer_name=neuer_name, fehler=fehler, lokal=KNECHT.zustand(), log=KNECHT.log_ende(),
-                  autostart=meta_lesen(db, META_KEY, "aus"), ki=ki_verfuegbar(), ext=_extern_anzeige(db))
+                  autostart=meta_lesen(db, META_KEY, "aus"), ki=ki_verfuegbar(), ext=_extern_anzeige(db),
+                  docker=_docker(), worker_art=get_settings().worker_art)
 
 
 def _modell_anzeige(db: Session) -> dict:

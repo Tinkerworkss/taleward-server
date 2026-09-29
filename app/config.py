@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     worker_server_url: str = "http://127.0.0.1:8000"
     worker_token: str | None = None
     worker_work_dir: Path = Path("./data/worker")
+    worker_token_file: Path | None = None  # Worker liest seinen Schlüssel aus dieser Datei (eingebauter Worker)
+    worker_modell: str = "auto"  # nur mit „chronik worker --automatisch“: auto | large-v3 | large-v3-turbo
+    # Eingebauter Worker im Docker-Paket (Compose-Profil „worker“ oder „worker-cpu“): Der Server legt beim Start einen
+    # frischen Schlüssel für ihn an und schreibt ihn in diese Datei (gemeinsames Volume, nur Server und Worker).
+    eingebauter_worker: str = ""  # Inhalt von COMPOSE_PROFILES; leer = kein eingebauter Worker
+    eingebauter_worker_datei: Path = Path("/kopplung/worker-token")
     # Hugging Face Zugangsschlüssel (für das pyannote-Sprechermodell)
     hf_token: str | None = None
     # Taleward-Spiegel des Sprechermodells (ohne Hugging-Face-Konto). Genutzt nur, wenn die Prüfsumme im Code steht.
@@ -100,6 +106,12 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def worker_art(self) -> str:
+        """Eingebauter Worker: "gpu", "cpu" oder "" (keiner). Aus dem Compose-Profil („worker“ / „worker-cpu“)."""
+        profile = {p.strip() for p in self.eingebauter_worker.split(",")}
+        return "cpu" if "worker-cpu" in profile else "gpu" if "worker" in profile else ""
 
     @property
     def db_url(self) -> str:

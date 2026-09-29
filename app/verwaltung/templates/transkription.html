@@ -13,6 +13,42 @@
 {% endif %}
 
 <div class="karte">
+{% if worker_art %}
+  <h2>{{ _("Eingebauter Worker") }}</h2>
+  <p>{{ _("Läuft als eigener Container neben dem Server") }} ({{ _("nur Prozessor") if worker_art == "cpu" else _("Grafikkarte") }}). {{ _("Er verbindet sich von selbst mit dem Server; seinen Zustand zeigt die Liste „Alle Worker“ unter „Lokaler Worker“.") }}</p>
+  <p class="hilfe">{{ _("Protokoll auf dem Server:") }} <code>cd /opt/taleward && sudo docker compose logs -f {{ "worker-cpu" if worker_art == "cpu" else "worker" }}</code></p>
+  <p class="hilfe">{{ _("Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d") }}</p>
+{% elif docker %}
+  <h2>{{ _("Transkription") }}</h2>
+  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
+  <p><a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
+    <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
+  <p class="hilfe">{{ _("Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).") }}</p>
+  <details {% if lokal.laeuft %}open{% endif %}><summary>{{ _("Testmodus (Platzhaltertext, ohne KI)") }}</summary>
+  {% if lokal.laeuft %}
+    <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
+    <form method="post" action="/verwaltung/worker/lokal/stop"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Beenden") }}</button></form>
+    <p class="hilfe">{{ _("Ein laufender Auftrag wird zurückgegeben und später fortgesetzt.") }}</p>
+  {% else %}
+    {% if lokal.exitcode is not none and lokal.exitcode != 0 %}<p><span class="marke-status marke-status--fehler">{{ _("beendet mit Fehler") }}</span> {{ _("– siehe Protokoll unten.") }}</p>{% endif %}
+    <form class="formular" method="post" action="/verwaltung/worker/lokal/start">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>{{ _("Art") }}
+        <select name="modus">
+          <option value="echt" {% if not ki %}disabled{% endif %}>{{ _("Echte Transkription (Grafikkarte)") }}{% if not ki %} – {{ _("KI-Pakete fehlen") }}{% endif %}</option>
+          <option value="attrappe" {% if not ki %}selected{% endif %}>{{ _("Testmodus (Platzhaltertext)") }}</option>
+        </select></label>
+      <label class="haken"><input type="checkbox" name="autostart" value="1" {% if autostart != "aus" %}checked{% endif %}> {{ _("Beim Start des Servers automatisch mitstarten") }}</label>
+      <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Starten") }}</button></div>
+    </form>
+    {% if not ki %}<p class="hilfe">{{ _("Für die echte Transkription: „uv sync --extra ki“ und den Zugang zum Sprechermodell (HF_TOKEN in der .env, INSTALLATION.md Teil 5), dann den Server neu starten.") }}</p>{% endif %}
+  {% endif %}
+  {% if log %}
+  <details {% if lokal.exitcode %}open{% endif %}><summary>{{ _("Protokoll (letzte Zeilen)") }}</summary><pre class="log">{{ log|join("\n") }}</pre></details>
+  {% endif %}
+  </details>
+{% else %}
   <h2>{{ _("Lokaler Worker (auf diesem Server)") }}</h2>
   {% if lokal.laeuft %}
     <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
@@ -36,6 +72,7 @@
   {% if log %}
   <details {% if lokal.exitcode %}open{% endif %}><summary>{{ _("Protokoll (letzte Zeilen)") }}</summary><pre class="log">{{ log|join("\n") }}</pre></details>
   {% endif %}
+{% endif %}
 </div>
 
 <div class="karte tabelle-huelle">

@@ -2,6 +2,22 @@
 # http://<IP dieses Rechners>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
 # Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
 
+# Gemeinsame Angaben der beiden Worker-Varianten
+x-worker: &worker
+  restart: unless-stopped
+  depends_on:
+    server: { condition: service_healthy }
+  environment:
+    GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
+    WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
+  volumes:
+    - kopplung:/kopplung:ro
+    - worker-modelle:/modelle
+  shm_size: 1gb
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
 services:
   server:
     build:
@@ -11,10 +27,47 @@ services:
     environment:
       DATA_DIR: /data
       PUBLIC_URL: ${TALEWARD_ADRESSE}
+      EINGEBAUTER_WORKER: ${COMPOSE_PROFILES:-}
     volumes:
       - ./daten:/data
+      - kopplung:/kopplung   # Schlüssel für den eingebauten Worker (nur Server und Worker)
     ports:
       - "8000:8000"
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
+
+  # ---------------------------------------------------------------- eingebauter Worker (optional)
+  # Nur aktiv, wenn in der .env COMPOSE_PROFILES=worker (Grafikkarte, NVIDIA) oder =worker-cpu (nur Prozessor) steht.
+  # Er holt sich die Aufträge beim Server wie jeder andere Worker; den Schlüssel legt der Server beim Start selbst an.
+  worker:
+    profiles: ["worker"]
+    <<: *worker
+    build:
+      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
+      dockerfile: Dockerfile.worker
+      args: { TORCH_BACKEND: cu128 }
+    image: taleward-worker:${TALEWARD_VERSION:-main}
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  worker-cpu:
+    profiles: ["worker-cpu"]
+    <<: *worker
+    build:
+      context: https://github.com/Tinkerworkss/taleward-server.git#${TALEWARD_VERSION:-main}
+      dockerfile: Dockerfile.worker
+      args: { TORCH_BACKEND: cpu }
+    image: taleward-worker:${TALEWARD_VERSION:-main}-cpu
+    environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
+      WHISPER_DEVICE: cpu
+      WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
+      CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
+    cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
+    cpu_shares: 256                    # niedrigere Priorität als der Server
+
+volumes:
+  kopplung:
+  worker-modelle:

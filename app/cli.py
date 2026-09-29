@@ -306,6 +306,8 @@ def worker(
     name: str = typer.Option(None, "--name", help="Nur mit --koppeln: Name dieses Workers (Standard: Gerätename)"),
     app_modus: bool = typer.Option(False, "--app", hidden=True,
                                    help="Für die Worker-App: Ereignisse als JSON-Zeilen, Steuerung über stdin"),
+    automatisch: bool = typer.Option(False, "--automatisch", help="Modell, Stapelgröße und Geräte selbst nach dem "
+                                     "Grafikspeicher wählen (GPU_MEMORY_LIMIT_MB, WORKER_MODELL, WHISPER_DEVICE=cpu)"),
 ):
     """Worker starten: holt Aufträge vom Server und verarbeitet sie."""
     import logging
@@ -322,7 +324,7 @@ def worker(
     logging.getLogger("httpx").setLevel(logging.WARNING)  # nicht jede Anfrage protokollieren
     s = get_settings()
     server = server or s.worker_server_url
-    token = token or s.worker_token
+    token = token or s.worker_token or _token_aus_datei(s.worker_token_file)
     if koppeln:
         token = _koppeln(server, koppeln, name, unsicher)
     if not token and not selbsttest:
@@ -347,10 +349,20 @@ def worker(
         melden("pruefe")
         hf_token = s.hf_token or (_hf_vom_server(server, token) if token else None)
         quelle = ServerQuelle(server, token) if token else None  # Sprechermodell vom Server
-        motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
-                              geraet=s.whisper_device, geraet_ausrichten=s.align_device,
-                              geraet_sprecher=s.diarize_device, grenze_mb=s.gpu_memory_limit_mb,
-                              threads=s.cpu_threads)
+        if automatisch:
+            from app.arbeitsweise import grafikspeicher_mb, profil
+
+            p = profil(grafikspeicher_mb(), s.gpu_memory_limit_mb, s.worker_modell, prozessor=s.whisper_device == "cpu")
+            typer.echo(f"Arbeitsweise: {p['stufe']} – {p['modell']}, Stapel {p['batch']}, Geräte {p['geraet']}/"
+                       f"{p['ausrichten']}/{p['sprecher']}")
+            motor = WhisperXMotor(p["modell"], p["genauigkeit"], p["batch"], hf_token, quelle, geraet=p["geraet"],
+                                  geraet_ausrichten=p["ausrichten"], geraet_sprecher=p["sprecher"],
+                                  grenze_mb=p["grenzeMb"], threads=s.cpu_threads)
+        else:
+            motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
+                                  geraet=s.whisper_device, geraet_ausrichten=s.align_device,
+                                  geraet_sprecher=s.diarize_device, grenze_mb=s.gpu_memory_limit_mb,
+                                  threads=s.cpu_threads)
         try:
             info = motor.pruefen()
         except EinrichtungsFehler as e:
@@ -392,6 +404,25 @@ def worker(
         raise
     finally:
         melden("beendet")
+
+
+def _token_aus_datei(datei: Path | None, warten_s: float = 60.0) -> str | None:
+    """Eingebauter Worker: Schlüssel aus der Datei, die der Server beim Start schreibt (wartet kurz darauf)."""
+    import time
+
+    if datei is None:
+        return None
+    ende = time.monotonic() + warten_s
+    while True:
+        try:
+            wert = datei.read_text(encoding="utf-8").strip()
+            if wert:
+                return wert
+        except OSError:
+            pass
+        if time.monotonic() >= ende:
+            return None
+        time.sleep(2)
 
 
 def _env_setzen(werte: dict[str, str], datei: Path = Path(".env")) -> None:

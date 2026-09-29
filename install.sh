@@ -158,6 +158,11 @@ if [ -z "$VERSION" ]; then
     | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
   VERSION=${VERSION:-main}
 fi
+# Eigene Zusätze in der .env behalten (z. B. COMPOSE_PROFILES=worker für den eingebauten Worker)
+EXTRA=""
+if [ -f "$ZIEL/.env" ]; then
+  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=)' "$ZIEL/.env" || true)
+fi
 umask 077
 cat > "$ZIEL/.env" <<ENV
 # Einstellungen für docker compose. Nach Änderungen: cd $ZIEL && docker compose up -d
@@ -168,6 +173,7 @@ ACME_EMAIL=$MAIL
 # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
 TALEWARD_VERSION=$VERSION
 ENV
+[ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
 umask 022
 chown 1000:1000 "$ZIEL/daten"   # der Server im Container läuft als Nutzer 1000, nicht als root
 chmod 700 "$ZIEL/daten"

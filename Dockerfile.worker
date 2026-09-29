@@ -1,0 +1,55 @@
+# Taleward-Worker als Container (ohne Fenster): holt Aufträge beim Server ab, transkribiert, trennt Sprecher.
+# Derselbe Code und dasselbe KI-Paket wie in der Worker-App, nur ohne Oberfläche.
+#
+#   Grafikkarte (NVIDIA): docker build -f Dockerfile.worker -t taleward-worker .
+#   Nur Prozessor:        docker build -f Dockerfile.worker --build-arg TORCH_BACKEND=cpu -t taleward-worker:cpu .
+#
+# Gestartet wird er über das Compose-Profil „worker“ bzw. „worker-cpu“ (deploy/docker-compose.yml). Für die
+# Grafikkarte braucht der Rechner den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
+# bringt PyTorch mit, deshalb reicht ein schlankes Grundbild.
+FROM python:3.11-slim-bookworm
+
+# cu128 = CUDA 12.8 (NVIDIA-Treiber ab 525, wie in der Worker-App), cpu = ohne Grafikkarte (kleiner)
+ARG TORCH_BACKEND=cu128
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    TALEWARD_DOCKER=1 \
+    WORKER_SERVER_URL=http://server:8000 \
+    WORKER_TOKEN_FILE=/kopplung/worker-token \
+    WORKER_WORK_DIR=/arbeit \
+    HF_HOME=/modelle/huggingface \
+    TORCH_HOME=/modelle/torch \
+    NLTK_DATA=/modelle/nltk \
+    XDG_CACHE_HOME=/modelle/cache
+
+# ffmpeg: Aufnahmen dekodieren; libgomp1: Rechnen auf dem Prozessor (CTranslate2)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir uv \
+ && uv venv /opt/venv
+
+WORKDIR /app
+# Erst nur das KI-Paket (mehrere GB, ändert sich selten → bei Updates meist aus dem Zwischenspeicher).
+# Feste Versionen aus uv.lock; torchcodec kommt wie in der Worker-App von PyPI (gibt es nicht für jede CUDA-Fassung).
+COPY engine-requirements.txt ./
+RUN grep -viE '^torchcodec==' engine-requirements.txt > /tmp/basis.txt \
+ && (grep -iE '^torchcodec==' engine-requirements.txt > /tmp/extra.txt || true) \
+ && uv pip install --no-cache --no-deps --torch-backend "$TORCH_BACKEND" -r /tmp/basis.txt \
+ && if [ -s /tmp/extra.txt ]; then uv pip install --no-cache --no-deps -r /tmp/extra.txt; fi
+COPY . .
+RUN uv pip install --no-cache --no-deps . \
+ && python -c "import app.cli, torch; print('torch', torch.__version__)" \
+ && useradd --system --uid 1000 --create-home taleward \
+ && mkdir -p /arbeit /modelle /kopplung \
+ && chown taleward:taleward /arbeit /modelle /kopplung
+
+USER taleward
+VOLUME /modelle
+# --unsicher: Server und Worker sprechen im internen Docker-Netz (http://server:8000), nicht über das Internet
+CMD ["chronik", "worker", "--automatisch", "--unsicher"]

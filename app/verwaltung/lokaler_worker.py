@@ -127,9 +127,39 @@ class LokalerKnecht:
     def autostart(self, db: Session) -> None:
         from app.einstellungen import meta_lesen
 
+        if get_settings().worker_art:
+            return  # der eingebaute Worker läuft als eigener Container und nutzt denselben Eintrag
+
         modus = meta_lesen(db, META_KEY, "aus")
         if modus in ("echt", "attrappe") and not self.laeuft():
             self.starten(db, modus)
 
 
 KNECHT = LokalerKnecht()
+
+
+# ---------------------------------------------------------------- eingebauter Worker (Docker-Paket)
+def eingebauten_worker_koppeln(db: Session) -> Path | None:
+    """Docker-Paket mit eingebautem Worker: bei jedem Serverstart einen frischen Schlüssel anlegen und in die Datei
+    schreiben, die nur Server und Worker-Container sehen (Volume „kopplung“). Kein Kopplungscode nötig.
+
+    Der Worker liest die Datei beim Start; lehnt der Server einen alten Schlüssel ab, beendet er sich, Docker startet
+    ihn neu, und er liest den neuen. Gespeichert wird wie bei allen Workern nur die Prüfsumme.
+    """
+    s = get_settings()
+    if not s.worker_art:
+        return None
+    geheim = secrets.token_urlsafe(32)
+    w = KNECHT._worker_zeile(db, geheim)
+    w.capabilities = "asr,llm"
+    db.commit()
+    datei = s.eingebauter_worker_datei
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    neu = datei.with_suffix(".neu")
+    alt_umask = os.umask(0o077)
+    try:
+        neu.write_text(f"wk.{w.id}.{geheim}\n", encoding="utf-8")
+    finally:
+        os.umask(alt_umask)
+    os.replace(neu, datei)  # nie halb geschrieben lesen
+    return datei

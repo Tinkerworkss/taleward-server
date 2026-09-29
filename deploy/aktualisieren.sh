@@ -79,7 +79,10 @@ if [ -z "$SICHERUNG" ]; then
 fi
 
 version_setzen "$NEU"
-if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose up -d && gesund; then
+# Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
+# KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
+if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
+   && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""
   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
   # fehlt eine in der Fassung, bleibt die vorhandene (docker-compose.override.yml wird nie angefasst)

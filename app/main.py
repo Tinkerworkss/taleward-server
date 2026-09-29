@@ -93,6 +93,15 @@ async def lifespan(_app: FastAPI):
         beim_start(db)  # noch kein Verwalter: Einrichtungscode ins Protokoll
     from app.extern import arbeitsprozess_starten as extern_starten
 
+    if get_settings().worker_art:
+        from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
+
+        try:
+            with session_factory()() as db:
+                datei = eingebauten_worker_koppeln(db)
+            log.info("Eingebauter Worker (%s): Schlüssel liegt in %s", get_settings().worker_art, datei)
+        except OSError:
+            log.exception("Eingebauter Worker: Schlüssel ließ sich nicht schreiben")
     stops = [_wartung_starten(), arbeitsprozess_starten(session_factory()), extern_starten(session_factory())]
     if get_settings().local_worker_autostart:  # in Tests aus
         from app.verwaltung.lokaler_worker import KNECHT

@@ -64,6 +64,57 @@ eintragen. Der PC braucht keine
 Portfreigabe im Router – er fragt beim Server nach Arbeit. Ist er aus, warten die Aufnahmen, bis er wieder läuft
 (auf Wunsch meldet der Server das, Teil 14).
 
+## Worker auf demselben Rechner (Docker)
+
+Hat der Rechner, auf dem der Server läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
+als eigener Container, ohne Worker-App und ohne Kopplungscode. Das passt für einen gemieteten GPU-Server oder einen
+Vereins-PC mit Linux (auch Ubuntu unter Windows 11). Ohne Grafikkarte geht es auch mit dem Prozessor, dann aber
+langsam: grob 4–10 Stunden für 4 Stunden Aufnahme auf einem Desktop-Prozessor, auf einem kleinen VPS eher einen Tag.
+
+> Bald fragt `install.sh` danach und erledigt die Schritte 1 und 2 selbst. Bis dahin von Hand:
+
+**1. NVIDIA-Treiber** (unter Windows 11 mit Ubuntu kommt er von Windows, dort überspringen):
+
+```bash
+sudo ubuntu-drivers install && sudo reboot
+nvidia-smi          # nach dem Neustart: zeigt die Karte
+```
+
+**2. Grafikkarte für Docker freigeben** (nvidia-container-toolkit):
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+```
+
+**3. Worker einschalten:**
+
+```bash
+cd /opt/taleward
+echo "COMPOSE_PROFILES=worker" | sudo tee -a .env      # nur Prozessor: COMPOSE_PROFILES=worker-cpu
+sudo docker compose up -d --build                       # beim ersten Mal 10–20 Minuten, etwa 8 GB
+sudo docker compose logs -f worker                      # „Worker bereit, warte auf Aufträge …“
+```
+
+Der Server legt beim Start selbst einen Schlüssel für den Worker an; in der Verwaltung erscheint er unter
+Transkription als „Lokaler Worker“. Den Zugang zum Sprechermodell trägst du wie gewohnt im Assistenten ein. Updates
+bekommt der Worker zusammen mit dem Server, immer in derselben Fassung.
+
+Einstellungen in der `.env` (danach `sudo docker compose up -d`):
+
+| Einstellung | Bedeutung |
+|---|---|
+| `TALEWARD_WORKER_VRAM_MB=6000` | höchstens so viel Grafikspeicher (Standard 0 = alles) |
+| `TALEWARD_WORKER_MODELL=large-v3` | festes Modell statt `auto` (auch `large-v3-turbo`) |
+| `TALEWARD_WORKER_CPUS=4` | nur `worker-cpu`: so viele Rechenkerne (Standard 2), der Rest bleibt für den Server |
+
+Wieder ausschalten: `sudo docker compose rm -sf worker` (bzw. `worker-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
+aus der `.env` löschen.
+
 ## Alltag
 
 Alle Befehle im Ordner `/opt/taleward`:
