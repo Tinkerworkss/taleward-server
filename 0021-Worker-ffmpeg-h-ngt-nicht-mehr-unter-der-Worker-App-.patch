@@ -1,0 +1,332 @@
+From 33b5f552dd16c3311197b80f6deef4ba2f2260af Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 22:06:11 +0200
+Subject: [PATCH 21/21] =?UTF-8?q?Worker:=20ffmpeg=20h=C3=A4ngt=20nicht=20m?=
+ =?UTF-8?q?ehr=20unter=20der=20Worker-App=20(Server=200.4.13)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ffmpeg erbte den Eingabekanal des Workers. Unter der Worker-App läuft dort deren
+Steuerung, und ffmpeg wartete beim Zusammenfügen still auf Eingaben (Auftrag
+blieb bei 10 % stehen). Jetzt immer mit -nostdin, stdin=DEVNULL, ohne
+Konsolenfenster und mit Zeitgrenze (Fehler audio_timeout statt Hängen).
+Dazu Protokollzeilen für jeden Schritt der Transkription.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/audio.py                 | 39 +++++++++++++++++++++++++++---------
+ app/cli.py                   |  2 +-
+ app/extern.py                |  7 +++----
+ app/probelauf.py             |  4 ++--
+ app/transkription.py         |  6 ++++++
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_ffmpeg_sicher.py  | 37 ++++++++++++++++++++++++++++++++++
+ tests/test_modellablage.py   |  2 +-
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 12 files changed, 84 insertions(+), 23 deletions(-)
+ create mode 100644 tests/test_ffmpeg_sicher.py
+
+diff --git a/app/audio.py b/app/audio.py
+index 1dd0841..647f554 100644
+--- a/app/audio.py
++++ b/app/audio.py
+@@ -4,12 +4,15 @@ Jeder Abschnitt wird einzeln zu 16 kHz mono PCM dekodiert und angehängt (kein 
+ robust bei gemischten Formaten, und die Zeitstempel stimmen exakt. Der Startversatz jedes Abschnitts
+ wird zurückgegeben – ist ein Abschnitt defekt, nennt die Meldung seine Nummer.
+ """
++import logging
+ import shutil
+ import subprocess
++import sys
+ import wave
+ from pathlib import Path
+ 
+ SAMPLE_RATE = 16000
++log = logging.getLogger("worker")
+ 
+ 
+ class AudioFehler(Exception):
+@@ -27,13 +30,31 @@ def _ffmpeg() -> str:
+     return pfad
+ 
+ 
++def ffmpeg(args: list[str], zeit_s: float, programm: str | None = None) -> subprocess.CompletedProcess:
++    """ffmpeg sicher aufrufen: ohne Eingabekanal (sonst wartet es unter der Worker-App, deren Steuerung über stdin
++    läuft, auf Tastendrücke und hängt), ohne Konsolenfenster und mit Zeitgrenze statt stummem Hängen."""
++    extra = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
++    try:
++        return subprocess.run([programm or _ffmpeg(), "-nostdin", *args], capture_output=True,
++                              stdin=subprocess.DEVNULL, timeout=zeit_s, **extra)
++    except subprocess.TimeoutExpired as e:
++        raise AudioFehler("audio_timeout", f"ffmpeg hat nach {int(zeit_s)} s nicht geantwortet.", True) from e
++
++
++def _zeitgrenze(datei: Path) -> float:
++    """Großzügig: 10 Minuten plus 1 Minute je 20 MB (eine 4-Stunden-Aufnahme dekodiert in wenigen Minuten)."""
++    try:
++        mb = datei.stat().st_size / 2**20
++    except OSError:
++        mb = 0
++    return 600 + 3 * mb
++
++
+ def dekodieren(quelle: Path) -> bytes:
+     """Eine Datei zu 16 kHz mono, 16 bit PCM (roh)."""
+-    res = subprocess.run(
+-        [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", str(quelle),
+-         "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+-        capture_output=True,
+-    )
++    res = ffmpeg(["-hide_banner", "-loglevel", "error", "-i", str(quelle),
++                  "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
++                 _zeitgrenze(quelle))
+     if res.returncode != 0 or not res.stdout:
+         raise AudioFehler("audio_unreadable", res.stderr.decode(errors="replace").strip()[-300:] or "keine Audiodaten")
+     return res.stdout
+@@ -42,6 +63,7 @@ def dekodieren(quelle: Path) -> bytes:
+ def zusammenfuegen(abschnitte: list[Path], ziel: Path) -> list[float]:
+     """Abschnitte in Reihenfolge zu einer WAV-Datei. Gibt die Startzeit (s) jedes Abschnitts zurück."""
+     starts, pos = [], 0
++    log.info("Audio wird zusammengefügt (%d Datei(en)) …", len(abschnitte))
+     with wave.open(str(ziel), "wb") as w:
+         w.setnchannels(1)
+         w.setsampwidth(2)
+@@ -64,11 +86,8 @@ def dauer(wav: Path) -> float:
+ 
+ def hoerprobe(wav: Path, start: float, laenge: float, ziel: Path) -> bytes:
+     """Kurze Hörprobe als Ogg/Opus (wenige Sekunden, klein)."""
+-    res = subprocess.run(
+-        [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, start):.2f}",
+-         "-t", f"{laenge:.2f}", "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)],
+-        capture_output=True,
+-    )
++    res = ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, start):.2f}",
++                  "-t", f"{laenge:.2f}", "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)], 120)
+     if res.returncode != 0:
+         raise AudioFehler("sample_failed", res.stderr.decode(errors="replace").strip()[-300:])
+     return ziel.read_bytes()
+diff --git a/app/cli.py b/app/cli.py
+index dd44796..0f1b2f1 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -902,7 +902,7 @@ def extern_probe(
+     arbeit = Path(tempfile.mkdtemp(prefix="extern-probe-"))
+     try:
+         ausschnitt = arbeit / "ausschnitt.wav"
+-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-t", str(dauer * 60), "-i", str(datei), "-ac", "1",
++        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-t", str(dauer * 60), "-i", str(datei), "-ac", "1",
+                         "-ar", "16000", str(ausschnitt)], check=True)
+         klient = MistralKlient(k)
+         segmente, sekunden = [], 0.0
+diff --git a/app/extern.py b/app/extern.py
+index a849b3b..b5dd323 100644
+--- a/app/extern.py
++++ b/app/extern.py
+@@ -18,7 +18,6 @@ from __future__ import annotations
+ import logging
+ import math
+ import shutil
+-import subprocess
+ import tempfile
+ import threading
+ import time
+@@ -124,9 +123,9 @@ def _teile(wav: Path, arbeit: Path, max_sek: float) -> list[tuple[Path, float]]:
+     while start < gesamt - 0.5:
+         laenge = min(max_sek, gesamt - start)
+         ziel = arbeit / f"teil-{nr:02d}.ogg"
+-        res = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
+-                              "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
+-                              str(ziel)], capture_output=True)
++        res = audio.ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
++                            "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
++                            str(ziel)], 900)
+         if res.returncode != 0:
+             raise AudioFehler("audio_unreadable", res.stderr.decode(errors="replace")[-300:])
+         teile.append((ziel, start))
+diff --git a/app/probelauf.py b/app/probelauf.py
+index 7be6ac9..c90ad1e 100644
+--- a/app/probelauf.py
++++ b/app/probelauf.py
+@@ -176,7 +176,7 @@ def audio_vorbereiten(quelle: Path, ziel: Path, ab_min: float, dauer_min: float
+     """Schneidet/wandelt nach 16 kHz mono WAV. Gibt die Dauer in Sekunden zurück."""
+     if shutil.which("ffmpeg") is None:
+         raise ProbelaufFehler("ffmpeg fehlt. Installieren mit: sudo apt install -y ffmpeg")
+-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
++    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
+     if ab_min > 0:
+         cmd += ["-ss", str(ab_min * 60)]
+     if dauer_min:
+@@ -200,7 +200,7 @@ def hoerprobe_speichern(wav: Path, ziel: Path, dauer_s: float) -> None:
+     """60 s aus der Mitte als MP3, damit man die Tisch-Simulation anhören kann."""
+     start = max(0.0, dauer_s / 2 - 30)
+     subprocess.run(
+-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-t", "60",
++        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-t", "60",
+          "-i", str(wav), "-c:a", "libmp3lame", "-q:a", "5", str(ziel)],
+         capture_output=True,
+     )
+diff --git a/app/transkription.py b/app/transkription.py
+index f6f35d3..c55c89d 100644
+--- a/app/transkription.py
++++ b/app/transkription.py
+@@ -14,6 +14,7 @@ Erkenntnisse aus Probeläufen (Grafikkarte mit 8 GB):
+ from __future__ import annotations
+ 
+ import base64
++import logging
+ import os
+ import re
+ import time
+@@ -23,6 +24,8 @@ from typing import Callable, Protocol
+ from app import audio
+ from app.audio import AudioFehler
+ from app.worker_prozess import Abgebrochen
++
++log = logging.getLogger("worker")
+ from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen
+ 
+ # pyannote schickt sonst Nutzungsdaten (Audiodauer, Personenzahl) an pyannote.ai – hier nie
+@@ -175,12 +178,15 @@ def _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords) -> d
+     audio.zusammenfuegen(dateien, wav)
+     gesamt = audio.dauer(wav)
+     fortschritt(0.15)
++    log.info("Transkription läuft (%.0f min Audio) …", gesamt / 60)
+     daten = motor.audio_laden(wav)
+     segs = motor.transkribieren(daten, sprache, hotwords, _bereich(fortschritt, 0.15, 0.55))
+     segs = _bereinigen(segs, hotwords)
++    log.info("Wörter werden zeitlich ausgerichtet …")
+     segs = motor.ausrichten(segs, daten, sprache, _bereich(fortschritt, 0.55, 0.70))
+     n = int(sitzung.get("expectedSpeakers") or 0)
+     # Anwesende ±1: jemand kann kaum reden, oder eine Stimme wird in zwei Gruppen geteilt
++    log.info("Stimmen werden getrennt …")
+     segs, embeddings = motor.sprecher_trennen(daten, segs, max(1, n - 1) if n else None, n + 1 if n else None,
+                                               _bereich(fortschritt, 0.70, 0.95))
+     segs = halluzinationen_entfernen(segs)
+diff --git a/pyproject.toml b/pyproject.toml
+index 1d0fe72..1b5bd77 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.12"
++version = "0.4.13"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 38126ee..8f4c713 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.12"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.13"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index b6dcb9b..d3d5a6d 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.12"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.13"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_ffmpeg_sicher.py b/tests/test_ffmpeg_sicher.py
+new file mode 100644
+index 0000000..0d5d1ef
+--- /dev/null
++++ b/tests/test_ffmpeg_sicher.py
+@@ -0,0 +1,37 @@
++"""ffmpeg darf nie auf Eingaben warten: Unter der Worker-App läuft deren Steuerung über stdin."""
++import subprocess
++import sys
++
++import pytest
++
++from app import audio
++
++
++def test_ffmpeg_ohne_eingabekanal_und_mit_zeitgrenze(monkeypatch, tmp_path):
++    aufrufe = []
++
++    def run(cmd, **kw):
++        aufrufe.append((cmd, kw))
++        return subprocess.CompletedProcess(cmd, 0, b"\0\0" * 1600, b"")
++
++    monkeypatch.setattr(audio, "_ffmpeg", lambda: "ffmpeg")
++    monkeypatch.setattr(audio.subprocess, "run", run)
++    datei = tmp_path / "a.m4a"
++    datei.write_bytes(b"x" * 1000)
++    assert audio.dekodieren(datei)
++    cmd, kw = aufrufe[0]
++    assert cmd[:2] == ["ffmpeg", "-nostdin"]
++    assert kw["stdin"] is subprocess.DEVNULL and kw["timeout"] >= 600
++    if sys.platform == "win32":
++        assert kw["creationflags"] == 0x08000000
++
++
++def test_haengendes_ffmpeg_bricht_mit_meldung_ab(monkeypatch, tmp_path):
++    def run(cmd, **kw):
++        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
++
++    monkeypatch.setattr(audio, "_ffmpeg", lambda: "ffmpeg")
++    monkeypatch.setattr(audio.subprocess, "run", run)
++    with pytest.raises(audio.AudioFehler) as e:
++        audio.dekodieren(tmp_path / "fehlt.m4a")
++    assert e.value.code == "audio_timeout" and e.value.retryable
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 4fb62d5..7f41272 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.12"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.13"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 47f5572..c947e9c 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.12"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.13"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index dd2505f..e83e2c6 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.12"
++version = "0.4.13"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
