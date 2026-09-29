@@ -1,0 +1,55 @@
+name: Taleward-Box
+# Baut das Speicherkarten-Abbild für den Raspberry Pi (box/bauen.sh) und veröffentlicht es als Release „box-v…“.
+# Läuft von selbst nach „Fassung markieren“ (nur, wenn es für die neueste Fassung noch keine Box gibt) oder von Hand.
+on:
+  workflow_dispatch:
+    inputs:
+      fassung:
+        description: "Server-Fassung, z. B. v0.4.9 (leer = neueste)"
+        required: false
+  workflow_run:
+    workflows: ["Fassung markieren"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  box:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fassung bestimmen
+        id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ github.event.inputs.fassung }}"
+          [ -n "$V" ] || V=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          git checkout -q "$V"
+          if [ ! -f box/bauen.sh ]; then
+            echo "Fassung $V hat noch keine Taleward-Box."; echo "weiter=0" >> "$GITHUB_OUTPUT"
+          elif gh release view "box-$V" >/dev/null 2>&1; then
+            echo "Die Box für $V gibt es schon."; echo "weiter=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "weiter=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Abbild bauen
+        if: steps.f.outputs.weiter == '1'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q parted e2fsprogs zstd xz-utils
+          sudo bash box/bauen.sh "${{ steps.f.outputs.v }}" ausgabe
+      - name: Veröffentlichen
+        if: steps.f.outputs.weiter == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.f.outputs.v }}"
+          gh release create "box-$V" --target "$(git rev-parse HEAD)" --title "Taleward-Box $V" \
+            --notes-file ausgabe/HINWEISE.md \
+            ausgabe/Taleward-Box-*.img.xz ausgabe/Taleward-Box-*.img.xz.sha256 ausgabe/taleward-box.json
