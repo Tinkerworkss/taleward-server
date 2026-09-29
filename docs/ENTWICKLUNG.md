@@ -384,7 +384,7 @@ Damit ist die Schnittstelle 0.3.9 vollständig umgesetzt (`app/routers/spaeter.p
 
 ## Einrichtungsassistent, Sicherung, Kostenlimit, Worker koppeln (27.09.2026)
 
-Aus dem Usability-Check (`claude/usability-installation.md`, Projekt), Stufen 1 und 2.
+Aus dem Usability-Check , Stufen 1 und 2.
 
 - **Einrichtungscode statt admin/admin** (`app/einrichtung.py`):
   - Ohne Verwalter erzeugt der Server beim Start einen Code (`server_meta einrichtung.code`) und schreibt den Link
@@ -447,9 +447,9 @@ Aus dem Usability-Check (`claude/usability-installation.md`, Projekt), Stufen 1 
   - Verträge zur Auftragsverarbeitung (Hosting, Mistral), mit Links und dem Datum des Abschlusses (`av.*`).
   - Checkliste „Verwaltung übergeben“.
   - Was hinterlegt ist, nur als ja/nein.
-- **Vorschlag an die App (nicht umgesetzt):** Passwort-Link durch die SL. Siehe `claude/server-wunsch-passwort-link.md`.
+- **Vorschlag an die App (nicht umgesetzt):** Passwort-Link durch die SL.
 
-## Sprechermodell über den Server, Hostinger (27.09.2026)
+## Sprechermodell über den Server (27.09.2026)
 
 - **`app/modellablage.py`:** Der Server holt `pyannote/speaker-diarization-community-1` einmal in fester Fassung.
   - Quellen:
@@ -473,10 +473,7 @@ Aus dem Usability-Check (`claude/usability-installation.md`, Projekt), Stufen 1 
   - `HF_TOKEN` braucht er nur noch als Ausweichweg.
 - **CLI:** `chronik modell-holen`; `chronik modell-spiegel <ordner>` erstellt den Spiegel für das Taleward-Projekt und
   gibt die Zeile für `SPIEGEL` aus.
-- **Hosting:** Die Vorlagen nennen jetzt Hostinger statt Hetzner, sowohl im Datenschutzhinweis (Rechenzentrum in der
-  EU, Unterauftragsverarbeiter prüfen) als auch auf der Seite „Auftragsverarbeitung“: Das DPA ist Teil der
-  Nutzungsbedingungen.
-- **Passwort-Link durch die SL:** bewusst nicht umgesetzt (DSGVO, siehe `claude/server-wunsch-passwort-link.md`).
+- **Passwort-Link durch die SL:** bewusst nicht umgesetzt.
 
 ## Schnittstelle 0.3.10 und 0.4.0 (27.09.2026)
 
