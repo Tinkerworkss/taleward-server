@@ -1,4 +1,4 @@
-"""Stimmprofile (Schritt 6) – in der Zentrale.
+"""Stimmprofile – auf dem Server.
 
 Pflichtregeln:
 - Gespeichert wird nur der Stimmabdruck (Zahlenvektor), nie Audio. Die Aufnahme liegt nur so lange auf der Platte,

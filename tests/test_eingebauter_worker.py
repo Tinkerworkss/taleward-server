@@ -172,12 +172,12 @@ def test_verwaltung_speichert_und_startet_neu(client, dbs, admin, monkeypatch, t
     _eingebaut(monkeypatch, tmp_path)
     eingebauten_worker_koppeln(dbs)
     w = dbs.query(Worker).filter_by(local=True).one()
-    w.info = json.dumps({"gpu": "NVIDIA GeForce RTX 3060 Ti", "vramMb": 8192, "modell": "large-v3"})
+    w.info = json.dumps({"gpu": "NVIDIA GeForce RTX 4060", "vramMb": 8192, "modell": "large-v3"})
     dbs.commit()
     eingebaut.messung_merken(dbs, w.id, 3600, 600, "large-v3", 5600)
     dbs.commit()
     seite = client.get("/verwaltung/transkription").text
-    assert 'id="vram-regler"' in seite and 'max="8192"' in seite and "RTX 3060 Ti" in seite
+    assert 'id="vram-regler"' in seite and 'max="8192"' in seite and "RTX 4060" in seite
     assert "Letzter Auftrag: 60 Minuten Aufnahme in 10.0 Minuten" in seite and "5.5 GB" in seite
     r = client.post("/verwaltung/worker/eingebaut", data={"csrf": admin, "vram_mb": "4096", "modell": "auto",
                                                           "prozessor_feld": "1"}, follow_redirects=False)

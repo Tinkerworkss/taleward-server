@@ -11,7 +11,7 @@
   {% for a in anbieter %}
     <li>
       <span><strong>{{ _(a.name) }}</strong>{% if not a.noetig %} <span class="leise">· {{ _("zurzeit nicht genutzt") }}</span>{% endif %}</span>
-      <span class="hilfe">{{ _(a.hilfe) }} <a href="{{ a.link }}" rel="noopener noreferrer" target="_blank">{{ _("Zum Vertrag") }}</a></span>
+      <span class="hilfe">{{ _(a.hilfe) }}{% if a.link %} <a href="{{ a.link }}" rel="noopener noreferrer" target="_blank">{{ _("Zum Vertrag") }}</a>{% endif %}</span>
       <label>{{ _("Abgeschlossen am") }} <input type="date" name="av_{{ a.schluessel }}" value="{{ a.datum }}" max="{{ heute }}"></label>
       {% if a.noetig and not a.datum %}<span class="marke-status marke-status--warten">{{ _("offen") }}</span>{% elif a.datum %}<span class="marke-status marke-status--gut">{{ _("vermerkt") }}</span>{% endif %}
     </li>

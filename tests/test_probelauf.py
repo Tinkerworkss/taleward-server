@@ -55,7 +55,7 @@ def test_vorstellungsrunde():
     seg = [
         {"start": 10, "speaker": "Stimme 2", "text": "Also, ich bin Lena und ich spiele die Elfe Aranel Sternblatt."},
         {"start": 20, "speaker": "Stimme 3", "text": "Ich bin der Tobi, ich spiele einen Zwergen namens Grimbart."},
-        {"start": 30, "speaker": "Stimme 1", "text": "Und ich bin Benjamin und leite heute die Runde."},
+        {"start": 30, "speaker": "Stimme 1", "text": "Und ich bin Kai und leite heute die Runde."},
         {"start": 40, "speaker": "Stimme 4", "text": "Mein Charakter heißt Rondrik vom Walde."},
         {"start": 50, "speaker": "Stimme 2", "text": "Ich hol mir erstmal was zu trinken."},
         {"start": 2000, "speaker": "Stimme 2", "text": "Ich bin Lena und spiele immer noch die Elfe."},
@@ -64,7 +64,7 @@ def test_vorstellungsrunde():
     assert [x["sprecher"] for x in t] == ["Stimme 2", "Stimme 3", "Stimme 1", "Stimme 4"]
     assert t[0]["person"] == "Lena" and t[0]["figur"].startswith("Elfe Aranel")
     assert t[1]["person"] == "Tobi" and "Zwergen" in t[1]["figur"]
-    assert t[2]["person"] == "Benjamin" and t[2]["figur"] is None
+    assert t[2]["person"] == "Kai" and t[2]["figur"] is None
     assert t[3]["figur"].startswith("Rondrik")
 
 
@@ -91,7 +91,7 @@ def _attrappen(monkeypatch, fehler_bei_diarisierung=None):
         def transcribe(self, audio, **kw):
             return {"segments": [
                 {"start": 1.0, "end": 5.0, "text": " Ich bin Lena und spiele die Elfe Aranel."},
-                {"start": 6.0, "end": 9.0, "text": " Und ich bin Benjamin und leite."},
+                {"start": 6.0, "end": 9.0, "text": " Und ich bin Kai und leite."},
                 {"start": 30.0, "end": 60.0, "text": " Ihr betretet die Taverne in Gareth, es riecht nach Bier."},
             ], "language": "de"}
 

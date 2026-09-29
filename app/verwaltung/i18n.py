@@ -132,7 +132,7 @@ EN: dict[str, str] = {
     "Protokoll auf dem Server:": "Log on the server:",
     "Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d": "Settings for now in the .env file: TALEWARD_WORKER_VRAM_MB (graphics memory, 0 = all), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (processor only). Then: sudo docker compose up -d",
     "Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der PC sein, auf dem der Server läuft – oder über die Cloud.": "No worker runs on this server. Transcription happens on a PC with the worker app – that may be the PC the server runs on – or in the cloud.",
-    "Hat dieser Server eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf dem Server selbst“).": "If this server has an NVIDIA graphics card, the worker can also run here as a container (INSTALLATION-VPS.md, “Worker on the server itself”).",
+    "Hat dieser Server eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION.md, „Worker auf dem Server selbst“).": "If this server has an NVIDIA graphics card, the worker can also run here as a container (INSTALLATION.md, “Worker auf dem Server selbst”).",
     "Testmodus (Platzhaltertext, ohne KI)": "Test mode (placeholder text, without AI)",
     "Linux": "Linux",
     "Adresse des Servers": "Server address",
@@ -231,7 +231,7 @@ EN: dict[str, str] = {
     "Unter /datenschutz veröffentlichen": "Publish at /datenschutz",
     "Unter „Settings → Access Tokens“ einen Schlüssel mit Leserecht („Read“) erzeugen.": "Create a token with read access (“Read”) under “Settings → Access Tokens”.",
     "Verein": "Club",
-    "z. B. Traumjäger e. V.": "e.g. Dreamhunters Club",
+    "z. B. Drachenhort e. V.": "e.g. Dragon's Hoard Club",
     "Veröffentlichte Fassung ansehen": "View published version",
     "Vorlage neu erzeugen": "Regenerate template",
     "Warte auf den Worker … (die Seite aktualisiert sich selbst)": "Waiting for the worker … (this page refreshes itself)",
@@ -258,7 +258,7 @@ EN: dict[str, str] = {
     "Mit Einladungscode – wer einen Einladungslink hat, legt sein Konto selbst an": "With invite code – anyone with an invite link creates their own account",
     "Geschlossen – Konten legt nur die Verwaltung an": "Closed – only administrators create accounts",
     "Bei der Registrierung bestätigt jede Person den Datenschutzhinweis und das Mindestalter; beides wird mit Zeitpunkt gespeichert.": "When registering, everyone accepts the privacy notice and confirms the minimum age; both are stored with a timestamp.",
-    # Zusammenfassung (Schritt 5)
+    # Zusammenfassung
     "Cloud-API": "Cloud API",
     "Cloud-API (externer Anbieter)": "Cloud API (external provider)",
     "Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.": "Cloud API: the transcript is sent to the provider. This requires a data processing agreement and a paragraph in the privacy notice. Local model: the data stays within your own infrastructure, but smaller models produce weaker recaps.",
@@ -279,7 +279,7 @@ EN: dict[str, str] = {
     "Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.": "Leave empty: the Mistral key of the external transcription is used.",
     "Modell": "Model",
     "Modell in Ollama": "Model in Ollama",
-    "Noch kein Worker mit Ollama. Ollama auf dem Worker installieren und ihn neu starten (INSTALLATION.md Teil 11).": "No worker with Ollama yet. Install Ollama on the worker and restart it (INSTALLATION.md part 11).",
+    "Noch kein Worker mit Ollama. In der Worker-App „Recaps auch auf diesem PC schreiben“ einschalten oder den Ollama-Container starten (INSTALLATION.md).": "No worker with Ollama yet. Turn on “Also write recaps on this PC” in the worker app or start the Ollama container (INSTALLATION.md).",
     "Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle.": "Only used for the usage display. Empty = known prices of the Mistral models.",
     "Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.": "Without its own key, the Mistral key of the external transcription is used.",
     "Platzhaltertext statt echter Zusammenfassung (zum Testen).": "Placeholder text instead of a real summary (for testing).",
@@ -315,7 +315,7 @@ EN: dict[str, str] = {
     "Das Konto „admin“ ist nur für diesen Schritt gedacht. Sobald du deinen eigenen Verwalter angelegt hast, wird es gelöscht.":
         "The “admin” account is only meant for this step. It will be deleted as soon as you have created your own administrator.",
     "Anzeigename": "Display name",
-    "z. B. Benjamin": "e.g. Benjamin",
+    "z. B. Alex": "e.g. Alex",
     "Passwort wiederholen": "Repeat password",
     "Verwalter anlegen und fortfahren": "Create administrator and continue",
     "Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen.":
@@ -408,8 +408,8 @@ EN: dict[str, str] = {
     "Echte Transkription (Grafikkarte)": "Real transcription (graphics card)",
     "KI-Pakete fehlen": "AI packages missing",
     "Beim Start des Servers automatisch mitstarten": "Start automatically together with the server",
-    "Für die echte Transkription: „uv sync --extra ki“ und den Zugang zum Sprechermodell (HF_TOKEN in der .env, INSTALLATION.md Teil 5), dann den Server neu starten.":
-        "For real transcription: “uv sync --extra ki” and access to the speaker model (HF_TOKEN in the .env, INSTALLATION.md part 5), then restart the server.",
+    "Für die echte Transkription: „uv sync --extra ki“ und den Zugang zum Sprechermodell (Transkription → Sprechermodell, docs/ENTWICKLUNG.md), dann den Server neu starten.":
+        "For real transcription: “uv sync --extra ki” and access to the speaker model (Transcription → Speaker model, docs/ENTWICKLUNG.md), then restart the server.",
     "Protokoll (letzte Zeilen)": "Log (last lines)",
     "Alle Worker": "All workers",
     "Name": "Name",
@@ -606,9 +606,9 @@ EN: dict[str, str] = {
     'Zugang zu Hugging Face': 'Access to Hugging Face',
     'Bleibt auf dem Server. Damit lädt er das Sprechermodell und neue Fassungen nach Updates.': 'Stays on the server. It uses it to download the speaker model and new versions after updates.',
     'Das Modell: pyannote speaker-diarization-community-1 von pyannoteAI, Lizenz CC-BY-4.0, unverändert weitergegeben.': 'The model: pyannote speaker-diarization-community-1 by pyannoteAI, licence CC-BY-4.0, passed on unchanged.',
-    'Das ist eine Vorlage, keine Rechtsberatung. Bitte lesen, Stellen in [eckigen Klammern] ausfüllen und im Zweifel von jemandem mit rechtlichem Blick prüfen lassen. Mit eurem Hosting-Anbieter (z. B. Hostinger) und mit Mistral braucht ihr je einen Vertrag zur Auftragsverarbeitung. Bei beiden ist er Teil der Nutzungsbedingungen – mehr unter Einstellungen → Auftragsverarbeitung und Übergabe.': 'This is a template, not legal advice. Please read it, fill in the parts in [square brackets] and, if in doubt, have someone with legal knowledge check it. You need a data processing agreement with your hosting provider (e.g. Hostinger) and with Mistral. With both, it is part of the terms of service – more under Settings → Data processing and handover.',
-    'Hosting (z. B. Hostinger)': 'Hosting (e.g. Hostinger)',
-    'Bei Hostinger ist der Vertrag (Data Processing Addendum) Teil der Nutzungsbedingungen und gilt mit der Bestellung. Beim Bestellen ein Rechenzentrum in der EU wählen; die Liste der Unterauftragsverarbeiter im Vertrag ansehen. Als Datum das der Bestellung eintragen. Bei einem Server im Verein oder zu Hause entfällt das.': 'At Hostinger, the agreement (Data Processing Addendum) is part of the terms of service and applies from the order. Choose a data centre in the EU when ordering and look at the list of sub-processors in the agreement. Enter the order date. Not needed for a server at the club or at home.',
+    'Das ist eine Vorlage, keine Rechtsberatung. Bitte lesen, Stellen in [eckigen Klammern] ausfüllen und im Zweifel von jemandem mit rechtlichem Blick prüfen lassen. Mit eurem Hosting-Anbieter und mit jedem genutzten Cloud-Dienst braucht ihr je einen Vertrag zur Auftragsverarbeitung, meist als Teil der Nutzungsbedingungen – mehr unter Einstellungen → Auftragsverarbeitung und Übergabe.': 'This is a template, not legal advice. Please read it, fill in the parts in [square brackets] and, if in doubt, have someone with legal knowledge check it. You need a data processing agreement with your hosting provider and with every cloud service you use, usually as part of the terms of service – more under Settings → Data processing and handover.',
+    'Hosting-Anbieter': 'Hosting provider',
+    'Bei den meisten Anbietern ist der Vertrag zur Auftragsverarbeitung (oft „Data Processing Addendum“) Teil der Nutzungsbedingungen und gilt mit der Bestellung. Ein Rechenzentrum in der EU wählen und die Liste der Unterauftragsverarbeiter im Vertrag ansehen. Als Datum das der Bestellung eintragen. Bei einem Server im Verein oder zu Hause entfällt das.': 'With most providers, the data processing agreement (often called “Data Processing Addendum”) is part of the terms of service and applies from the order. Choose a data centre in the EU and look at the list of sub-processors in the agreement. Enter the order date. Not needed for a server at the club or at home.',
     'Adresse {adresse} für das Konto „{konto}“ auf {server} bestätigen?': 'Confirm the address {adresse} for the account “{konto}” on {server}?',
     'Anleitung': 'Instructions',
     'Anmeldung': 'Sign-in',

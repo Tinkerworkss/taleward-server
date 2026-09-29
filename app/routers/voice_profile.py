@@ -1,4 +1,4 @@
-"""Stimmprofil (Schritt 6): freiwillig, eigene ausdrückliche Einwilligung, nur der Stimmabdruck wird gespeichert.
+"""Stimmprofil: freiwillig, eigene ausdrückliche Einwilligung, nur der Stimmabdruck wird gespeichert.
 
 Ablauf: Aufnahme (20–30 s) → Auftrag für einen Worker → Abdruck zurück → Audio sofort gelöscht → „ready“.
 Löschen entfernt Profil, alles Gelernte, offene Aufträge und eine noch nicht verarbeitete Aufnahme.

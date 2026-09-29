@@ -200,13 +200,13 @@ def test_warteschlange_und_neustart(client, world, dbs, admin, tmp_path):
 
 def test_einstellungen_wirken_auf_info(client, admin):
     r = client.post("/verwaltung/einstellungen", data={
-        "csrf": admin, "server_name": "Taleward", "server_operator": "Traumjäger EV",
-        "server_contact": "vorstand@traumjaeger.example", "privacy_policy_url": "https://traumjaeger.example/ds",
-        "min_age": "16", "org_name": "Traumjäger EV"})
+        "csrf": admin, "server_name": "Taleward", "server_operator": "Drachenhort EV",
+        "server_contact": "vorstand@drachenhort.example", "privacy_policy_url": "https://drachenhort.example/ds",
+        "min_age": "16", "org_name": "Drachenhort EV"})
     assert "Gespeichert" in r.text
     info = client.get(f"{API}/info").json()
-    assert info["name"] == "Taleward" and info["operator"] == "Traumjäger EV"
-    assert info["contact"] == "vorstand@traumjaeger.example" and info["privacyPolicyUrl"].endswith("/ds")
+    assert info["name"] == "Taleward" and info["operator"] == "Drachenhort EV"
+    assert info["contact"] == "vorstand@drachenhort.example" and info["privacyPolicyUrl"].endswith("/ds")
     r = client.post("/verwaltung/einstellungen", data={"csrf": admin, "server_name": "T", "server_operator": "B",
                                                        "privacy_policy_url": "javascript:alert(1)", "min_age": "16"})
     assert r.status_code == 400

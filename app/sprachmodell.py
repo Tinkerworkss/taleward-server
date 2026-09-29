@@ -1,4 +1,4 @@
-"""Sprachmodell für Recap und Bibel-Vorschläge (Schritt 5).
+"""Sprachmodell für Recap und Bibel-Vorschläge.
 
 Läuft in der Zentrale (API) oder im Worker (Ollama auf dem lokalen Server). Kennt keine Datenbank: Die
 Zentrale baut die Eingaben (`zusammenfassung.eingabe_bauen`), dieses Modul macht daraus Aufrufe und liefert ein

@@ -13,7 +13,7 @@
   <p class="leise">{{ _("Das zeigt die App beim Hinzufügen dieses Servers und im Datenschutzhinweis.") }}</p>
   <form class="formular" method="post" action="/verwaltung/assistent/verein">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>{{ _("Name des Vereins") }} <input type="text" name="verein_name" value="{{ verein_wert }}" required maxlength="200" placeholder="{{ _('z. B. Traumjäger e. V.') }}"></label>
+    <label>{{ _("Name des Vereins") }} <input type="text" name="verein_name" value="{{ verein_wert }}" required maxlength="200" placeholder="{{ _('z. B. Drachenhort e. V.') }}"></label>
     <label>{{ _("Name des Servers (optional)") }} <input type="text" name="server_name" value="{{ name_wert }}" maxlength="100">
       <span class="hilfe">{{ _("Leer = wie der Verein.") }}</span></label>
     <label>{{ _("Kontakt für Datenschutzfragen") }} <input type="text" name="server_contact" value="{{ angaben.server_contact or '' }}" required maxlength="200" placeholder="datenschutz@verein.de"></label>
@@ -138,7 +138,7 @@
 <div class="karte">
   <h2>{{ _("Datenschutzhinweis") }}</h2>
   <p>{{ _("Die App zeigt ihn beim Registrieren; jede Person muss ihm zustimmen. Unten steht eine Vorlage, die aus euren Einstellungen befüllt ist.") }}</p>
-  <div class="meldung">{{ _("Das ist eine Vorlage, keine Rechtsberatung. Bitte lesen, Stellen in [eckigen Klammern] ausfüllen und im Zweifel von jemandem mit rechtlichem Blick prüfen lassen. Mit eurem Hosting-Anbieter (z. B. Hostinger) und mit Mistral braucht ihr je einen Vertrag zur Auftragsverarbeitung. Bei beiden ist er Teil der Nutzungsbedingungen – mehr unter Einstellungen → Auftragsverarbeitung und Übergabe.") }}</div>
+  <div class="meldung">{{ _("Das ist eine Vorlage, keine Rechtsberatung. Bitte lesen, Stellen in [eckigen Klammern] ausfüllen und im Zweifel von jemandem mit rechtlichem Blick prüfen lassen. Mit eurem Hosting-Anbieter und mit jedem genutzten Cloud-Dienst braucht ihr je einen Vertrag zur Auftragsverarbeitung, meist als Teil der Nutzungsbedingungen – mehr unter Einstellungen → Auftragsverarbeitung und Übergabe.") }}</div>
   <form class="formular formular--breit" method="post" action="/verwaltung/assistent/datenschutz">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>{{ _("Text") }} <textarea name="text" rows="24">{{ text }}</textarea>

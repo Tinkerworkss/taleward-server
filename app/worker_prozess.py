@@ -4,7 +4,7 @@
 - Verbindung nur nach außen (Long-Poll), kein offener Port nötig.
 - Lebenszeichen während der Arbeit verlängern die Lease; geht sie verloren, bricht der Worker ab.
 
-Aufruf: uv run chronik worker --attrappe      (Schritt 2: Platzhaltertext statt Transkription)
+Aufruf: uv run chronik worker --testmodus     (Platzhaltertext statt Transkription)
 """
 from __future__ import annotations
 

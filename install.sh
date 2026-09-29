@@ -201,7 +201,7 @@ if [ "$NVIDIA" -eq 1 ]; then
       exit 0
     fi
     docker_hat_nvidia || toolkit_installieren
-    docker_hat_nvidia || abbruch "Docker sieht die Grafikkarte nicht (nvidia-container-toolkit). Siehe INSTALLATION-VPS.md, „Worker auf dem Server selbst“."
+    docker_hat_nvidia || abbruch "Docker sieht die Grafikkarte nicht (nvidia-container-toolkit). Siehe INSTALLATION.md, „Worker auf dem Server selbst“."
     PROFIL=worker
     gruen "Grafikkarte für Docker bereit."
   fi
@@ -345,7 +345,7 @@ if [ "$WSL" -eq 1 ]; then
 fi
 
 # ------------------------------------------------------------------ Belegte Ports freimachen
-# Manche VPS-Vorlagen (z. B. Hostinger „Ubuntu mit Docker“) bringen schon einen Webserver wie Traefik mit.
+# Manche Server-Vorlagen mit vorinstalliertem Docker bringen schon einen Webserver wie Traefik mit.
 # Hält er Port 80/443, landet jeder Aufruf dort (404) und Caddy bekommt kein Zertifikat.
 port_frei() {
   local p=$1 zeile pid name behaelter einheit

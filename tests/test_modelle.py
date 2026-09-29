@@ -50,7 +50,7 @@ def hub(tmp_path, monkeypatch):
 def test_vorhandenes_modell_wird_gemerkt_und_nie_nachgefragt(hub):
     from app import modelle
 
-    hub["anlegen"]("aaaa1111")  # z. B. Benjamins PC: schon geladen
+    hub["anlegen"]("aaaa1111")  # z. B. ein PC, auf dem es schon liegt
     b = modelle.bereitstellen(REPO, "hf_x")
     assert (b.fassung, b.quelle) == ("aaaa1111", "neu") and hub["aufrufe"] == [(None, True)]
     assert modelle.gemerkt() == {REPO: "aaaa1111"}

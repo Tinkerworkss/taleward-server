@@ -48,7 +48,7 @@ info:
     Änderungen gegenüber 0.2.0: Fehlercodes 400/401/404/409/413 ergänzt, neuer Endpunkt
     `POST /sessions/{sessionId}/retry`, `GET /campaigns/{campaignId}` liefert 404 statt 403 für
     Nicht-Mitglieder, optionaler Header `X-Chunk-SHA256` beim Hochladen eines Teils.
-    Änderungen in 0.3.1 (entspricht App-Stand 0.2.1): Bei source=table dürfen mehrere Dateien kommen –
+    Änderungen in 0.3.1: Bei source=table dürfen mehrere Dateien kommen –
     aufeinanderfolgende Abschnitte einer Aufnahme, die der Server in Array-Reihenfolge zusammenfügt.
     Änderungen in 0.3.2: `PATCH /campaigns/{campaignId}` (nur SL) für Titel, Kurzbeschreibung und
     Welt-Hintergrund; neues Feld `worldInfo` in Campaign. Terminabstimmung (`/campaigns/{id}/date-poll`,
@@ -79,7 +79,7 @@ info:
     („Wer weiß was“); Charakterbild mit gewähltem Ausschnitt (`cropX`, `cropY`, `cropSize` bei PUT …/portrait).
     Änderungen in 0.3.7: `Proposal.hiddenFromMemberIds` – schon beim Prüfen festlegen, vor wem ein öffentlicher
     Vorschlag verborgen ist (PATCH /proposals/{id}); wird beim Veröffentlichen/Übernehmen in den Eintrag übernommen.
-    Änderungen in 0.3.8 (Wunsch des Servers): 410 bei GET …/speakers/{speakerId}/sample mit Error-Schema
+    Änderungen in 0.3.8: 410 bei GET …/speakers/{speakerId}/sample mit Error-Schema
     (`audio_deleted`); Beispielwert von ServerInfo.apiVersion aktualisiert.
     Änderungen in 0.3.9: App-Versionen – ServerInfo.minAppVersion, latestAppVersion, appDownloadUrl, releaseNotes;
     Header `X-Taleward-App` (App-Version, nur an Server ab 0.3.9); 426 `app_outdated` für zu alte Apps.
@@ -106,7 +106,7 @@ info:
 
 servers:
   - url: http://localhost:8000/api/v1
-    description: Test-PC (Windows, RTX 3060 Ti)
+    description: Lokaler Entwicklungsserver
 
 security:
   - bearerAuth: []

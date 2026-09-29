@@ -81,7 +81,7 @@ def test_modellfassungen_der_worker(client, dbs, admin):  # noqa: F811
 
     t = worker_token(dbs)
     w = dbs.get(Worker, t.split(".")[1])
-    w.info = json.dumps({"gpu": "RTX 3060 Ti", "modell": "large-v3", "modelle": {
+    w.info = json.dumps({"gpu": "RTX 4060", "modell": "large-v3", "modelle": {
         "Systran/faster-whisper-large-v3": "edaa852ec7e1", "pyannote/speaker-diarization-community-1": ""}})
     dbs.commit()
     seite = client.get("/verwaltung/transkription").text
@@ -124,7 +124,7 @@ def einladung(client, world):
 
 def test_einladungsseite_fuer_leute_ohne_app(client, admin, einladung):  # noqa: F811
     client.post("/verwaltung/einstellungen", data={
-        "csrf": admin, "server_name": "Taleward", "server_operator": "Traumjäger EV", "min_age": "16",
+        "csrf": admin, "server_name": "Taleward", "server_operator": "Drachenhort EV", "min_age": "16",
         "app_download_url": "https://drive.example/taleward-0.9.0.apk"})
     client.cookies.clear()
     r = client.get(f"/einladung/{einladung}")
@@ -162,7 +162,7 @@ def test_versionsvergleich():
 
 def test_mindestversion(client, world, admin):  # noqa: F811
     r = client.post("/verwaltung/einstellungen", data={
-        "csrf": admin, "server_name": "Taleward", "server_operator": "Traumjäger EV", "min_age": "16",
+        "csrf": admin, "server_name": "Taleward", "server_operator": "Drachenhort EV", "min_age": "16",
         "app_min_version": "0.9.0", "app_latest_version": "0.9.1", "app_release_notes": "Neue Einladungen."})
     assert "Gespeichert" in r.text
     info = client.get(f"{API}/info").json()  # /info bleibt immer erreichbar
@@ -178,7 +178,7 @@ def test_mindestversion(client, world, admin):  # noqa: F811
     # Verwaltung und Einladungsseite sind nicht betroffen
     assert client.get("/verwaltung/einstellungen").status_code == 200
     r = client.post("/verwaltung/einstellungen", data={
-        "csrf": admin, "server_name": "Taleward", "server_operator": "Traumjäger EV", "min_age": "16",
+        "csrf": admin, "server_name": "Taleward", "server_operator": "Drachenhort EV", "min_age": "16",
         "app_min_version": "neun"})
     assert r.status_code == 400
     # CORS: Browser-App darf den Header schicken, 426 trägt CORS-Kopfzeilen

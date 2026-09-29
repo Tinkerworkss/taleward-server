@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     public_url: str | None = None  # öffentliche Adresse (https://…), für Links in E-Mails und Anmeldedienste
     # Name der Organisation, die beim ersten Start angelegt wird
     organization_name: str = "Rollenspielverein"
-    # Upload und Warteschlange (Schritt 2)
+    # Upload und Warteschlange
     chunk_size_bytes: int = 5 * 1024 * 1024
     max_file_bytes: int = 2 * 1024 * 1024 * 1024  # je Datei; 5 h Opus/AAC liegen weit darunter
     audio_retention_days: int = 7  # Audio fehlgeschlagener Sessions wird spätestens danach gelöscht
@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     claim_wait_seconds: int = 25  # Long-Poll beim Abholen von Aufträgen
     worker_offline_after_seconds: int = 120
     maintenance_interval_seconds: int = 30  # 0 = keine automatische Wartung (Tests)
-    # Zusammenfassung (Recap + Bibel-Vorschläge) in der Zentrale. Schritt 2b: "attrappe" (Platzhaltertext),
-    # ab Schritt 5 ein echtes Sprachmodell. "aus" = Aufträge warten.
+    # Zusammenfassung (Recap + Bibel-Vorschläge). Normalerweise in der Verwaltung eingestellt (hat Vorrang).
+    # "attrappe" = Platzhaltertext, "aus" = Aufträge warten.
     summarizer: str = "attrappe"  # aus | attrappe | lokal (Worker mit Ollama) | api
     llm_api_url: str = "https://api.mistral.ai/v1"  # OpenAI-kompatibel
     llm_api_model: str = "mistral-large-latest"
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     external_max_seconds: float = 9000.0  # längere Aufnahmen werden geteilt (Anbieter: bis 3 h je Anfrage)
     external_cost_cents_per_minute: float = 0.3  # Schätzung für den Verbrauch (≈ 0,003 $ pro Minute)
     external_interval_seconds: float = 60.0  # 0 = kein eigener Prozess (Tests)
-    # Worker mit Grafikkarte (Schritt 3). Bei wenig Grafikspeicher: WHISPER_BATCH=4 oder large-v3-turbo
+    # Worker mit Grafikkarte. Bei wenig Grafikspeicher: WHISPER_BATCH=4 oder large-v3-turbo
     whisper_model: str = "large-v3"
     whisper_compute_type: str = "int8_float16"
     whisper_batch: int = 8

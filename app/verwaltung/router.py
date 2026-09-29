@@ -620,7 +620,7 @@ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str = 
     return _zurueck("/transkription", "extern")
 
 
-# ---------------------------------------------------------------- Zusammenfassung (Sprachmodell, Schritt 5)
+# ---------------------------------------------------------------- Zusammenfassung (Sprachmodell)
 MISTRAL_URL = "https://api.mistral.ai/v1"
 TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-Aufruf zusammen
 

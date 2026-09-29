@@ -1,6 +1,6 @@
 """Externe Transkription als Ersatz (Mistral Voxtral) – läuft in der Zentrale.
 
-Bewusst hohe Schwelle, weil das Audio dann den eigenen Betrieb verlässt (Plan „Zentrale und Worker“):
+Bewusst hohe Schwelle, weil das Audio dann den eigenen Betrieb verlässt:
 1. Der Betreiber schaltet sie in der .env frei (EXTERNAL_TRANSCRIPTION=mistral + MISTRAL_API_KEY). Standard: aus.
 2. Die SL erlaubt sie pro Kampagne (Campaign.allowExternalTranscription, Standard: aus).
 3. Der Auftrag wartet länger als EXTERNAL_AFTER_HOURS (Standard 24 h) …

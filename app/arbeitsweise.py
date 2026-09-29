@@ -8,7 +8,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-# Stufen nach verfügbarem Grafikspeicher (MB). Gemessen: large-v3 mit Stapel 8 braucht auf der RTX 3060 Ti höchstens
+# Stufen nach verfügbarem Grafikspeicher (MB). Gemessen: large-v3 mit Stapel 8 braucht auf einer 8-GB-Karte höchstens
 # ~5,5 GB. Die übrigen Werte sind vorsichtige Schätzungen.
 STUFEN = [
     # ab MB, Modell,          Stapel, Ausrichtung, Sprecher

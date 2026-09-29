@@ -390,7 +390,7 @@ def ausfuehren(
     if not ohne_sprecher and not hf_token:
         raise ProbelaufFehler(
             "Für die Sprechertrennung fehlt HF_TOKEN in der .env.\n"
-            "Anleitung: INSTALLATION.md, Teil 5. Oder vorerst ohne Sprechertrennung: --ohne-sprecher"
+            "Anleitung: docs/ENTWICKLUNG.md, „Echte Transkription“. Oder vorerst ohne Sprechertrennung: --ohne-sprecher"
         )
 
     cuda_bibliotheken_vorladen()
@@ -401,7 +401,7 @@ def ausfuehren(
     if not torch.cuda.is_available():
         raise ProbelaufFehler(
             "PyTorch sieht keine Grafikkarte. Prüfe `nvidia-smi` in Ubuntu und aktualisiere ggf. den "
-            "NVIDIA-Treiber unter Windows (siehe INSTALLATION.md, Teil 5)."
+            "NVIDIA-Treiber (unter WSL: in Windows), siehe docs/ENTWICKLUNG.md."
         )
     import os
 

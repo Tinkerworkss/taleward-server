@@ -4,107 +4,73 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-17313B" alt="License: AGPL-3.0"></a>
-  <img src="https://img.shields.io/badge/API-0.4.0-9E2A3A" alt="API 0.4.0">
+  <a href="contract/session-chronik-api.yaml"><img src="https://img.shields.io/badge/API-OpenAPI%203.1-9E2A3A" alt="API: OpenAPI 3.1"></a>
 </p>
 
 **Taleward** records your tabletop session, turns it into a recap you can read aloud, and keeps a campaign bible that
-separates what the characters know from what only the game master knows. This is the server; the app lives in
-[taleward-app](https://github.com/Tinkerworkss/taleward-app).
+separates what the characters know from what only the game master knows. This repository is the self-hosted server.
+The documentation is in German; the API contract and the code comments are, too.
 
-**Taleward** nimmt eure Pen-&-Paper-Runde auf, macht daraus einen Recap zum Vorlesen und pflegt die Bibel der Kampagne –
-getrennt nach Spielerwissen und Geheimnissen der Spielleitung. Dies ist der Server zum Selbstbetreiben, für Vereine,
-Läden und Gruppen.
+**Taleward** nimmt eure Pen-&-Paper-Runde auf, macht daraus einen Recap zum Vorlesen und pflegt die Bibel der
+Kampagne – getrennt nach Spielerwissen und den Geheimnissen der Spielleitung. Dies ist der Server zum Selbstbetreiben,
+für Vereine, Läden und private Runden.
 
-- **Wer weiß was:** Spoilerschutz setzt der Server durch, nicht die App.
-- **Datenschutz ohne Kleingedrucktes:** Jede Person stimmt selbst zu, Audio wird nach der Umwandlung in Text gelöscht,
-  der Server kann im eigenen Verein stehen.
-- **Für die ganze Runde:** Spielende zahlen nie. Kosten entstehen nur bei der Verarbeitung.
+## Was Taleward ausmacht
 
-Die Schnittstelle zur App steht in [`contract/session-chronik-api.yaml`](contract/session-chronik-api.yaml) (0.4.0);
-die Tests prüfen jede Antwort dagegen.
+- **Wer weiß was:** Der Server setzt den Spoilerschutz durch, nicht die App. Geheime Bibeleinträge, Vorschläge,
+  SL-Notizen und Transkripte erreichen Spielende nie – auch nicht als Anzahl.
+- **Einwilligung zuerst:** Aufgenommen wird nur, wenn alle Anwesenden selbst zugestimmt haben. Aufnahmen bleiben nur
+  bis zur Freigabe des Recaps (höchstens 7 Tage) oder werden gleich nach der Umwandlung in Text gelöscht.
+- **Die Daten bleiben im Verein:** Transkription und Zusammenfassung können komplett auf eigener Hardware laufen.
+  Cloud-Dienste sind optional und müssen ausdrücklich freigeschaltet werden.
+- **Für die ganze Runde:** Spielende zahlen nie. Kosten entstehen höchstens bei der Verarbeitung.
+
+## Bestandteile
+
+| Teil | Aufgabe | Repository |
+|---|---|---|
+| **Server** | Konten, Kampagnen, Warteschlange, Spoilerschutz, Verwaltung im Browser | dieses |
+| **Worker** | Transkription und Sprechertrennung auf einem PC mit Grafikkarte (oder dem Prozessor) | [taleward-worker](https://github.com/Tinkerworkss/taleward-worker) |
+| **App** | Aufnehmen, Stimmen zuordnen, Recap prüfen, Chronik und Bibel lesen (Android und Browser) | [taleward-app](https://github.com/Tinkerworkss/taleward-app) |
+
+Der Server rechnet selbst nichts Aufwendiges. Worker holen sich Aufträge beim Server ab – sie brauchen keinen offenen
+Port und können irgendwo stehen, wo eine Grafikkarte ist.
 
 ## Installation
 
-Die Schritt-für-Schritt-Anleitung mit Kontrollpunkten und Fehlerhilfe steht in **[INSTALLATION.md](INSTALLATION.md)**.
-
-Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](https://github.com/Tinkerworkss/taleward-worker)** (eigenes Repository).
-
-Mit Docker – gemieteter Server (VPS), eigener PC zu Hause/im Verein oder Windows 11 mit Ubuntu: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
+Ein Befehl auf einem Linux-Server (gemieteter Server, eigener PC, Windows 11 mit Ubuntu):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
 ```
 
-Kurzfassung für später:
+Das Skript installiert Docker, fragt nach Domain oder Heimnetz, erkennt eine Grafikkarte und zeigt am Ende den Link
+zur Ersteinrichtung. Alles Weitere in **[INSTALLATION.md](INSTALLATION.md)** – dort steht auch die **Taleward-Box**, ein
+fertiges Speicherkarten-Abbild für den Raspberry Pi.
+
+## Dokumentation
+
+| Dokument | Für wen |
+|---|---|
+| [INSTALLATION.md](INSTALLATION.md) | Server mit Docker einrichten, Worker verbinden, Updates, Sicherung, Fehlerhilfe |
+| [docs/BETRIEB.md](docs/BETRIEB.md) | Die Verwaltung im Alltag: Transkription, Zusammenfassung, Stimmprofile, Anmeldung, Benachrichtigungen |
+| [docs/ENTWICKLUNG.md](docs/ENTWICKLUNG.md) | Entwicklungsumgebung, Tests, Kommandozeile, Arbeitsweise im Repository |
+| [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md) | Aufbau, Datenfluss und die Regeln, auf denen alles ruht |
+| [contract/session-chronik-api.yaml](contract/session-chronik-api.yaml) | Die Schnittstelle zwischen App und Server (OpenAPI 3.1) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Mitmachen |
+
+## Schnellstart für Entwicklung
 
 ```bash
-cd ~/session-chronik-server
-uv run pytest                  # erwartet: 269 passed
-uv run chronik serve           # Server starten, Strg+C beendet
-uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
-uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
+git clone https://github.com/Tinkerworkss/taleward-server && cd taleward-server
+uv sync                        # Python 3.11 und Abhängigkeiten
+uv run pytest                  # alle Tests, ohne Grafikkarte
+uv run chronik serve           # Server auf http://localhost:8000
+uv run chronik worker --testmodus   # zweites Terminal: Worker mit Platzhaltertext statt KI
 ```
 
-Prüfen: `http://<PC-IP>:8000/api/v1/health` liefert `{"status":"ok"}`.
-
-## Weitere Befehle
-
-```bash
-uv run chronik list-users
-uv run chronik reset-password -u benjamin   # meldet den Benutzer überall ab
-uv run chronik serve --reload               # startet bei Codeänderungen neu
-uv run chronik worker-token create --name heim-pc   # Zugang für einen Worker (auch in der Verwaltung)
-uv run chronik admin -u benjamin            # Zugang zur Verwaltung /verwaltung
-uv run chronik stimmen-vergleich a.m4a b.m4a   # Stimmabdrücke vergleichen (Einstellen der Wiedererkennung)
-uv run chronik extern-probe folge.mp3 --dauer 10  # externe Transkription ausprobieren (Mistral-Schlüssel nötig)
-uv run chronik worker-token list | revoke --name …
-```
-
-## Update
-
-Erst eine Sicherung anlegen (Verwaltung → Übersicht → Sicherung), dann `git pull` bzw. die neue Fassung über den
-vorhandenen Ordner entpacken und `uv sync` ausführen.
-`.env` und `data/` (Datenbank) bleiben dabei erhalten. Die Datenbank wird beim Start automatisch auf den neuen Stand gebracht.
-
-## Aufbau
-
-```
-contract/     Schnittstelle (YAML) – Quelle der Wahrheit
-app/
-  main.py       App, CORS, Fehlerbehandlung, /api/v1
-  config.py     Einstellungen aus .env
-  db.py         SQLite (WAL), Zeitstempel immer UTC
-  models.py     Tabellen
-  schemas.py    Anfragen/Antworten, Feldnamen wie in der YAML
-  errors.py     Fehlerformat {code, message}, deutsche Meldungen
-  security.py   Argon2-Passwörter, JWT
-  access.py     Rollen und Spoilerschutz (zentral)
-  services.py   Umwandlung und Fachregeln
-  routers/      Endpunkte (worker.py = Worker-Protokoll /worker/v1, nicht Teil der App-YAML)
-  queue.py      Warteschlange, Leases, Wartung
-  storage.py    Ablage von Upload-Teilen und Hörproben unter data/
-  worker_prozess.py, audio.py   Worker (holt Aufträge ab, verarbeitet lokal)
-  worker_app.py Anbindung an die Worker-App (Ereignisse als JSON-Zeilen, Steuerung über stdin)
-  transkription.py  WhisperX-Motor und Auswertung (Stimmen, Hörproben, Abdrücke)
-  namenshilfe.py, begriffe/   Namen und Systembegriffe als Hilfe für die Erkennung
-  verwaltung/   Weboberfläche /verwaltung (Seiten, Stil, lokaler Worker)
-  einstellungen.py    Server-Angaben (.env, überschreibbar in der Verwaltung)
-  zuordnung.py  Stimmvorschläge (Vorstellungsrunde, Stimmprofile)
-  stimmprofile.py  Stimmprofile: anlegen, vergleichen, lernen, löschen
-  extern.py     externe Transkription als Ersatz (Mistral Voxtral)
-  zusammenfassung.py  Recap und Vorschläge (Eingabe mit Spoilerschutz, Attrappe, Arbeitsprozess der Zentrale)
-  cli.py        Kommandozeile „chronik“
-migrations/   Datenbank-Migrationen (Alembic)
-tests/        pytest inkl. automatischer Vertragsprüfung
-deploy/       Docker-Paket für einen eigenen Server (VPS), install.sh im Hauptverzeichnis
-box/          Taleward-Box: Abbild für den Raspberry Pi (bauen.sh, Einrichtung beim ersten Start)
-Dockerfile.worker  Worker als Container (Grafikkarte oder Prozessor), Compose-Profil „worker“/„worker-cpu“
-engine-requirements.txt  feste Paketversionen des KI-Pakets (für die Worker-App, aus uv.lock erzeugt)
-```
-
-`engine-requirements.txt` nach Änderungen an den Abhängigkeiten neu erzeugen:
-`uv export --format requirements-txt --extra ki --no-dev --no-hashes --no-emit-project --no-header -o engine-requirements.txt`
-
+Die Ersteinrichtung öffnet der Link, den der Server beim ersten Start ins Protokoll schreibt. Details in
+[docs/ENTWICKLUNG.md](docs/ENTWICKLUNG.md).
 
 ## Lizenz
 
@@ -121,8 +87,3 @@ machen.
 - **Spracherkennung** Whisper large-v3 (faster-whisper/CTranslate2-Fassung, nicht im Repository): MIT-Lizenz.
 - Python-Bibliotheken: siehe `pyproject.toml` und `uv.lock`, jeweils unter ihren eigenen Lizenzen.
 - Name und Logo „Taleward“ sind nicht Teil der freien Lizenz des Quelltexts.
-
-## Mitmachen
-
-Fehler und Wünsche gern als Issue. Die Entwicklungsnotizen der einzelnen Schritte stehen in
-[docs/ENTWICKLUNG.md](docs/ENTWICKLUNG.md).

@@ -134,7 +134,7 @@ def extern_konfig(db: Session) -> ExternKonfig:
                         quelle="verwaltung" if gesetzt else "env")
 
 
-# ---------------------------------------------------------------- Sprachmodell (Schritt 5)
+# ---------------------------------------------------------------- Sprachmodell
 LLM_ARTEN = ("aus", "attrappe", "lokal", "api")
 
 

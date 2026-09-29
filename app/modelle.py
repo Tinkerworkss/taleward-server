@@ -221,7 +221,7 @@ def _meldung(repo: str, e: Exception) -> str:
     text = f"{type(e).__name__}: {e}"
     if any(w in text for w in ("401", "403", "Gated", "gated", "Unauthorized")):
         return (f"Kein Zugang zu {repo} bei Hugging Face. HF_TOKEN in der .env prüfen und die Modellbedingungen "
-                "auf der Modellseite annehmen (INSTALLATION.md Teil 5.3).")
+                "auf der Modellseite annehmen (docs/BETRIEB.md, „Transkription“).")
     if any(w in text for w in ("Connection", "Timeout", "resolve", "Offline", "offline")):
         return f"Modell {repo} liegt noch nicht auf diesem Computer, und Hugging Face ist nicht erreichbar."
     return f"Modell {repo} konnte nicht geladen werden ({text[:300]})."

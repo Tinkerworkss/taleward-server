@@ -20,12 +20,12 @@ from app.verwaltung.router import _seite, _zurueck, csrf_pruefen, verwalter
 router = APIRouter(prefix="/verwaltung", include_in_schema=False)
 
 ANBIETER = {
-    "hosting": {"name": "Hosting (z. B. Hostinger)",
-                "link": "https://www.hostinger.com/legal/dpa",
-                "hilfe": "Bei Hostinger ist der Vertrag (Data Processing Addendum) Teil der Nutzungsbedingungen und gilt "
-                         "mit der Bestellung. Beim Bestellen ein Rechenzentrum in der EU wählen; die Liste der "
-                         "Unterauftragsverarbeiter im Vertrag ansehen. Als Datum das der Bestellung eintragen. Bei einem "
-                         "Server im Verein oder zu Hause entfällt das."},
+    "hosting": {"name": "Hosting-Anbieter",
+                "link": None,
+                "hilfe": "Bei den meisten Anbietern ist der Vertrag zur Auftragsverarbeitung (oft „Data Processing "
+                         "Addendum“) Teil der Nutzungsbedingungen und gilt mit der Bestellung. Ein Rechenzentrum in der "
+                         "EU wählen und die Liste der Unterauftragsverarbeiter im Vertrag ansehen. Als Datum das der "
+                         "Bestellung eintragen. Bei einem Server im Verein oder zu Hause entfällt das."},
     "mistral": {"name": "Mistral AI (Cloud-Transkription, Cloud-Sprachmodell)",
                 "link": "https://legal.mistral.ai/terms/data-processing-addendum/",
                 "hilfe": "Das Data Processing Addendum ist Teil der Nutzungsbedingungen von Mistral. Prüfen, dass im "

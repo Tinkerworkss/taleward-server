@@ -112,7 +112,7 @@ def test_verlaengern_setzt_zustimmungen_zurueck(client, world, dbs, admin):  # n
     seite = client.get("/verwaltung/einstellungen").text
     assert 'id="aufnahmen"' in seite and "zurzeit 2 Zustimmungen" in seite
 
-    form = {"csrf": admin, "server_name": "Traumjäger", "server_operator": "Verein", "min_age": "16",
+    form = {"csrf": admin, "server_name": "Drachenhort", "server_operator": "Verein", "min_age": "16",
             "audio_modus": "until_release", "audio_tage": "7"}
     r = client.post("/verwaltung/einstellungen", data=form)
     assert r.status_code == 400 and "neu zustimmen" in r.text

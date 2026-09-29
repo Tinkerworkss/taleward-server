@@ -194,7 +194,7 @@ def demo_data(password: str = typer.Option("chronik-demo", help="Passwort für b
 
 @app.command("probelauf")
 def probelauf(
-    datei: str = typer.Argument(..., help="Audiodatei (mp3, m4a, wav, …), z. B. /mnt/c/Users/Benjamin/Downloads/folge.mp3"),
+    datei: str = typer.Argument(..., help="Audiodatei (mp3, m4a, wav, …), z. B. aufnahme.mp3"),
     ab: float = typer.Option(0, "--ab", help="Start in Minuten (z. B. 10 = ab Minute 10)"),
     dauer: float = typer.Option(None, "--dauer", help="Nur so viele Minuten verarbeiten (Standard: alles)"),
     tisch: bool = typer.Option(False, "--tisch", help="Klang eines Handys mitten am Spieltisch simulieren"),
@@ -673,7 +673,7 @@ def recap_probe(
     if lokal:
         klient = OllamaKlient(get_settings().worker_llm_url, modell or k.lokal_modell, k.lokal_kontext)
         if klient.version() is None:
-            typer.echo(f"Ollama ist unter {klient.url} nicht erreichbar (INSTALLATION.md Teil 11).", err=True)
+            typer.echo(f"Ollama ist unter {klient.url} nicht erreichbar (docs/ENTWICKLUNG.md, „Einen Worker von Hand betreiben“).", err=True)
             raise typer.Exit(1)
         klient.bereitstellen(typer.echo)
         ablauf = Ablauf(klient, max_transkript_tokens=max(2000, klient.kontext - 5000),

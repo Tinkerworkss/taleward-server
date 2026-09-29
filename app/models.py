@@ -286,7 +286,7 @@ class VoiceProfile(Base):
     learn_from_sessions: Mapped[bool] = mapped_column(Boolean, default=False)
     learned_session_count: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Schritt 6 – biometrisch, verlässt die Zentrale nie. Nur Zahlen, nie Audio.
+    # Biometrisch, verlässt den Server nie. Nur Zahlen, nie Audio.
     consent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     base_embedding: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON, aus der eigenen Aufnahme
     learned_sum: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON, Summe gelernter Abdrücke

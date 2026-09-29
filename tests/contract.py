@@ -48,7 +48,7 @@ def _escape(token: str) -> str:
 class Contract:
     def __init__(self):
         raw = yaml.safe_load(SPEC_PATH.read_text(encoding="utf-8"))
-        # YAML 1.1 liest [yes, maybe, no] als Wahrheitswerte – gemeint sind die Texte (Wunsch: in der YAML quoten)
+        # YAML 1.1 liest [yes, maybe, no] als Wahrheitswerte – gemeint sind die Texte (die YAML quotet sie inzwischen, ältere Fassungen nicht)
         raw["components"]["schemas"]["VoteAnswer"]["enum"] = ["yes", "maybe", "no"]
         self.spec = copy.deepcopy(raw)
         _require_all(self.spec)

@@ -25,7 +25,7 @@
   src:url("fonts/alegreya-sans-latin-ext-700-normal.woff2") format("woff2");
   unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1E00-1E9F,U+2020,U+20A0-20AB,U+2113,U+A720-A7FF; }
 :root, [data-theme="light"] {
-  /* Thema „Pergament“ (App-Stand 27.09.2026, Abweichung vom Markenhandbuch v1 – Kontraste ≥ 4,5:1) */
+  /* Thema „Pergament“ (wie in der App; Kontraste ≥ 4,5:1) */
   --paper:#F2E8D5; --paper-raised:#FBF6EA; --paper-sunken:#E9DDC4; --line:#D9C9A8; --line-strong:#8A7654;
   --ink:#2A2118; --ink-muted:#5E4B36; --tinte:#17313b; --on-tinte:#f3f3ee; --siegel:#9e2a3a; --on-siegel:#ffffff;
   --siegel-soft:#F3DCDC; --siegel-text:#9e2a3a; --messing:#c49235; --salbei:#3d6a48; --focus-ring:var(--siegel);

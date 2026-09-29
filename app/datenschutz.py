@@ -74,7 +74,7 @@ def vorlage(db: Session, hosting: str = "") -> str:
          "Kampagnen (Kommentare, Zusammenfassungen) bleiben danach ohne Namen als „Gelöschtes Konto“ stehen.",
          "- Sicherungskopien: bis zu [14] Tage.",
          "## Wer die Daten sonst erhält"]
-    empfaenger = [f"- Betrieb des Servers: {hosting or '[Hosting-Anbieter, z. B. Hostinger International Ltd., Zypern]'}, "
+    empfaenger = [f"- Betrieb des Servers: {hosting or '[Hosting-Anbieter, Sitz]'}, "
                   "Rechenzentrum in [Land in der EU] (Auftragsverarbeitung nach Art. 28 DSGVO). [Aus dem Vertrag "
                   "übernehmen: ob der Anbieter Unterauftragsverarbeiter außerhalb der EU einsetzt und auf welcher "
                   "Grundlage, z. B. Standardvertragsklauseln.]"]

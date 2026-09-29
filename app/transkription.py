@@ -5,7 +5,7 @@ Aufbau:
 - `verarbeiter(motor)` liefert die Verarbeitungsfunktion für den Worker. Sie ist von der Bibliothek unabhängig
   und wird in den Tests mit einem Test-Motor geprüft.
 
-Erkenntnisse aus dem Probelauf (Benjamins PC, RTX 3060 Ti 8 GB):
+Erkenntnisse aus Probeläufen (Grafikkarte mit 8 GB):
 - Namenshilfe nur als `hotwords`, nie als `initial_prompt` (wurde sonst wörtlich ins Transkript übernommen).
   Zusätzlich filtert `namens_echo_entfernen` Abschnitte, die nur die Namensliste nachplappern.
 - Modelle nacheinander laden und sofort wieder freigeben (Spitze ~6,6 GB inkl. Windows).

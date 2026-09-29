@@ -78,14 +78,14 @@ def test_einrichtungscode_per_cli(client, dbs):
 def test_assistent_nur_cloud(client, dbs, admin, schluessel_ok, make_user, login):  # noqa: F811
     from app.einstellungen import extern_konfig, llm_konfig
 
-    r = client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Traumjäger e. V.",
+    r = client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Drachenhort e. V.",
                                                           "server_contact": "", "min_age": "16"})
     assert r.status_code == 400 and "Kontaktadresse" in r.text
-    r = client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Traumjäger e. V.",
-                                                          "server_contact": "ds@traumjaeger.example", "min_age": "16"},
+    r = client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Drachenhort e. V.",
+                                                          "server_contact": "ds@drachenhort.example", "min_age": "16"},
                     follow_redirects=False)
     assert r.headers["location"] == "/verwaltung/assistent/betrieb"
-    assert client.get(f"{API}/info").json()["operator"] == "Traumjäger e. V."
+    assert client.get(f"{API}/info").json()["operator"] == "Drachenhort e. V."
     assert "Nur Cloud" in client.get("/verwaltung/assistent/betrieb").text
     client.post("/verwaltung/assistent/betrieb/art", data={"csrf": admin, "art": "cloud"})
     seite = client.get("/verwaltung/assistent/betrieb").text
@@ -152,8 +152,8 @@ def test_koppeln_schreibt_env(tmp_path):
 
 
 def test_datenschutz(client, dbs, admin, schluessel_ok):  # noqa: F811
-    client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Traumjäger e. V.",
-                                                      "server_contact": "ds@traumjaeger.example", "min_age": "16"})
+    client.post("/verwaltung/assistent/verein", data={"csrf": admin, "verein_name": "Drachenhort e. V.",
+                                                      "server_contact": "ds@drachenhort.example", "min_age": "16"})
     client.post("/verwaltung/assistent/betrieb/art", data={"csrf": admin, "art": "cloud"})
     client.post("/verwaltung/assistent/betrieb", data={"csrf": admin, "mistral_key": "sk-richtig-123456789",
                                                        "limit_euro": "0"})
@@ -161,7 +161,7 @@ def test_datenschutz(client, dbs, admin, schluessel_ok):  # noqa: F811
     text = re.search(r'<textarea name="text"[^>]*>(.*?)</textarea>', seite, re.S).group(1)
     import html
     text = html.unescape(text)
-    assert "Traumjäger e. V." in text and "Mistral AI" in text and "ds@traumjaeger.example" in text
+    assert "Drachenhort e. V." in text and "Mistral AI" in text and "ds@drachenhort.example" in text
     assert client.get("/datenschutz").status_code == 404
     r = client.post("/verwaltung/assistent/datenschutz", data={"csrf": admin, "aktion": "veroeffentlichen", "text": text})
     assert r.status_code == 400 and "eckigen Klammern" in r.text

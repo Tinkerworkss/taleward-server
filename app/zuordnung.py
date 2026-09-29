@@ -1,4 +1,4 @@
-"""Stimmen automatisch zuordnen (Schritt 4) – läuft in der Zentrale, direkt nach der Transkription.
+"""Stimmen automatisch zuordnen – läuft auf dem Server, direkt nach der Transkription.
 
 Aufbau: Jede Quelle liefert Hinweise „Stimme S ist vermutlich Mitglied M, Sicherheit c“. Danach verteilt
 `verteilen` die Mitglieder so auf die Stimmen, dass jedes Mitglied höchstens einmal vorgeschlagen wird
@@ -6,7 +6,7 @@ Aufbau: Jede Quelle liefert Hinweise „Stimme S ist vermutlich Mitglied M, Sich
 
 Quellen:
 - `intro_round`: Vorstellungsrunde im Transkript („Ich bin Lilio und spiele Jemma Reed“, „ich leite heute“).
-- `voice_match`: Abgleich mit Stimmprofilen – kommt mit Schritt 6 und dockt hier an.
+- `voice_match`: Abgleich mit Stimmprofilen (app/stimmprofile.py).
 
 Grundsätze: Nur Anwesende mit Konto kommen in Frage. Nur Vorschläge ab MIN_SICHERHEIT. Die SL bestätigt immer.
 """
