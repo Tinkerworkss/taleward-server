@@ -175,7 +175,8 @@ class WorkerProzess:
                  verarbeite: Callable[[dict, list[Path], Path, Fortschritt], dict],
                  client: httpx.Client | None = None, claim_wait: int | None = None,
                  capabilities: tuple[str, ...] = ("asr",), info: dict | None = None,
-                 zusammenfassen: Callable[[dict, Fortschritt], dict] | None = None, melden: Melden = _still):
+                 zusammenfassen: Callable[[dict, Fortschritt], dict] | None = None, melden: Melden = _still,
+                 neustart_noetig: Callable[[], bool] | None = None, nachsehen_s: float = 60.0):
         self.client = client or httpx.Client(base_url=server, timeout=httpx.Timeout(90.0))
         self.client.headers["Authorization"] = f"Bearer {token}"
         self.arbeit = arbeitsordner
@@ -189,6 +190,11 @@ class WorkerProzess:
         self._stop = threading.Event()
         self.melden = melden
         self._pause = threading.Event()  # gesetzt = keine neuen Aufträge annehmen (laufender wird fertig)
+        # Eingebauter Worker: zwischen den Aufträgen nachsehen, ob sich seine Einstellungen in der Verwaltung geändert
+        # haben – dann beendet er sich, und Docker startet ihn mit den neuen Werten neu
+        self.neustart_noetig = neustart_noetig
+        self.nachsehen_s = nachsehen_s
+        self.neustart = False
 
     def pausieren(self, an: bool) -> None:
         if an and not self._pause.is_set():
@@ -324,7 +330,17 @@ class WorkerProzess:
         self.melden("warte")
         pause = 1.0
         getrennt = False
+        zuletzt = time.monotonic()
         while not self._stop.is_set():
+            if self.neustart_noetig is not None and time.monotonic() - zuletzt >= self.nachsehen_s:
+                zuletzt = time.monotonic()
+                try:
+                    if self.neustart_noetig():
+                        log.info("Einstellungen in der Verwaltung geändert – Worker startet neu")
+                        self.neustart = True
+                        break
+                except httpx.HTTPError:
+                    pass  # Server gerade nicht erreichbar – beim nächsten Mal
             if self._pause.is_set():
                 self._stop.wait(1)
                 continue

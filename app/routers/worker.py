@@ -264,6 +264,9 @@ def result(jobId: str, body: ResultIn, worker: Worker = Depends(current_worker),
     if job.type != "transcribe":
         raise errors.not_found()
     ergebnis_uebernehmen(db, job, body, engine="local", worker_id=worker.id)
+    from app import eingebaut
+
+    eingebaut.messung_merken(db, worker.id, body.audio_seconds, body.compute_seconds, body.model, body.peak_vram_mb)
     db.commit()
     return Response(status_code=204)
 
@@ -430,8 +433,14 @@ def config(worker: Worker = Depends(current_worker), db: Session = Depends(get_d
 
     stand = modellablage.vorhanden(db)
     if stand is not None:
-        return {"hfToken": None, "models": {stand.repo: stand.fassung}, "serverVersion": server_fassung()}
-    return {"hfToken": meta_lesen(db, "hf.token") or None, "models": {}, "serverVersion": server_fassung()}
+        antwort = {"hfToken": None, "models": {stand.repo: stand.fassung}, "serverVersion": server_fassung()}
+    else:
+        antwort = {"hfToken": meta_lesen(db, "hf.token") or None, "models": {}, "serverVersion": server_fassung()}
+    if worker.local:  # eingebauter Worker: Einstellungen aus der Verwaltung
+        from app import eingebaut
+
+        antwort["eingebaut"] = eingebaut.fuer_worker(db)
+    return antwort
 
 
 @router.get("/app-update")

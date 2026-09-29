@@ -114,7 +114,17 @@ Der Server legt beim Start selbst einen Schlüssel für den Worker an; in der Ve
 Transkription als „Lokaler Worker“. Den Zugang zum Sprechermodell trägst du wie gewohnt im Assistenten ein. Updates
 bekommt der Worker zusammen mit dem Server, immer in derselben Fassung.
 
-Einstellungen in der `.env` (danach `sudo docker compose up -d`):
+**Einstellungen** in der Verwaltung unter **Transkription → Eingebauter Worker**:
+
+- Schieberegler „Grafikspeicher für Taleward“
+- Sprachmodell
+- „Nur den Prozessor verwenden“
+- Pausieren und Neu starten
+
+Dazu zeigt die Karte den Zustand und die Messwerte des letzten Auftrags. Neue Werte übernimmt der Worker, sobald er
+keinen Auftrag bearbeitet; er startet dafür kurz neu.
+
+Was dort nicht gesetzt ist, kommt aus der `.env` (danach `sudo docker compose up -d`):
 
 | Einstellung | Bedeutung |
 |---|---|

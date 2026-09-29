@@ -14,10 +14,64 @@
 
 <div class="karte">
 {% if worker_art %}
+  {% set e = eingebaut %}{% set k = e.knecht %}
   <h2>{{ _("Eingebauter Worker") }}</h2>
-  <p>{{ _("Läuft als eigener Container neben dem Server") }} ({{ _("nur Prozessor") if worker_art == "cpu" else _("Grafikkarte") }}). {{ _("Er verbindet sich von selbst mit dem Server; seinen Zustand zeigt die Liste „Alle Worker“ unter „Lokaler Worker“.") }}</p>
-  <p class="hilfe">{{ _("Protokoll auf dem Server:") }} <code>cd /opt/taleward && sudo docker compose logs -f {{ "worker-cpu" if worker_art == "cpu" else "worker" }}</code></p>
-  <p class="hilfe">{{ _("Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d") }}</p>
+  <p>{{ _("Läuft als eigener Container neben dem Server") }} ({{ _("nur Prozessor") if worker_art == "cpu" else _("Grafikkarte") }}).
+    {% if k and k.online %}
+      {% if k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
+      {% elif k.job %}<span class="marke-status marke-status--gut">{{ _("arbeitet") }}</span>{% if k.sitzung %} – {{ k.kampagne.title if k.kampagne else "" }}, {{ _("Session {n}", n=k.sitzung.number) }}{% endif %}
+      {% else %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>{% endif %}
+    {% else %}<span class="marke-status marke-status--fehler">{{ _("nicht verbunden") }}</span>{% endif %}
+  </p>
+  {% if k and k.info %}
+  <p class="leise">{{ k.info.gpu or _("Prozessor") }}{% if e.vram_karte %} · {{ (e.vram_karte / 1024) | round(1) }} GB{% endif %}{% if k.info.modell %} · {{ _("Modell") }} {{ k.info.modell }}{% endif %}{% if k.info.geraete %} · {{ k.info.geraete }}{% endif %}</p>
+  {% endif %}
+  {% if e.messung %}
+  <p class="leise">{{ _("Letzter Auftrag: {a} Minuten Aufnahme in {r} Minuten", a=(e.messung.audioSekunden / 60) | round(0) | int, r=(e.messung.rechenSekunden / 60) | round(1)) }}{% if e.messung.peakVramMb %}, {{ _("höchstens {gb} GB Grafikspeicher", gb=(e.messung.peakVramMb / 1024) | round(1)) }}{% endif %}{% if e.messung.modell %} ({{ e.messung.modell }}){% endif %}</p>
+  {% endif %}
+  <form class="formular" method="post" action="/verwaltung/worker/eingebaut">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if worker_art == "gpu" %}
+    <label>{{ _("Grafikspeicher für Taleward") }}
+      <input id="vram-regler" type="range" name="vram_mb" min="0" max="{{ e.regler_max }}" step="512"
+             value="{{ e.werte.vramMb if e.werte.vramMb is not none else 0 }}"
+             data-alles="{{ _('Ganze Grafikkarte') }}"
+             data-stufen='[[10000, "large-v3, {{ _("sehr schnell") }}"], [6000, "large-v3"], [4500, "large-v3, {{ _("kleinerer Stapel") }}"], [3500, "large-v3-turbo"], [2000, "large-v3-turbo, {{ _("teils Prozessor") }}"], [0, "{{ _("Prozessor") }}"]]'></label>
+    <p class="hilfe" id="vram-anzeige" aria-live="polite">{{ _("0 = ganze Grafikkarte. Der Rest bleibt z. B. fürs Spielen frei; das Modell passt sich an.") }}</p>
+    <input type="hidden" name="prozessor_feld" value="1">
+    <label class="haken"><input type="checkbox" name="prozessor" value="1" {% if e.werte.prozessor %}checked{% endif %}> {{ _("Nur den Prozessor verwenden") }}</label>
+    {% else %}
+    <label>{{ _("Rechenkerne für die Transkription (0 = automatisch)") }}
+      <input type="number" name="threads" min="0" max="256" value="{{ e.werte.threads if e.werte.threads is not none else 0 }}"></label>
+    <p class="hilfe">{{ _("Wie viele Kerne der Container überhaupt bekommt, steht in der .env (TALEWARD_WORKER_CPUS).") }}</p>
+    {% endif %}
+    <label>{{ _("Modell für die Transkription") }}
+      <select name="modell">
+        {% for m, text in [("auto", _("Automatisch (nach Grafikspeicher)")), ("large-v3", "large-v3 – " ~ _("genauer")), ("large-v3-turbo", "large-v3-turbo – " ~ _("schneller"))] %}
+        <option value="{{ m }}" {% if (e.werte.modell or "auto") == m %}selected{% endif %}>{{ text }}</option>
+        {% endfor %}
+      </select></label>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+    <p class="hilfe">{{ _("Neue Einstellungen gelten, sobald der Worker keinen Auftrag mehr bearbeitet – er startet dafür kurz neu.") }}</p>
+  </form>
+  <div class="aktionen">
+  {% if k %}
+    {% if k.w.paused %}
+    <form method="post" action="/verwaltung/worker/{{ k.w.id }}/fortsetzen"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Fortsetzen") }}</button></form>
+    {% else %}
+    <form method="post" action="/verwaltung/worker/{{ k.w.id }}/pause"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Pausieren") }}</button></form>
+    {% endif %}
+  {% endif %}
+    <form method="post" action="/verwaltung/worker/eingebaut/neustart"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="tw-btn tw-btn--secondary" type="submit">{{ _("Neu starten") }}</button></form>
+  </div>
+  <details><summary>{{ _("Protokoll und Hilfe") }}</summary>
+    <p class="hilfe">{{ _("Protokoll auf dem Server:") }} <code>cd /opt/taleward && sudo docker compose logs -f {{ "worker-cpu" if worker_art == "cpu" else "worker" }}</code></p>
+    <p class="hilfe">{{ _("Die Werte hier gehen denen aus der .env vor. Nicht gesetzt: es gilt die .env (TALEWARD_WORKER_VRAM_MB, TALEWARD_WORKER_MODELL).") }}</p>
+  </details>
+  <script src="/verwaltung/static/eingebaut.js" defer></script>
 {% elif docker %}
   <h2>{{ _("Transkription") }}</h2>
   <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der PC sein, auf dem der Server läuft – oder über die Cloud.") }}</p>

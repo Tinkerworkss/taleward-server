@@ -78,6 +78,8 @@ MELDUNGEN = {
     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
     "verwalter": "Verwalter-Recht geändert.",
     "gespeichert": "Gespeichert.",
+    "worker_einstellungen": "Gespeichert. Der Worker startet nach dem laufenden Auftrag mit den neuen Einstellungen neu.",
+    "worker_neustart": "Der Worker startet neu, sobald er keinen Auftrag bearbeitet (spätestens in einer Minute).",
     "pausiert": "Worker pausiert – er nimmt keine neuen Aufträge an.",
     "fortgesetzt": "Worker nimmt wieder Aufträge an.",
     "gesperrt": "Zugangsschlüssel gesperrt.",
@@ -368,6 +370,20 @@ def verwalter_umschalten(request: Request, user_id: str, user: User = Depends(ve
 
 
 # ---------------------------------------------------------------- Transkription (Worker + extern)
+def _eingebaut_anzeige(db: Session) -> dict | None:
+    """Karte „Eingebauter Worker“: Einstellungen, Zustand, letzte Messung."""
+    from app import eingebaut
+
+    if not get_settings().worker_art:
+        return None
+    knecht = next((k for k in _knechte(db) if k["w"].local), None)
+    info = knecht["info"] if knecht else {}
+    vram_karte = info.get("vramMb") if isinstance(info.get("vramMb"), int) else None
+    return {"werte": eingebaut.lesen(db), "knecht": knecht, "vram_karte": vram_karte,
+            "regler_max": vram_karte or 24576,
+            "messung": eingebaut.messung(db, knecht["w"].id) if knecht else None}
+
+
 def _docker() -> bool:
     from app.aktualisierung import docker
 
@@ -418,7 +434,7 @@ def transkription(request: Request, user: User = Depends(verwalter), db: Session
                   hf_ende=(_meta(db, "hf.token") or "")[-4:] or None, modell=_modell_anzeige(db),
                   neuer_name=neuer_name, fehler=fehler, lokal=KNECHT.zustand(), log=KNECHT.log_ende(),
                   autostart=meta_lesen(db, META_KEY, "aus"), ki=ki_verfuegbar(), ext=_extern_anzeige(db),
-                  docker=_docker(), worker_art=get_settings().worker_art)
+                  docker=_docker(), worker_art=get_settings().worker_art, eingebaut=_eingebaut_anzeige(db))
 
 
 def _modell_anzeige(db: Session) -> dict:
@@ -499,6 +515,30 @@ def _knecht(db: Session, worker_id: str) -> Worker:
     if w is None:
         raise errors.not_found()
     return w
+
+
+@router.post("/worker/eingebaut", dependencies=[Depends(csrf_pruefen)])
+def eingebaut_speichern(user: User = Depends(verwalter), db: Session = Depends(get_db),
+                        vram_mb: str = Form(None), modell: str = Form(None), prozessor: str = Form(None),
+                        prozessor_feld: str = Form(None), threads: str = Form(None)):
+    from app import eingebaut
+
+    if not get_settings().worker_art:
+        raise errors.not_found()
+    eingebaut.speichern(db, vram_mb, modell, (prozessor == "1") if prozessor_feld else None, threads)
+    db.commit()
+    return _zurueck("/transkription", "worker_einstellungen")
+
+
+@router.post("/worker/eingebaut/neustart", dependencies=[Depends(csrf_pruefen)])
+def eingebaut_neustart(user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    from app import eingebaut
+
+    if not get_settings().worker_art:
+        raise errors.not_found()
+    eingebaut.neu_starten(db)
+    db.commit()
+    return _zurueck("/transkription", "worker_neustart")
 
 
 @router.post("/worker/{worker_id}/pause", dependencies=[Depends(csrf_pruefen)])

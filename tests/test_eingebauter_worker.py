@@ -134,3 +134,71 @@ def test_verwaltung_im_docker_betrieb(client, admin, monkeypatch, tmp_path):  # 
 def test_verwaltung_ohne_docker_wie_bisher(client, admin):  # noqa: F811
     seite = client.get("/verwaltung/transkription").text
     assert "Lokaler Worker (auf diesem Server)" in seite and "Auf diesem Server läuft kein Worker" not in seite
+
+
+# ---------------------------------------------------------------- Einstellungen in der Verwaltung
+def test_einstellungen_kommen_ueber_die_config(client, dbs, monkeypatch, tmp_path):
+    from app import eingebaut
+    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
+    from tests.test_step2a import worker_token
+
+    datei = _eingebaut(monkeypatch, tmp_path)
+    eingebauten_worker_koppeln(dbs)
+    h = {"Authorization": f"Bearer {datei.read_text().strip()}"}
+    assert client.get("/worker/v1/config", headers=h).json()["eingebaut"] == {}  # nichts gesetzt: .env gilt
+    eingebaut.speichern(dbs, "6144", "large-v3-turbo", True, None)
+    dbs.commit()
+    e = client.get("/worker/v1/config", headers=h).json()["eingebaut"]
+    assert (e["vramMb"], e["modell"], e["prozessor"]) == (6144, "large-v3-turbo", True) and e["neustart"]
+    assert "threads" not in e
+    eingebaut.speichern(dbs, "-5", "unsinn", None, "999999")  # Grenzen, Unbekanntes bleibt
+    dbs.commit()
+    e2 = client.get("/worker/v1/config", headers=h).json()["eingebaut"]
+    assert (e2["vramMb"], e2["modell"], e2["threads"]) == (0, "large-v3-turbo", 256) and e2["neustart"] != e["neustart"]
+    # Andere Worker bekommen die Einstellungen des eingebauten nicht
+    fremd = {"Authorization": f"Bearer {worker_token(dbs)}"}
+    assert "eingebaut" not in client.get("/worker/v1/config", headers=fremd).json()
+
+
+def test_verwaltung_speichert_und_startet_neu(client, dbs, admin, monkeypatch, tmp_path):  # noqa: F811
+    import json
+
+    from app import config, eingebaut
+    from app.models import Worker
+    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
+
+    # ohne eingebauten Worker gibt es die Aktionen nicht
+    assert client.post("/verwaltung/worker/eingebaut", data={"csrf": admin}, follow_redirects=False).status_code == 404
+    _eingebaut(monkeypatch, tmp_path)
+    eingebauten_worker_koppeln(dbs)
+    w = dbs.query(Worker).filter_by(local=True).one()
+    w.info = json.dumps({"gpu": "NVIDIA GeForce RTX 3060 Ti", "vramMb": 8192, "modell": "large-v3"})
+    dbs.commit()
+    eingebaut.messung_merken(dbs, w.id, 3600, 600, "large-v3", 5600)
+    dbs.commit()
+    seite = client.get("/verwaltung/transkription").text
+    assert 'id="vram-regler"' in seite and 'max="8192"' in seite and "RTX 3060 Ti" in seite
+    assert "Letzter Auftrag: 60 Minuten Aufnahme in 10.0 Minuten" in seite and "5.5 GB" in seite
+    r = client.post("/verwaltung/worker/eingebaut", data={"csrf": admin, "vram_mb": "4096", "modell": "auto",
+                                                          "prozessor_feld": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and "worker_einstellungen" in r.headers["location"]
+    werte = eingebaut.lesen(dbs)
+    assert (werte["vramMb"], werte["modell"], werte["prozessor"]) == (4096, "auto", False) and werte["neustart"]
+    alt = werte["neustart"]
+    r = client.post("/verwaltung/worker/eingebaut/neustart", data={"csrf": admin}, follow_redirects=False)
+    assert r.status_code == 303 and eingebaut.lesen(dbs)["neustart"] != alt
+    config.get_settings.cache_clear()
+
+
+def test_worker_beendet_sich_bei_geaenderten_einstellungen(tmp_path):
+    import httpx
+
+    from app.worker_prozess import WorkerProzess
+
+    aufrufe = []
+    client = httpx.Client(base_url="http://server", transport=httpx.MockTransport(
+        lambda r: aufrufe.append(r.url.path) or httpx.Response(204)))
+    k = WorkerProzess("http://server", "wk.1.x", tmp_path / "arbeit", lambda *a: {}, client=client,
+                      neustart_noetig=lambda: True, nachsehen_s=0)
+    k.laufen()  # kehrt zurück, statt auf Aufträge zu warten – Docker startet ihn neu
+    assert k.neustart and aufrufe == []

@@ -331,6 +331,7 @@ def worker(
         typer.echo("Kein Worker-Token. Anlegen mit: uv run chronik worker-token create --name heim-pc", err=True)
         raise typer.Exit(1)
     pruefe_adresse(server, unsicher)
+    neustart_noetig = None
     if attrappe:
         verarbeite, info = verarbeite_attrappe, {"modus": "attrappe"}
     else:
@@ -352,12 +353,21 @@ def worker(
         if automatisch:
             from app.arbeitsweise import grafikspeicher_mb, profil
 
-            p = profil(grafikspeicher_mb(), s.gpu_memory_limit_mb, s.worker_modell, prozessor=s.whisper_device == "cpu")
+            # Eingebauter Worker: Werte aus der Verwaltung gehen vor denen aus der Umgebung (.env/Compose)
+            eingebaut = (_config_vom_server(server, token).get("eingebaut") or {}) if token else {}
+            p = profil(grafikspeicher_mb(), eingebaut.get("vramMb", s.gpu_memory_limit_mb),
+                       eingebaut.get("modell", s.worker_modell),
+                       prozessor=eingebaut.get("prozessor", s.whisper_device == "cpu"))
+            threads = eingebaut.get("threads", s.cpu_threads)
             typer.echo(f"Arbeitsweise: {p['stufe']} – {p['modell']}, Stapel {p['batch']}, Geräte {p['geraet']}/"
                        f"{p['ausrichten']}/{p['sprecher']}")
             motor = WhisperXMotor(p["modell"], p["genauigkeit"], p["batch"], hf_token, quelle, geraet=p["geraet"],
                                   geraet_ausrichten=p["ausrichten"], geraet_sprecher=p["sprecher"],
-                                  grenze_mb=p["grenzeMb"], threads=s.cpu_threads)
+                                  grenze_mb=p["grenzeMb"], threads=threads)
+
+            def neustart_noetig() -> bool:
+                aktuell = _config_vom_server(server, token, fehler_werfen=True).get("eingebaut") or {}
+                return aktuell != eingebaut
         else:
             motor = WhisperXMotor(s.whisper_model, s.whisper_compute_type, s.whisper_batch, hf_token, quelle,
                                   geraet=s.whisper_device, geraet_ausrichten=s.align_device,
@@ -384,7 +394,8 @@ def worker(
         typer.echo(f"Sprachmodell: {llm} – übernimmt auch Zusammenfassungen, wenn die Verwaltung „Lokales Modell“ "
                    "eingestellt hat.")
     knecht = WorkerProzess(server, token, s.worker_work_dir.expanduser().resolve(), verarbeite, info=info,
-                          zusammenfassen=zusammenfassen, melden=melden)
+                          zusammenfassen=zusammenfassen, melden=melden,
+                          neustart_noetig=neustart_noetig if automatisch and token else None)
     melden("bereit", gpu=info.get("gpu"), modell=info.get("modell"), vramMb=info.get("vramMb"), llm=llm,
            testmodus=attrappe, geraete=info.get("geraete"), grenzeMb=info.get("grenzeMb"))
     if anbindung:
@@ -462,6 +473,21 @@ def _koppeln(server: str, code: str, name: str | None, unsicher: bool) -> str:
     typer.echo(f"Gekoppelt als „{d['name']}“. Schlüssel und Adresse stehen jetzt in der .env – beim nächsten Mal "
                "reicht „uv run chronik worker“.")
     return d["token"]
+
+
+def _config_vom_server(server: str, token: str, fehler_werfen: bool = False) -> dict:
+    """Einstellungen, die der Server für diesen Worker verwaltet (/worker/v1/config)."""
+    import httpx
+
+    try:
+        r = httpx.get(f"{server.rstrip('/')}/worker/v1/config", headers={"Authorization": f"Bearer {token}"},
+                      timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPError, ValueError):
+        if fehler_werfen:
+            raise httpx.HTTPError("Server nicht erreichbar")
+        return {}
 
 
 def _hf_vom_server(server: str, token: str) -> str | None:

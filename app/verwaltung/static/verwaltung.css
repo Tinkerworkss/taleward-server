@@ -213,3 +213,5 @@ article.text h2 { margin-top:var(--space-6); }
 .koppeldaten dd { margin:0; overflow-wrap:anywhere; }
 .koppelcode { font:700 24px/30px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing:.12em; }
 .notizen { white-space:pre-line; }
+.aktionen form { display:inline; margin:0; }
+input[type="range"] { width:100%; accent-color:var(--tinte); }
