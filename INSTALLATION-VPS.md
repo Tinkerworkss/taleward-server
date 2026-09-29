@@ -32,12 +32,12 @@ Dort legst du das Konto für die Verwaltung an. Danach verbindest du in der App 
 
 ## Zu Hause, im Verein oder unter Windows 11
 
-Derselbe Befehl funktioniert auch auf einem eigenen Rechner mit Ubuntu oder Debian, etwa einem Mini-PC im
+Derselbe Befehl funktioniert auch auf einem eigenen PC mit Ubuntu oder Debian, etwa einem Mini-PC im
 Vereinsheim, und unter **Windows 11 mit Ubuntu** (WSL). Das Skript fragt, wie Handys den Server erreichen:
 
 | Auswahl | Wann | Was nötig ist |
 |---|---|---|
-| **1 – Internet mit Domain und HTTPS** | VPS, oder zu Hause mit fester Erreichbarkeit | Domain bzw. DynDNS, **Portfreigabe TCP 80 und 443** im Router auf diesen Rechner. Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht. |
+| **1 – Internet mit Domain und HTTPS** | VPS, oder zu Hause mit fester Erreichbarkeit | Domain bzw. DynDNS, **Portfreigabe TCP 80 und 443** im Router auf diesen Server. Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht. |
 | **2 – Nur im Heimnetz** | Spielen immer am selben Ort (Vereinsheim, Wohnzimmer) | Nichts weiter. Adresse `http://<IP>:8000`. Anmelden mit Google & Co. und die Web-App gehen ohne HTTPS nicht. |
 
 **Unter Windows 11** erledigt das Skript zusätzlich:
@@ -53,7 +53,7 @@ Voraussetzung ist Windows 11 ab Version 22H2. Unter Windows 10 lässt sich Ubunt
 Der Worker (Grafikkarte) kann auf demselben PC laufen: Worker-App installieren und mit der Adresse des Servers
 koppeln.
 
-Tipp: Im Router für diesen Rechner immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
+Tipp: Im Router für diesen Server immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
 bearbeiten), sonst ändert sich die Adresse für die App.
 
 ## 2. Deinen PC als Worker verbinden
@@ -64,14 +64,24 @@ eintragen. Der PC braucht keine
 Portfreigabe im Router – er fragt beim Server nach Arbeit. Ist er aus, warten die Aufnahmen, bis er wieder läuft
 (auf Wunsch meldet der Server das, Teil 14).
 
-## Worker auf demselben Rechner (Docker)
+## Worker auf dem Server selbst (Docker)
 
-Hat der Rechner, auf dem der Server läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
+Hat der PC oder Server, auf dem Taleward läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
 als eigener Container, ohne Worker-App und ohne Kopplungscode. Das passt für einen gemieteten GPU-Server oder einen
 Vereins-PC mit Linux (auch Ubuntu unter Windows 11). Ohne Grafikkarte geht es auch mit dem Prozessor, dann aber
 langsam: grob 4–10 Stunden für 4 Stunden Aufnahme auf einem Desktop-Prozessor, auf einem kleinen VPS eher einen Tag.
 
-> Bald fragt `install.sh` danach und erledigt die Schritte 1 und 2 selbst. Bis dahin von Hand:
+**Am einfachsten mit `install.sh`:**
+
+- Das Skript erkennt eine NVIDIA-Karte und fragt: „Worker mit der Grafikkarte hier mitlaufen lassen?“.
+- Fehlt der Treiber, installiert es ihn. Danach muss der Server einmal neu starten, und du führst den Befehl noch
+  einmal aus.
+- Das nvidia-container-toolkit richtet es ebenfalls selbst ein.
+- Ohne passende Grafikkarte, aber mit mindestens 8 GB Arbeitsspeicher und 4 Kernen, bietet es die Prozessor-Variante
+  an.
+- Später umentscheiden: das Skript einfach noch einmal ausführen.
+
+Von Hand geht es so:
 
 **1. NVIDIA-Treiber** (unter Windows 11 mit Ubuntu kommt er von Windows, dort überspringen):
 

@@ -1,5 +1,5 @@
 # Taleward nur im Heimnetz (z. B. im Vereinsheim): ohne Domain und ohne HTTPS, erreichbar unter
-# http://<IP dieses Rechners>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
+# http://<IP dieses Servers>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
 # Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
 
 # Gemeinsame Angaben der beiden Worker-Varianten

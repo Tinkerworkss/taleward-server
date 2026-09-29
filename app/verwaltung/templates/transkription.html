@@ -20,10 +20,10 @@
   <p class="hilfe">{{ _("Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d") }}</p>
 {% elif docker %}
   <h2>{{ _("Transkription") }}</h2>
-  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
+  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der PC sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
   <p><a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
     <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
-  <p class="hilfe">{{ _("Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).") }}</p>
+  <p class="hilfe">{{ _("Hat dieser Server eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf dem Server selbst“).") }}</p>
   <details {% if lokal.laeuft %}open{% endif %}><summary>{{ _("Testmodus (Platzhaltertext, ohne KI)") }}</summary>
   {% if lokal.laeuft %}
     <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>

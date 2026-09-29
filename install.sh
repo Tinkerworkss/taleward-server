@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1091,SC1111,SC2016  # os-release zur Laufzeit; deutsche Anführungszeichen und PowerShell-$ sind Absicht
-# Taleward-Server einrichten – auf einem gemieteten Server (VPS), einem Rechner zu Hause/im Verein
+# Taleward-Server einrichten – auf einem gemieteten Server (VPS), einem PC zu Hause/im Verein
 # oder unter Windows 11 mit Ubuntu (WSL).
 #
 #   curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
@@ -129,15 +129,101 @@ if [ "$MODUS" = "domain" ]; then
   fi
   if [ -n "$LAN_IP" ] && [[ "$LAN_IP" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
     echo
-    echo "Dieser Rechner steht hinter einem Router. Dort eine Portfreigabe einrichten:"
+    echo "Dieser Server steht hinter einem Router. Dort eine Portfreigabe einrichten:"
     echo "  TCP 80 und 443  →  $LAN_IP   (FRITZ!Box: Internet → Freigaben → Portfreigaben)"
     echo "Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht – dann Auswahl 2 (Heimnetz) nehmen."
   fi
 else
-  [ -n "$LAN_IP" ] || abbruch "die IP-Adresse dieses Rechners im Heimnetz ist unbekannt."
+  [ -n "$LAN_IP" ] || abbruch "die IP-Adresse dieses Servers im Heimnetz ist unbekannt."
   ADRESSE="http://$LAN_IP:8000"
   echo "Der Server wird erreichbar unter:  $ADRESSE"
-  echo "Tipp: Im Router für diesen Rechner immer dieselbe IP vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät bearbeiten)."
+  echo "Tipp: Im Router für diesen Server immer dieselbe IP vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät bearbeiten)."
+fi
+
+# ------------------------------------------------------------------ Worker auf diesem Server?
+# Grafikkarte erkennen und auf Wunsch den eingebauten Worker einrichten (Compose-Profil „worker“ bzw. „worker-cpu“).
+# NVIDIA: Treiber und nvidia-container-toolkit werden bei Bedarf installiert. AMD/Intel folgen später.
+pci_hersteller() {  # Hersteller-IDs aller Grafikkarten (Klasse 0x03…): 0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel
+  local d
+  for d in /sys/bus/pci/devices/*; do
+    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) cat "$d/vendor" 2>/dev/null ;; esac
+  done
+}
+nvidia_smi() {
+  if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi "$@"
+  elif [ -x /usr/lib/wsl/lib/nvidia-smi ]; then /usr/lib/wsl/lib/nvidia-smi "$@"
+  else return 127; fi
+}
+docker_hat_nvidia() { docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; }
+toolkit_installieren() {
+  echo "Richte die Grafikkarte für Docker ein (nvidia-container-toolkit) …"
+  command -v gpg >/dev/null 2>&1 || apt-get install -y -q gnupg >/dev/null
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+    | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  apt-get update -q >/dev/null && apt-get install -y -q nvidia-container-toolkit >/dev/null
+  nvidia-ctk runtime configure --runtime=docker >/dev/null
+  systemctl restart docker
+}
+
+schritt "Worker auf diesem Server?"
+ALT_PROFIL=$(alt_wert COMPOSE_PROFILES)
+PROFIL=""; WORKER_CPUS=""
+HERSTELLER=${TALEWARD_PCI:-$(pci_hersteller | sort -u | tr '\n' ' ')}   # TALEWARD_PCI nur für Tests
+NVIDIA=0
+if [[ "$HERSTELLER" == *0x10de* ]] || nvidia_smi -L >/dev/null 2>&1; then NVIDIA=1; fi
+KERNE=$(nproc 2>/dev/null || echo 1)
+RAM_GB=$(awk '/MemTotal/ {printf "%d", $2 / 1024 / 1024 + 0.5}' /proc/meminfo 2>/dev/null || echo 0)
+
+if [ "$NVIDIA" -eq 1 ]; then
+  KARTE=$(nvidia_smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -1 || true)
+  echo "NVIDIA-Grafikkarte gefunden${KARTE:+: $KARTE}."
+  echo "Der Worker kann direkt hier mitlaufen und die Aufnahmen umwandeln (einmalig etwa 8 GB, dazu 5 GB Modelle)."
+  VORGABE_W=j
+  [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "worker" ] && VORGABE_W=n
+  if [ "$(frage "Worker mit der Grafikkarte hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
+    if ! nvidia_smi -L >/dev/null 2>&1; then
+      if [ "$WSL" -eq 1 ]; then
+        abbruch "Ubuntu sieht die Grafikkarte nicht. Unter Windows den aktuellen NVIDIA-Treiber installieren, dann nochmal starten."
+      fi
+      command -v ubuntu-drivers >/dev/null 2>&1 || apt-get install -y -q ubuntu-drivers-common >/dev/null 2>&1 || true
+      command -v ubuntu-drivers >/dev/null 2>&1 \
+        || abbruch "Der NVIDIA-Treiber fehlt. Bitte über die Paketverwaltung installieren, neu starten und das Skript nochmal ausführen."
+      echo "Der NVIDIA-Treiber fehlt – wird installiert (einige Minuten) …"
+      ubuntu-drivers install
+      gruen "Treiber installiert. Der Server muss einmal neu starten."
+      echo "Danach denselben Befehl noch einmal ausführen (die Fragen kommen dann noch einmal):"
+      echo "  curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash"
+      exit 0
+    fi
+    docker_hat_nvidia || toolkit_installieren
+    docker_hat_nvidia || abbruch "Docker sieht die Grafikkarte nicht (nvidia-container-toolkit). Siehe INSTALLATION-VPS.md, „Worker auf dem Server selbst“."
+    PROFIL=worker
+    gruen "Grafikkarte für Docker bereit."
+  fi
+else
+  case "$HERSTELLER" in
+    *0x1002*|*0x8086*)
+      echo "Grafikkarte von AMD oder Intel gefunden – dafür gibt es den Worker noch nicht (geplant)."
+      echo "Transkribieren geht über einen PC mit NVIDIA-Karte und der Worker-App oder über die Cloud." ;;
+  esac
+  if [ "$RAM_GB" -ge 8 ] && [ "$KERNE" -ge 4 ]; then
+    WORKER_CPUS=$(( KERNE / 2 ))
+    echo "Ohne passende Grafikkarte kann der Worker auch mit dem Prozessor rechnen – langsam: grob einen halben bis"
+    echo "ganzen Tag für 4 Stunden Aufnahme. Er nutzt dann $WORKER_CPUS von $KERNE Kernen, der Rest bleibt für den Server."
+    VORGABE_W=n
+    [ "$ALT_PROFIL" = "worker-cpu" ] && VORGABE_W=j
+    if [ "$(frage "Worker mit dem Prozessor hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
+      PROFIL=worker-cpu
+    fi
+  else
+    echo "Keine passende Grafikkarte. Transkribiert wird auf einem PC mit der Worker-App oder über die Cloud."
+  fi
+fi
+if [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "$PROFIL" ] && [ -f "$ZIEL/docker-compose.yml" ]; then
+  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu >/dev/null 2>&1 || true)
 fi
 
 # ------------------------------------------------------------------ Dateien
@@ -161,7 +247,7 @@ fi
 # Eigene Zusätze in der .env behalten (z. B. COMPOSE_PROFILES=worker für den eingebauten Worker)
 EXTRA=""
 if [ -f "$ZIEL/.env" ]; then
-  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=)' "$ZIEL/.env" || true)
+  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=|COMPOSE_PROFILES=)' "$ZIEL/.env" || true)
 fi
 umask 077
 cat > "$ZIEL/.env" <<ENV
@@ -172,7 +258,12 @@ TALEWARD_DOMAIN=$DOMAIN
 ACME_EMAIL=$MAIL
 # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
 TALEWARD_VERSION=$VERSION
+# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner)
+COMPOSE_PROFILES=$PROFIL
 ENV
+if [ "$PROFIL" = "worker-cpu" ] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
+  EXTRA=$(printf '%s\nTALEWARD_WORKER_CPUS=%s' "$EXTRA" "$WORKER_CPUS" | sed '/^$/d')
+fi
 [ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
 umask 022
 chown 1000:1000 "$ZIEL/daten"   # der Server im Container läuft als Nutzer 1000, nicht als root
@@ -274,7 +365,11 @@ port_frei() {
 }
 
 # ------------------------------------------------------------------ Starten
-schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
+if [ -n "$PROFIL" ]; then
+  schritt "Server und Worker bauen und starten (beim ersten Mal 15–25 Minuten, der Worker ist groß)"
+else
+  schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
+fi
 cd "$ZIEL"
 for p in $PORTS; do port_frei "$p"; done
 docker compose build --pull
@@ -328,6 +423,15 @@ if [ "$MODUS" = "domain" ]; then
   fi
 fi
 
+if [ -n "$PROFIL" ]; then
+  sleep 5
+  if docker compose ps --status running --services 2>/dev/null | grep -qx "$PROFIL"; then
+    gruen "Worker läuft ($PROFIL). Beim ersten Auftrag lädt er die Sprachmodelle (einmalig etwa 5 GB)."
+  else
+    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $PROFIL"
+  fi
+fi
+
 schritt "Fertig"
 docker compose exec -T server chronik einrichtungscode || true
 if [ "$MODUS" = "domain" ]; then
@@ -345,7 +449,11 @@ Nützliche Befehle (in $ZIEL):
   Update:              automatisch nachts (Verwaltung → Updates), sofort: sudo ./aktualisieren.sh --jetzt
   Neu starten:         sudo docker compose restart
   Daten (sichern!):    $ZIEL/daten
-
-Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Transkription“ – das darf auch
-dieser PC selbst sein.
 TEXT
+if [ -n "$PROFIL" ]; then
+  echo "Der Worker auf diesem Server ist schon verbunden. Weitere PCs mit der Worker-App verbindest du in der"
+  echo "Verwaltung unter „Transkription“."
+else
+  echo "Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Transkription“ – das darf auch"
+  echo "dieser PC selbst sein."
+fi

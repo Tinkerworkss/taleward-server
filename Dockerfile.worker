@@ -5,7 +5,7 @@
 #   Nur Prozessor:        docker build -f Dockerfile.worker --build-arg TORCH_BACKEND=cpu -t taleward-worker:cpu .
 #
 # Gestartet wird er über das Compose-Profil „worker“ bzw. „worker-cpu“ (deploy/docker-compose.yml). Für die
-# Grafikkarte braucht der Rechner den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
+# Grafikkarte braucht der Server den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
 # bringt PyTorch mit, deshalb reicht ein schlankes Grundbild.
 FROM python:3.11-slim-bookworm
 
