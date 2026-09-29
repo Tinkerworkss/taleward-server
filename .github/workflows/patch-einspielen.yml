@@ -39,5 +39,11 @@ jobs:
           docker run -d --name probe -p 8000:8000 taleward-server:probe
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
           docker logs probe; exit 1
+          - name: Worker-Paket (nur Prozessor) bauen
+        run: |
+          docker build -f Dockerfile.worker --build-arg TORCH_BACKEND=cpu -t taleward-worker:probe .
+          docker run --rm taleward-worker:probe python -c "import whisperx, torch, app.cli; print('torch', torch.__version__)"
+          docker run --rm taleward-worker:probe chronik worker --help
+          docker image rm taleward-worker:probe
       - name: Hochladen
         run: git push
