@@ -127,14 +127,39 @@ class OllamaKlient:
             kennung = suchen()
             if kennung is None:
                 melden(f"Lade Sprachmodell {self.modell} (einmalig, einige GB) …")
-                r = self.client.post(f"{self.url}/api/pull", json={"model": self.modell, "stream": False},
-                                     timeout=httpx.Timeout(3600.0, connect=10.0))
-                if r.status_code >= 400:
-                    raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {r.text[:200]}", erneut=False)
+                self._ziehen(melden)
                 kennung = suchen() or "?"
             return kennung
         except httpx.HTTPError as e:
             raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
+
+    def _ziehen(self, melden: Callable[[str], None]) -> None:
+        """Modell laden und alle 10 % eine Zeile melden (sonst bleibt das Protokoll bei ~6 GB lange stumm).
+        Kein Gesamtzeitlimit: Solange Daten kommen, läuft es weiter – nur eine lange Pause bricht ab."""
+        import json as _json
+
+        gemeldet = -10
+        with self.client.stream("POST", f"{self.url}/api/pull", json={"model": self.modell, "stream": True},
+                                timeout=httpx.Timeout(10.0, read=600.0)) as r:
+            if r.status_code >= 400:
+                raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {r.read().decode(errors='replace')[:200]}",
+                                         erneut=False)
+            for zeile in r.iter_lines():
+                if not zeile.strip():
+                    continue
+                try:
+                    d = _json.loads(zeile)
+                except ValueError:
+                    continue
+                if d.get("error"):
+                    raise SprachmodellFehler(f"Ollama kann {self.modell} nicht laden: {str(d['error'])[:200]}",
+                                             erneut=False)
+                gesamt, fertig = d.get("total") or 0, d.get("completed") or 0
+                if gesamt > 2 ** 27:  # nur die großen Teile (die Gewichte), nicht Vorlage/Lizenz
+                    prozent = int(fertig * 100 / gesamt)
+                    if prozent >= gemeldet + 10:
+                        gemeldet = prozent - prozent % 10
+                        melden(f"Sprachmodell {self.modell}: {gemeldet} % von {gesamt / 2 ** 30:.1f} GB")
 
     def chat(self, system: str, nutzer: str) -> Antwort:
         body = {"model": self.modell, "stream": False, "format": "json", "keep_alive": "2m",
