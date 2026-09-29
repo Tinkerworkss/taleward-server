@@ -41,3 +41,47 @@ def test_fehler_von_ollama():
         assert "does not exist" in str(e)
     else:
         raise AssertionError("kein Fehler")
+
+
+def _chat_klient(antworten):
+    koerper = []
+
+    def antwort(req: httpx.Request):
+        koerper.append(json.loads(req.content))
+        status, inhalt = antworten.pop(0)
+        return httpx.Response(status, json=inhalt)
+
+    k = OllamaKlient("http://ollama:11434", "ministral-3:8b", client=httpx.Client(transport=httpx.MockTransport(antwort)))
+    return k, koerper
+
+
+def test_wiederholungsschleife_wird_einmal_neu_versucht():
+    k, koerper = _chat_klient([
+        (500, {"error": "prediction aborted, token repeat limit reached"}),
+        (200, {"message": {"content": '{"ok": true}'}, "prompt_eval_count": 10, "eval_count": 5}),
+    ])
+    a = k.chat("sys", "nutzer")
+    assert a.text == '{"ok": true}' and a.tokens_out == 5
+    erste, zweite = (b["options"] for b in koerper)
+    assert erste["repeat_penalty"] > 1 and erste["num_predict"] > 0
+    assert zweite["temperature"] > erste["temperature"] and zweite["repeat_penalty"] > erste["repeat_penalty"]
+
+
+def test_wiederholungsschleife_zweimal_ist_ein_fehler():
+    k, koerper = _chat_klient([(500, {"error": "token repeat limit reached"})] * 2)
+    try:
+        k.chat("sys", "nutzer")
+    except SprachmodellFehler as e:
+        assert "repeat" in str(e) and len(koerper) == 2
+    else:
+        raise AssertionError("kein Fehler")
+
+
+def test_anderer_fehler_wird_nicht_wiederholt():
+    k, koerper = _chat_klient([(500, {"error": "out of memory"})])
+    try:
+        k.chat("sys", "nutzer")
+    except SprachmodellFehler:
+        assert len(koerper) == 1
+    else:
+        raise AssertionError("kein Fehler")

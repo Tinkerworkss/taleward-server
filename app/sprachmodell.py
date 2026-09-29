@@ -15,6 +15,7 @@ Spoilerschutz – verbindlich:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -22,9 +23,12 @@ from typing import Callable, Protocol
 
 import httpx
 
+log = logging.getLogger("worker")
+
 ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
 FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
 MAX_VORSCHLAEGE = 15
+ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
 # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
@@ -162,13 +166,22 @@ class OllamaKlient:
                         melden(f"Sprachmodell {self.modell}: {gemeldet} % von {gesamt / 2 ** 30:.1f} GB")
 
     def chat(self, system: str, nutzer: str) -> Antwort:
-        body = {"model": self.modell, "stream": False, "format": "json", "keep_alive": "2m",
-                "options": {"num_ctx": self.kontext, "temperature": 0.3},
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
-        try:
-            r = self.client.post(f"{self.url}/api/chat", json=body)
-        except httpx.HTTPError as e:
-            raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
+        # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
+        # reached“ ab). Daher eine leichte Wiederholungsstrafe und eine Obergrenze für die Antwortlänge – und bei einem
+        # Abbruch ein zweiter Versuch mit etwas mehr Streuung.
+        for versuch, (temperatur, strafe) in enumerate(((0.3, 1.1), (0.6, 1.2))):
+            body = {"model": self.modell, "stream": False, "format": "json", "keep_alive": "2m",
+                    "options": {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
+                                "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS},
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
+            try:
+                r = self.client.post(f"{self.url}/api/chat", json=body)
+            except httpx.HTTPError as e:
+                raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
+            if r.status_code >= 400 and "repeat" in r.text and versuch == 0:
+                log.info("Sprachmodell hat sich wiederholt – zweiter Versuch mit mehr Streuung")
+                continue
+            break
         if r.status_code >= 400:
             raise SprachmodellFehler(f"Ollama meldet {r.status_code}: {r.text[:200]}")
         d = r.json()

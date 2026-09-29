@@ -26,7 +26,7 @@ from app.audio import AudioFehler
 from app.worker_prozess import Abgebrochen
 
 log = logging.getLogger("worker")
-from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen
+from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen  # noqa: E402 (nach den Umgebungsvariablen)
 
 # pyannote schickt sonst Nutzungsdaten (Audiodauer, Personenzahl) an pyannote.ai – hier nie
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
