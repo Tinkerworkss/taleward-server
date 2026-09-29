@@ -1,0 +1,340 @@
+From f038a474987423a1d5ecef0922754111d61fd56d Mon Sep 17 00:00:00 2001
+From: Taleward <twartanddesign@gmail.com>
+Date: Tue, 29 Sep 2026 10:18:17 +0200
+Subject: [PATCH] install.sh: Grafikkarte erkennen und den eingebauten Worker
+ einrichten
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Erkennt NVIDIA (PCI oder nvidia-smi, auch unter Windows 11 mit Ubuntu), fragt nach dem Worker,
+  installiert bei Bedarf Treiber (ubuntu-drivers, dann Neustart) und nvidia-container-toolkit und
+  setzt COMPOSE_PROFILES=worker.
+- AMD/Intel: ehrlicher Hinweis, noch nicht unterstützt.
+- Ohne passende Karte, ab 8 GB RAM und 4 Kernen: Prozessor-Variante (worker-cpu, halbe Kernzahl).
+- Erneuter Lauf: Wahl ändern, alter Worker-Container wird entfernt, eigene Zeilen der .env bleiben.
+- Wortwahl: Server/PC statt „Rechner“.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ Dockerfile.worker                           |   2 +-
+ INSTALLATION-VPS.md                         |  22 +++-
+ README.md                                   |   2 +-
+ app/verwaltung/i18n.py                      |   4 +-
+ app/verwaltung/templates/transkription.html |   4 +-
+ deploy/docker-compose.heimnetz.yml          |   2 +-
+ install.sh                                  | 126 ++++++++++++++++++--
+ 7 files changed, 140 insertions(+), 22 deletions(-)
+
+diff --git a/Dockerfile.worker b/Dockerfile.worker
+index ecee310..e47b3d5 100644
+--- a/Dockerfile.worker
++++ b/Dockerfile.worker
+@@ -5,7 +5,7 @@
+ #   Nur Prozessor:        docker build -f Dockerfile.worker --build-arg TORCH_BACKEND=cpu -t taleward-worker:cpu .
+ #
+ # Gestartet wird er über das Compose-Profil „worker“ bzw. „worker-cpu“ (deploy/docker-compose.yml). Für die
+-# Grafikkarte braucht der Rechner den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
++# Grafikkarte braucht der Server den NVIDIA-Treiber und das nvidia-container-toolkit – die CUDA-Bibliotheken selbst
+ # bringt PyTorch mit, deshalb reicht ein schlankes Grundbild.
+ FROM python:3.11-slim-bookworm
+ 
+diff --git a/INSTALLATION-VPS.md b/INSTALLATION-VPS.md
+index 48d760e..afce2c8 100644
+--- a/INSTALLATION-VPS.md
++++ b/INSTALLATION-VPS.md
+@@ -32,12 +32,12 @@ Dort legst du das Konto für die Verwaltung an. Danach verbindest du in der App
+ 
+ ## Zu Hause, im Verein oder unter Windows 11
+ 
+-Derselbe Befehl funktioniert auch auf einem eigenen Rechner mit Ubuntu oder Debian, etwa einem Mini-PC im
++Derselbe Befehl funktioniert auch auf einem eigenen PC mit Ubuntu oder Debian, etwa einem Mini-PC im
+ Vereinsheim, und unter **Windows 11 mit Ubuntu** (WSL). Das Skript fragt, wie Handys den Server erreichen:
+ 
+ | Auswahl | Wann | Was nötig ist |
+ |---|---|---|
+-| **1 – Internet mit Domain und HTTPS** | VPS, oder zu Hause mit fester Erreichbarkeit | Domain bzw. DynDNS, **Portfreigabe TCP 80 und 443** im Router auf diesen Rechner. Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht. |
++| **1 – Internet mit Domain und HTTPS** | VPS, oder zu Hause mit fester Erreichbarkeit | Domain bzw. DynDNS, **Portfreigabe TCP 80 und 443** im Router auf diesen Server. Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht. |
+ | **2 – Nur im Heimnetz** | Spielen immer am selben Ort (Vereinsheim, Wohnzimmer) | Nichts weiter. Adresse `http://<IP>:8000`. Anmelden mit Google & Co. und die Web-App gehen ohne HTTPS nicht. |
+ 
+ **Unter Windows 11** erledigt das Skript zusätzlich:
+@@ -53,7 +53,7 @@ Voraussetzung ist Windows 11 ab Version 22H2. Unter Windows 10 lässt sich Ubunt
+ Der Worker (Grafikkarte) kann auf demselben PC laufen: Worker-App installieren und mit der Adresse des Servers
+ koppeln.
+ 
+-Tipp: Im Router für diesen Rechner immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
++Tipp: Im Router für diesen Server immer dieselbe IP-Adresse vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät
+ bearbeiten), sonst ändert sich die Adresse für die App.
+ 
+ ## 2. Deinen PC als Worker verbinden
+@@ -64,14 +64,24 @@ eintragen. Der PC braucht keine
+ Portfreigabe im Router – er fragt beim Server nach Arbeit. Ist er aus, warten die Aufnahmen, bis er wieder läuft
+ (auf Wunsch meldet der Server das, Teil 14).
+ 
+-## Worker auf demselben Rechner (Docker)
++## Worker auf dem Server selbst (Docker)
+ 
+-Hat der Rechner, auf dem der Server läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
++Hat der PC oder Server, auf dem Taleward läuft, eine **NVIDIA-Grafikkarte**, kann der Worker gleich mit darauf laufen –
+ als eigener Container, ohne Worker-App und ohne Kopplungscode. Das passt für einen gemieteten GPU-Server oder einen
+ Vereins-PC mit Linux (auch Ubuntu unter Windows 11). Ohne Grafikkarte geht es auch mit dem Prozessor, dann aber
+ langsam: grob 4–10 Stunden für 4 Stunden Aufnahme auf einem Desktop-Prozessor, auf einem kleinen VPS eher einen Tag.
+ 
+-> Bald fragt `install.sh` danach und erledigt die Schritte 1 und 2 selbst. Bis dahin von Hand:
++**Am einfachsten mit `install.sh`:**
++
++- Das Skript erkennt eine NVIDIA-Karte und fragt: „Worker mit der Grafikkarte hier mitlaufen lassen?“.
++- Fehlt der Treiber, installiert es ihn. Danach muss der Server einmal neu starten, und du führst den Befehl noch
++  einmal aus.
++- Das nvidia-container-toolkit richtet es ebenfalls selbst ein.
++- Ohne passende Grafikkarte, aber mit mindestens 8 GB Arbeitsspeicher und 4 Kernen, bietet es die Prozessor-Variante
++  an.
++- Später umentscheiden: das Skript einfach noch einmal ausführen.
++
++Von Hand geht es so:
+ 
+ **1. NVIDIA-Treiber** (unter Windows 11 mit Ubuntu kommt er von Windows, dort überspringen):
+ 
+diff --git a/README.md b/README.md
+index a6663cb..a506a11 100644
+--- a/README.md
++++ b/README.md
+@@ -29,7 +29,7 @@ Die Schritt-für-Schritt-Anleitung mit Kontrollpunkten und Fehlerhilfe steht in
+ 
+ Worker für den PC mit Grafikkarte: **[Worker-App für Windows und Linux](https://github.com/Tinkerworkss/taleward-worker)** (eigenes Repository).
+ 
+-Mit Docker – gemieteter Server (VPS), eigener Rechner zu Hause/im Verein oder Windows 11 mit Ubuntu: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
++Mit Docker – gemieteter Server (VPS), eigener PC zu Hause/im Verein oder Windows 11 mit Ubuntu: **[INSTALLATION-VPS.md](INSTALLATION-VPS.md)** – ein Befehl:
+ 
+ ```bash
+ curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 67ca33b..43b19db 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -89,8 +89,8 @@ EN: dict[str, str] = {
+     "Er verbindet sich von selbst mit dem Server; seinen Zustand zeigt die Liste „Alle Worker“ unter „Lokaler Worker“.": "It connects to the server by itself; its status appears in “All workers” as “Local worker”.",
+     "Protokoll auf dem Server:": "Log on the server:",
+     "Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d": "Settings for now in the .env file: TALEWARD_WORKER_VRAM_MB (graphics memory, 0 = all), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (processor only). Then: sudo docker compose up -d",
+-    "Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.": "No worker runs on this server. Transcription happens on a PC with the worker app – that may be the machine the server runs on – or in the cloud.",
+-    "Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).": "If this machine has an NVIDIA graphics card, the worker can also run here as a container (INSTALLATION-VPS.md, “Worker on the same machine”).",
++    "Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der PC sein, auf dem der Server läuft – oder über die Cloud.": "No worker runs on this server. Transcription happens on a PC with the worker app – that may be the PC the server runs on – or in the cloud.",
++    "Hat dieser Server eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf dem Server selbst“).": "If this server has an NVIDIA graphics card, the worker can also run here as a container (INSTALLATION-VPS.md, “Worker on the server itself”).",
+     "Testmodus (Platzhaltertext, ohne KI)": "Test mode (placeholder text, without AI)",
+     "Linux": "Linux",
+     "Adresse des Servers": "Server address",
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 877fab3..6b7680a 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -20,10 +20,10 @@
+   <p class="hilfe">{{ _("Einstellungen vorerst in der Datei .env: TALEWARD_WORKER_VRAM_MB (Grafikspeicher, 0 = alles), TALEWARD_WORKER_MODELL (auto, large-v3, large-v3-turbo), TALEWARD_WORKER_CPUS (nur Prozessor). Danach: sudo docker compose up -d") }}</p>
+ {% elif docker %}
+   <h2>{{ _("Transkription") }}</h2>
+-  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der Rechner sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
++  <p>{{ _("Auf diesem Server läuft kein Worker. Transkribiert wird auf einem PC mit der Worker-App – das darf auch der PC sein, auf dem der Server läuft – oder über die Cloud.") }}</p>
+   <p><a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
+     <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
+-  <p class="hilfe">{{ _("Hat dieser Rechner eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf demselben Rechner“).") }}</p>
++  <p class="hilfe">{{ _("Hat dieser Server eine NVIDIA-Grafikkarte, kann der Worker auch hier als Container mitlaufen (INSTALLATION-VPS.md, „Worker auf dem Server selbst“).") }}</p>
+   <details {% if lokal.laeuft %}open{% endif %}><summary>{{ _("Testmodus (Platzhaltertext, ohne KI)") }}</summary>
+   {% if lokal.laeuft %}
+     <p><span class="marke-status marke-status--gut">{{ _("läuft") }}</span> {{ _("seit {zeit}", zeit=zeit(lokal.gestartet)) }} · {{ _("echte Transkription") if lokal.modus == "echt" else _("Testmodus (Platzhaltertext)") }}</p>
+diff --git a/deploy/docker-compose.heimnetz.yml b/deploy/docker-compose.heimnetz.yml
+index 6c60c8f..a79a88c 100644
+--- a/deploy/docker-compose.heimnetz.yml
++++ b/deploy/docker-compose.heimnetz.yml
+@@ -1,5 +1,5 @@
+ # Taleward nur im Heimnetz (z. B. im Vereinsheim): ohne Domain und ohne HTTPS, erreichbar unter
+-# http://<IP dieses Rechners>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
++# http://<IP dieses Servers>:8000. Anmelden mit Google & Co. und die Web-App brauchen HTTPS und gehen hier nicht.
+ # Liegt nach der Installation in /opt/taleward. Einstellungen in /opt/taleward/.env (legt install.sh an).
+ 
+ # Gemeinsame Angaben der beiden Worker-Varianten
+diff --git a/install.sh b/install.sh
+index d93e39e..dedd17a 100755
+--- a/install.sh
++++ b/install.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ # shellcheck disable=SC1091,SC1111,SC2016  # os-release zur Laufzeit; deutsche Anführungszeichen und PowerShell-$ sind Absicht
+-# Taleward-Server einrichten – auf einem gemieteten Server (VPS), einem Rechner zu Hause/im Verein
++# Taleward-Server einrichten – auf einem gemieteten Server (VPS), einem PC zu Hause/im Verein
+ # oder unter Windows 11 mit Ubuntu (WSL).
+ #
+ #   curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash
+@@ -129,15 +129,101 @@ if [ "$MODUS" = "domain" ]; then
+   fi
+   if [ -n "$LAN_IP" ] && [[ "$LAN_IP" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+     echo
+-    echo "Dieser Rechner steht hinter einem Router. Dort eine Portfreigabe einrichten:"
++    echo "Dieser Server steht hinter einem Router. Dort eine Portfreigabe einrichten:"
+     echo "  TCP 80 und 443  →  $LAN_IP   (FRITZ!Box: Internet → Freigaben → Portfreigaben)"
+     echo "Anschlüsse mit DS-Lite oder Mobilfunk können das oft nicht – dann Auswahl 2 (Heimnetz) nehmen."
+   fi
+ else
+-  [ -n "$LAN_IP" ] || abbruch "die IP-Adresse dieses Rechners im Heimnetz ist unbekannt."
++  [ -n "$LAN_IP" ] || abbruch "die IP-Adresse dieses Servers im Heimnetz ist unbekannt."
+   ADRESSE="http://$LAN_IP:8000"
+   echo "Der Server wird erreichbar unter:  $ADRESSE"
+-  echo "Tipp: Im Router für diesen Rechner immer dieselbe IP vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät bearbeiten)."
++  echo "Tipp: Im Router für diesen Server immer dieselbe IP vergeben (FRITZ!Box: Heimnetz → Netzwerk → Gerät bearbeiten)."
++fi
++
++# ------------------------------------------------------------------ Worker auf diesem Server?
++# Grafikkarte erkennen und auf Wunsch den eingebauten Worker einrichten (Compose-Profil „worker“ bzw. „worker-cpu“).
++# NVIDIA: Treiber und nvidia-container-toolkit werden bei Bedarf installiert. AMD/Intel folgen später.
++pci_hersteller() {  # Hersteller-IDs aller Grafikkarten (Klasse 0x03…): 0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel
++  local d
++  for d in /sys/bus/pci/devices/*; do
++    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) cat "$d/vendor" 2>/dev/null ;; esac
++  done
++}
++nvidia_smi() {
++  if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi "$@"
++  elif [ -x /usr/lib/wsl/lib/nvidia-smi ]; then /usr/lib/wsl/lib/nvidia-smi "$@"
++  else return 127; fi
++}
++docker_hat_nvidia() { docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; }
++toolkit_installieren() {
++  echo "Richte die Grafikkarte für Docker ein (nvidia-container-toolkit) …"
++  command -v gpg >/dev/null 2>&1 || apt-get install -y -q gnupg >/dev/null
++  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
++    | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
++  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
++    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
++    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
++  apt-get update -q >/dev/null && apt-get install -y -q nvidia-container-toolkit >/dev/null
++  nvidia-ctk runtime configure --runtime=docker >/dev/null
++  systemctl restart docker
++}
++
++schritt "Worker auf diesem Server?"
++ALT_PROFIL=$(alt_wert COMPOSE_PROFILES)
++PROFIL=""; WORKER_CPUS=""
++HERSTELLER=${TALEWARD_PCI:-$(pci_hersteller | sort -u | tr '\n' ' ')}   # TALEWARD_PCI nur für Tests
++NVIDIA=0
++if [[ "$HERSTELLER" == *0x10de* ]] || nvidia_smi -L >/dev/null 2>&1; then NVIDIA=1; fi
++KERNE=$(nproc 2>/dev/null || echo 1)
++RAM_GB=$(awk '/MemTotal/ {printf "%d", $2 / 1024 / 1024 + 0.5}' /proc/meminfo 2>/dev/null || echo 0)
++
++if [ "$NVIDIA" -eq 1 ]; then
++  KARTE=$(nvidia_smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -1 || true)
++  echo "NVIDIA-Grafikkarte gefunden${KARTE:+: $KARTE}."
++  echo "Der Worker kann direkt hier mitlaufen und die Aufnahmen umwandeln (einmalig etwa 8 GB, dazu 5 GB Modelle)."
++  VORGABE_W=j
++  [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "worker" ] && VORGABE_W=n
++  if [ "$(frage "Worker mit der Grafikkarte hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
++    if ! nvidia_smi -L >/dev/null 2>&1; then
++      if [ "$WSL" -eq 1 ]; then
++        abbruch "Ubuntu sieht die Grafikkarte nicht. Unter Windows den aktuellen NVIDIA-Treiber installieren, dann nochmal starten."
++      fi
++      command -v ubuntu-drivers >/dev/null 2>&1 || apt-get install -y -q ubuntu-drivers-common >/dev/null 2>&1 || true
++      command -v ubuntu-drivers >/dev/null 2>&1 \
++        || abbruch "Der NVIDIA-Treiber fehlt. Bitte über die Paketverwaltung installieren, neu starten und das Skript nochmal ausführen."
++      echo "Der NVIDIA-Treiber fehlt – wird installiert (einige Minuten) …"
++      ubuntu-drivers install
++      gruen "Treiber installiert. Der Server muss einmal neu starten."
++      echo "Danach denselben Befehl noch einmal ausführen (die Fragen kommen dann noch einmal):"
++      echo "  curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-server/main/install.sh | sudo bash"
++      exit 0
++    fi
++    docker_hat_nvidia || toolkit_installieren
++    docker_hat_nvidia || abbruch "Docker sieht die Grafikkarte nicht (nvidia-container-toolkit). Siehe INSTALLATION-VPS.md, „Worker auf dem Server selbst“."
++    PROFIL=worker
++    gruen "Grafikkarte für Docker bereit."
++  fi
++else
++  case "$HERSTELLER" in
++    *0x1002*|*0x8086*)
++      echo "Grafikkarte von AMD oder Intel gefunden – dafür gibt es den Worker noch nicht (geplant)."
++      echo "Transkribieren geht über einen PC mit NVIDIA-Karte und der Worker-App oder über die Cloud." ;;
++  esac
++  if [ "$RAM_GB" -ge 8 ] && [ "$KERNE" -ge 4 ]; then
++    WORKER_CPUS=$(( KERNE / 2 ))
++    echo "Ohne passende Grafikkarte kann der Worker auch mit dem Prozessor rechnen – langsam: grob einen halben bis"
++    echo "ganzen Tag für 4 Stunden Aufnahme. Er nutzt dann $WORKER_CPUS von $KERNE Kernen, der Rest bleibt für den Server."
++    VORGABE_W=n
++    [ "$ALT_PROFIL" = "worker-cpu" ] && VORGABE_W=j
++    if [ "$(frage "Worker mit dem Prozessor hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
++      PROFIL=worker-cpu
++    fi
++  else
++    echo "Keine passende Grafikkarte. Transkribiert wird auf einem PC mit der Worker-App oder über die Cloud."
++  fi
++fi
++if [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "$PROFIL" ] && [ -f "$ZIEL/docker-compose.yml" ]; then
++  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu >/dev/null 2>&1 || true)
+ fi
+ 
+ # ------------------------------------------------------------------ Dateien
+@@ -161,7 +247,7 @@ fi
+ # Eigene Zusätze in der .env behalten (z. B. COMPOSE_PROFILES=worker für den eingebauten Worker)
+ EXTRA=""
+ if [ -f "$ZIEL/.env" ]; then
+-  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=)' "$ZIEL/.env" || true)
++  EXTRA=$(grep -vE '^(#|$|TALEWARD_MODUS=|TALEWARD_ADRESSE=|TALEWARD_DOMAIN=|ACME_EMAIL=|TALEWARD_VERSION=|COMPOSE_PROFILES=)' "$ZIEL/.env" || true)
+ fi
+ umask 077
+ cat > "$ZIEL/.env" <<ENV
+@@ -172,7 +258,12 @@ TALEWARD_DOMAIN=$DOMAIN
+ ACME_EMAIL=$MAIL
+ # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
+ TALEWARD_VERSION=$VERSION
++# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner)
++COMPOSE_PROFILES=$PROFIL
+ ENV
++if [ "$PROFIL" = "worker-cpu" ] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
++  EXTRA=$(printf '%s\nTALEWARD_WORKER_CPUS=%s' "$EXTRA" "$WORKER_CPUS" | sed '/^$/d')
++fi
+ [ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
+ umask 022
+ chown 1000:1000 "$ZIEL/daten"   # der Server im Container läuft als Nutzer 1000, nicht als root
+@@ -274,7 +365,11 @@ port_frei() {
+ }
+ 
+ # ------------------------------------------------------------------ Starten
+-schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
++if [ -n "$PROFIL" ]; then
++  schritt "Server und Worker bauen und starten (beim ersten Mal 15–25 Minuten, der Worker ist groß)"
++else
++  schritt "Server bauen und starten (beim ersten Mal 3–5 Minuten)"
++fi
+ cd "$ZIEL"
+ for p in $PORTS; do port_frei "$p"; done
+ docker compose build --pull
+@@ -328,6 +423,15 @@ if [ "$MODUS" = "domain" ]; then
+   fi
+ fi
+ 
++if [ -n "$PROFIL" ]; then
++  sleep 5
++  if docker compose ps --status running --services 2>/dev/null | grep -qx "$PROFIL"; then
++    gruen "Worker läuft ($PROFIL). Beim ersten Auftrag lädt er die Sprachmodelle (einmalig etwa 5 GB)."
++  else
++    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $PROFIL"
++  fi
++fi
++
+ schritt "Fertig"
+ docker compose exec -T server chronik einrichtungscode || true
+ if [ "$MODUS" = "domain" ]; then
+@@ -345,7 +449,11 @@ Nützliche Befehle (in $ZIEL):
+   Update:              automatisch nachts (Verwaltung → Updates), sofort: sudo ./aktualisieren.sh --jetzt
+   Neu starten:         sudo docker compose restart
+   Daten (sichern!):    $ZIEL/daten
+-
+-Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Transkription“ – das darf auch
+-dieser PC selbst sein.
+ TEXT
++if [ -n "$PROFIL" ]; then
++  echo "Der Worker auf diesem Server ist schon verbunden. Weitere PCs mit der Worker-App verbindest du in der"
++  echo "Verwaltung unter „Transkription“."
++else
++  echo "Einen Worker (PC mit Grafikkarte) verbindest du in der Verwaltung unter „Transkription“ – das darf auch"
++  echo "dieser PC selbst sein."
++fi
+-- 
+2.43.0
+
