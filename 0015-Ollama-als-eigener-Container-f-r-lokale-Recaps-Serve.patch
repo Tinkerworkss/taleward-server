@@ -1,0 +1,551 @@
+From f03e90263cf27ec5075e3a6c747fb68b0e866e21 Mon Sep 17 00:00:00 2001
+From: Taleward <twartanddesign@gmail.com>
+Date: Tue, 29 Sep 2026 12:48:16 +0200
+Subject: [PATCH] =?UTF-8?q?Ollama=20als=20eigener=20Container=20f=C3=BCr?=
+ =?UTF-8?q?=20lokale=20Recaps=20(Server=200.4.8)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Compose-Profile „ollama“ (Grafikkarte) und „ollama-cpu“ neben dem Worker (COMPOSE_PROFILES=
+  worker,ollama); Worker erreicht Ollama unter http://ollama:11434 und startet erst, wenn es bereit ist.
+  Modell lädt der Worker beim ersten Recap selbst, entladen wird es nach 2 Minuten.
+- install.sh fragt nach dem Worker auch nach lokalen Recaps; erneuter Lauf kann umentscheiden.
+- aktualisieren.sh frischt fertige Bilder (Caddy, Ollama) mit auf.
+- Verwaltung: Hinweis auf der Karte „Eingebauter Worker“, ob Ollama läuft, erkannt ist und die
+  Zusammenfassung auf „Lokales Modell“ steht.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ INSTALLATION-VPS.md                         | 16 ++++++-
+ INSTALLATION.md                             |  2 +-
+ README.md                                   |  2 +-
+ app/config.py                               |  6 +++
+ app/verwaltung/i18n.py                      |  5 ++
+ app/verwaltung/router.py                    |  4 ++
+ app/verwaltung/templates/transkription.html |  6 +++
+ deploy/aktualisieren.sh                     |  2 +
+ deploy/docker-compose.heimnetz.yml          | 47 +++++++++++++++++++
+ deploy/docker-compose.yml                   | 47 +++++++++++++++++++
+ install.sh                                  | 35 ++++++++++----
+ pyproject.toml                              |  2 +-
+ tests/test_aktualisierung.py                |  2 +-
+ tests/test_assistent.py                     |  2 +-
+ tests/test_eingebauter_worker.py            | 52 +++++++++++++++++++++
+ tests/test_modellablage.py                  |  2 +-
+ tests/test_worker_app.py                    |  2 +-
+ uv.lock                                     |  2 +-
+ 18 files changed, 219 insertions(+), 17 deletions(-)
+
+diff --git a/INSTALLATION-VPS.md b/INSTALLATION-VPS.md
+index 0f5d7d0..4408463 100644
+--- a/INSTALLATION-VPS.md
++++ b/INSTALLATION-VPS.md
+@@ -132,7 +132,21 @@ Was dort nicht gesetzt ist, kommt aus der `.env` (danach `sudo docker compose up
+ | `TALEWARD_WORKER_MODELL=large-v3` | festes Modell statt `auto` (auch `large-v3-turbo`) |
+ | `TALEWARD_WORKER_CPUS=4` | nur `worker-cpu`: so viele Rechenkerne (Standard 2), der Rest bleibt für den Server |
+ 
+-Wieder ausschalten: `sudo docker compose rm -sf worker` (bzw. `worker-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
++**Lokale Recaps mit Ollama:** Auf Wunsch läuft neben dem Worker ein zweiter Container mit Ollama. Dann schreibt der
++Worker auch die Recaps, ganz ohne Cloud.
++
++- `install.sh` fragt danach, sobald der Worker gewählt ist.
++- Von Hand: `COMPOSE_PROFILES=worker,ollama` (bzw. `worker-cpu,ollama-cpu`) in die `.env`, dann
++  `sudo docker compose up -d`.
++- In der Verwaltung unter **Zusammenfassung** „Lokales Modell“ wählen.
++- Das Sprachmodell (`ministral-3:8b`, etwa 5 GB) lädt der Worker beim ersten Recap.
++- Transkription und Recap wechseln sich auf der Grafikkarte ab. Reicht der Grafikspeicher nicht für beides, rechnet
++  Ollama teilweise mit dem Prozessor – langsamer, aber es geht.
++- Mit nur dem Prozessor dauert ein Recap grob eine Stunde oder mehr.
++- Das Bild von Ollama frischt das automatische Update mit auf; eine feste Fassung legt
++  `TALEWARD_OLLAMA_VERSION=…` in der `.env` fest.
++
++Wieder ausschalten: `sudo docker compose rm -sf worker ollama` (bzw. `worker-cpu ollama-cpu`), danach die Zeile `COMPOSE_PROFILES=…`
+ aus der `.env` löschen.
+ 
+ ## Alltag
+diff --git a/INSTALLATION.md b/INSTALLATION.md
+index 6e7b2c5..e51d506 100644
+--- a/INSTALLATION.md
++++ b/INSTALLATION.md
+@@ -201,7 +201,7 @@ in `data/geheimnis.txt` ab. Eine alte `.env` mit eigenem `JWT_SECRET` funktionie
+ uv run pytest
+ ```
+ 
+-✅ **Kontrolle:** Die letzte Zeile lautet **`263 passed`**. Der Lauf dauert etwa eine Minute.
++✅ **Kontrolle:** Die letzte Zeile lautet **`266 passed`**. Der Lauf dauert etwa eine Minute.
+ 
+ ### 4.2 Eigenes Konto anlegen
+ 
+diff --git a/README.md b/README.md
+index 30a336b..cccbda7 100644
+--- a/README.md
++++ b/README.md
+@@ -39,7 +39,7 @@ Kurzfassung für später:
+ 
+ ```bash
+ cd ~/session-chronik-server
+-uv run pytest                  # erwartet: 263 passed
++uv run pytest                  # erwartet: 266 passed
+ uv run chronik serve           # Server starten, Strg+C beendet
+ uv run chronik worker            # zweites Fenster: Worker (--attrappe ohne Grafikkarte)
+ uv run chronik worker --selbsttest datei.mp3 --sprecher 4   # Einrichtung prüfen, ohne Zentrale
+diff --git a/app/config.py b/app/config.py
+index 4b003c6..89c1e84 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -113,6 +113,12 @@ class Settings(BaseSettings):
+         profile = {p.strip() for p in self.eingebauter_worker.split(",")}
+         return "cpu" if "worker-cpu" in profile else "gpu" if "worker" in profile else ""
+ 
++    @property
++    def ollama_art(self) -> str:
++        """Ollama im Docker-Paket (Profil „ollama“ / „ollama-cpu“): "gpu", "cpu" oder ""."""
++        profile = {p.strip() for p in self.eingebauter_worker.split(",")}
++        return "cpu" if "ollama-cpu" in profile else "gpu" if "ollama" in profile else ""
++
+     @property
+     def db_url(self) -> str:
+         return self.database_url or f"sqlite:///{self.data_dir / 'chronik.db'}"
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 6cddec0..28e47c3 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -83,6 +83,11 @@ EN: dict[str, str] = {
+     "Die Worker-App richtet alles Nötige selbst ein und passt sich dem PC an: am schnellsten mit einer NVIDIA-Grafikkarte, sonst langsamer mit dem Prozessor.": "The worker app sets up everything it needs and adapts to the PC: fastest with an NVIDIA graphics card, otherwise slower on the processor.",
+     "Für Windows herunterladen": "Download for Windows",
+     "Eingebauter Worker": "Built-in worker",
++    "Lokale Recaps: Ollama läuft mit": "Local recaps: Ollama runs alongside",
++    "vom Worker erkannt": "detected by the worker",
++    "Recaps schreibt der Worker hier mit dem lokalen Sprachmodell.": "The worker writes recaps here with the local language model.",
++    "Damit er Recaps schreibt, unter „Zusammenfassung“ „Lokales Modell“ wählen.": "For it to write recaps, choose “Local model” under “Summary”.",
++    "Das Sprachmodell (etwa 5 GB) lädt der Worker beim ersten Recap. Transkription und Recap wechseln sich auf der Grafikkarte ab; reicht der Grafikspeicher nicht für beides, rechnet Ollama teilweise mit dem Prozessor – langsamer, aber es geht.": "The worker downloads the language model (about 5 GB) with the first recap. Transcription and recap take turns on the graphics card; if graphics memory is not enough for both, Ollama partly uses the processor – slower, but it works.",
+     "Modell für die Transkription": "Transcription model",
+     "0 = ganze Grafikkarte. Der Rest bleibt z. B. fürs Spielen frei; das Modell passt sich an.": "0 = whole graphics card. The rest stays free, e.g. for gaming; the model adapts.",
+     "Automatisch (nach Grafikspeicher)": "Automatic (by graphics memory)",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 22efa66..41c18eb 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -379,7 +379,11 @@ def _eingebaut_anzeige(db: Session) -> dict | None:
+     knecht = next((k for k in _knechte(db) if k["w"].local), None)
+     info = knecht["info"] if knecht else {}
+     vram_karte = info.get("vramMb") if isinstance(info.get("vramMb"), int) else None
++    from app.einstellungen import llm_konfig
++
+     return {"werte": eingebaut.lesen(db), "knecht": knecht, "vram_karte": vram_karte,
++            "ollama": get_settings().ollama_art, "llm_lokal": llm_konfig(db).art == "lokal",
++            "llm_bereit": bool(knecht and knecht["info"].get("llm")),
+             "regler_max": vram_karte or 24576,
+             "messung": eingebaut.messung(db, knecht["w"].id) if knecht else None}
+ 
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 1fc7dfb..ec195ce 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -29,6 +29,12 @@
+   {% if e.messung %}
+   <p class="leise">{{ _("Letzter Auftrag: {a} Minuten Aufnahme in {r} Minuten", a=(e.messung.audioSekunden / 60) | round(0) | int, r=(e.messung.rechenSekunden / 60) | round(1)) }}{% if e.messung.peakVramMb %}, {{ _("höchstens {gb} GB Grafikspeicher", gb=(e.messung.peakVramMb / 1024) | round(1)) }}{% endif %}{% if e.messung.modell %} ({{ e.messung.modell }}){% endif %}</p>
+   {% endif %}
++  {% if e.ollama %}
++  <p>{{ _("Lokale Recaps: Ollama läuft mit") }} ({{ _("nur Prozessor") if e.ollama == "cpu" else _("Grafikkarte") }}){% if e.llm_bereit %} · <span class="marke-status marke-status--gut">{{ _("vom Worker erkannt") }}</span>{% endif %}.
++    {% if e.llm_lokal %}{{ _("Recaps schreibt der Worker hier mit dem lokalen Sprachmodell.") }}
++    {% else %}<a href="/verwaltung/zusammenfassung">{{ _("Damit er Recaps schreibt, unter „Zusammenfassung“ „Lokales Modell“ wählen.") }}</a>{% endif %}</p>
++  <p class="hilfe">{{ _("Das Sprachmodell (etwa 5 GB) lädt der Worker beim ersten Recap. Transkription und Recap wechseln sich auf der Grafikkarte ab; reicht der Grafikspeicher nicht für beides, rechnet Ollama teilweise mit dem Prozessor – langsamer, aber es geht.") }}</p>
++  {% endif %}
+   <form class="formular" method="post" action="/verwaltung/worker/eingebaut">
+     <input type="hidden" name="csrf" value="{{ csrf }}">
+     {% if worker_art == "gpu" %}
+diff --git a/deploy/aktualisieren.sh b/deploy/aktualisieren.sh
+index bed5563..eb571f1 100755
+--- a/deploy/aktualisieren.sh
++++ b/deploy/aktualisieren.sh
+@@ -81,7 +81,9 @@ fi
+ version_setzen "$NEU"
+ # Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
+ # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
++# Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
+ if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
++   && { docker compose pull --ignore-buildable --quiet >>/tmp/taleward-bau.log 2>&1 || true; } \
+    && docker compose up -d && gesund; then
+   melden "aktualisiert" "$ALT" "$NEU" ""
+   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
+diff --git a/deploy/docker-compose.heimnetz.yml b/deploy/docker-compose.heimnetz.yml
+index a79a88c..5ed7c38 100644
+--- a/deploy/docker-compose.heimnetz.yml
++++ b/deploy/docker-compose.heimnetz.yml
+@@ -7,9 +7,14 @@ x-worker: &worker
+   restart: unless-stopped
+   depends_on:
+     server: { condition: service_healthy }
++    # Nur wenn das Profil „ollama“ bzw. „ollama-cpu“ an ist: erst Ollama, dann der Worker (er prüft beim Start,
++    # ob ein Sprachmodell da ist, und übernimmt dann auch Recaps)
++    ollama: { condition: service_healthy, required: false }
++    ollama-cpu: { condition: service_healthy, required: false }
+   environment:
+     GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
+     WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++    WORKER_LLM_URL: http://ollama:11434
+   volumes:
+     - kopplung:/kopplung:ro
+     - worker-modelle:/modelle
+@@ -18,6 +23,25 @@ x-worker: &worker
+     driver: json-file
+     options: { max-size: "10m", max-file: "5" }
+ 
++# Gemeinsame Angaben der beiden Ollama-Varianten
++x-ollama: &ollama
++  image: ollama/ollama:${TALEWARD_OLLAMA_VERSION:-latest}
++  restart: unless-stopped
++  environment:
++    OLLAMA_KEEP_ALIVE: 2m          # Modell nicht dauerhaft im Speicher halten
++    OLLAMA_MAX_LOADED_MODELS: "1"
++  volumes:
++    - ollama-modelle:/root/.ollama
++  healthcheck:
++    test: ["CMD", "ollama", "list"]
++    interval: 15s
++    timeout: 10s
++    start_period: 20s
++    retries: 5
++  logging:
++    driver: json-file
++    options: { max-size: "10m", max-file: "5" }
++
+ services:
+   server:
+     build:
+@@ -64,10 +88,33 @@ services:
+     environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
+       WHISPER_DEVICE: cpu
+       WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++      WORKER_LLM_URL: http://ollama:11434
+       CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
+     cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
+     cpu_shares: 256                    # niedrigere Priorität als der Server
+ 
++  # ---------------------------------------------------------------- Ollama für lokale Recaps (optional)
++  # Profil „ollama“ (mit Grafikkarte) bzw. „ollama-cpu“, zusätzlich zum Worker: COMPOSE_PROFILES=worker,ollama
++  # Das Sprachmodell (Verwaltung → Zusammenfassung → Lokales Modell) lädt der Worker beim ersten
++  # Recap selbst herunter (ministral-3:8b etwa 5 GB) und entlädt es danach wieder, damit die Grafikkarte frei wird.
++  ollama:
++    profiles: ["ollama"]
++    <<: *ollama
++    deploy:
++      resources:
++        reservations:
++          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
++
++  ollama-cpu:
++    profiles: ["ollama-cpu"]
++    <<: *ollama
++    cpus: ${TALEWARD_WORKER_CPUS:-2}
++    cpu_shares: 256
++    networks:
++      default:
++        aliases: [ollama]   # der Worker erreicht beide Varianten unter http://ollama:11434
++
+ volumes:
+   kopplung:
+   worker-modelle:
++  ollama-modelle:
+diff --git a/deploy/docker-compose.yml b/deploy/docker-compose.yml
+index 96fb9e1..546d8d8 100644
+--- a/deploy/docker-compose.yml
++++ b/deploy/docker-compose.yml
+@@ -11,9 +11,14 @@ x-worker: &worker
+   restart: unless-stopped
+   depends_on:
+     server: { condition: service_healthy }
++    # Nur wenn das Profil „ollama“ bzw. „ollama-cpu“ an ist: erst Ollama, dann der Worker (er prüft beim Start,
++    # ob ein Sprachmodell da ist, und übernimmt dann auch Recaps)
++    ollama: { condition: service_healthy, required: false }
++    ollama-cpu: { condition: service_healthy, required: false }
+   environment:
+     GPU_MEMORY_LIMIT_MB: ${TALEWARD_WORKER_VRAM_MB:-0}   # 0 = ganze Grafikkarte
+     WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++    WORKER_LLM_URL: http://ollama:11434
+   volumes:
+     - kopplung:/kopplung:ro
+     - worker-modelle:/modelle
+@@ -22,6 +27,25 @@ x-worker: &worker
+     driver: json-file
+     options: { max-size: "10m", max-file: "5" }
+ 
++# Gemeinsame Angaben der beiden Ollama-Varianten
++x-ollama: &ollama
++  image: ollama/ollama:${TALEWARD_OLLAMA_VERSION:-latest}
++  restart: unless-stopped
++  environment:
++    OLLAMA_KEEP_ALIVE: 2m          # Modell nicht dauerhaft im Speicher halten
++    OLLAMA_MAX_LOADED_MODELS: "1"
++  volumes:
++    - ollama-modelle:/root/.ollama
++  healthcheck:
++    test: ["CMD", "ollama", "list"]
++    interval: 15s
++    timeout: 10s
++    start_period: 20s
++    retries: 5
++  logging:
++    driver: json-file
++    options: { max-size: "10m", max-file: "5" }
++
+ services:
+   server:
+     build:
+@@ -92,12 +116,35 @@ services:
+     environment:   # ersetzt die gemeinsamen Angaben ganz, deshalb WORKER_MODELL hier noch einmal
+       WHISPER_DEVICE: cpu
+       WORKER_MODELL: ${TALEWARD_WORKER_MODELL:-auto}
++      WORKER_LLM_URL: http://ollama:11434
+       CPU_THREADS: ${TALEWARD_WORKER_CPUS:-2}
+     cpus: ${TALEWARD_WORKER_CPUS:-2}   # Rechenkerne für den Worker – der Rest bleibt für den Server
+     cpu_shares: 256                    # niedrigere Priorität als der Server
+ 
++  # ---------------------------------------------------------------- Ollama für lokale Recaps (optional)
++  # Profil „ollama“ (mit Grafikkarte) bzw. „ollama-cpu“, zusätzlich zum Worker: COMPOSE_PROFILES=worker,ollama
++  # Das Sprachmodell (Verwaltung → Zusammenfassung → Lokales Modell) lädt der Worker beim ersten
++  # Recap selbst herunter (ministral-3:8b etwa 5 GB) und entlädt es danach wieder, damit die Grafikkarte frei wird.
++  ollama:
++    profiles: ["ollama"]
++    <<: *ollama
++    deploy:
++      resources:
++        reservations:
++          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
++
++  ollama-cpu:
++    profiles: ["ollama-cpu"]
++    <<: *ollama
++    cpus: ${TALEWARD_WORKER_CPUS:-2}
++    cpu_shares: 256
++    networks:
++      default:
++        aliases: [ollama]   # der Worker erreicht beide Varianten unter http://ollama:11434
++
+ volumes:
+   kopplung:
+   worker-modelle:
++  ollama-modelle:
+   caddy-daten:
+   caddy-config:
+diff --git a/install.sh b/install.sh
+index dedd17a..e58a4f1 100755
+--- a/install.sh
++++ b/install.sh
+@@ -182,7 +182,7 @@ if [ "$NVIDIA" -eq 1 ]; then
+   echo "NVIDIA-Grafikkarte gefunden${KARTE:+: $KARTE}."
+   echo "Der Worker kann direkt hier mitlaufen und die Aufnahmen umwandeln (einmalig etwa 8 GB, dazu 5 GB Modelle)."
+   VORGABE_W=j
+-  [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "worker" ] && VORGABE_W=n
++  [ -n "$ALT_PROFIL" ] && [[ ",$ALT_PROFIL," != *",worker,"* ]] && VORGABE_W=n
+   if [ "$(frage "Worker mit der Grafikkarte hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
+     if ! nvidia_smi -L >/dev/null 2>&1; then
+       if [ "$WSL" -eq 1 ]; then
+@@ -214,7 +214,7 @@ else
+     echo "Ohne passende Grafikkarte kann der Worker auch mit dem Prozessor rechnen – langsam: grob einen halben bis"
+     echo "ganzen Tag für 4 Stunden Aufnahme. Er nutzt dann $WORKER_CPUS von $KERNE Kernen, der Rest bleibt für den Server."
+     VORGABE_W=n
+-    [ "$ALT_PROFIL" = "worker-cpu" ] && VORGABE_W=j
++    [[ ",$ALT_PROFIL," == *",worker-cpu,"* ]] && VORGABE_W=j
+     if [ "$(frage "Worker mit dem Prozessor hier mitlaufen lassen? (j/n)" "$VORGABE_W")" = "j" ]; then
+       PROFIL=worker-cpu
+     fi
+@@ -222,8 +222,22 @@ else
+     echo "Keine passende Grafikkarte. Transkribiert wird auf einem PC mit der Worker-App oder über die Cloud."
+   fi
+ fi
++# Lokale Recaps: Ollama als weiterer Container neben dem Worker (Profil „ollama“ bzw. „ollama-cpu“)
++if [ -n "$PROFIL" ]; then
++  OLLAMA_PROFIL=ollama; VORGABE_O=j
++  if [ "$PROFIL" = "worker-cpu" ]; then OLLAMA_PROFIL=ollama-cpu; VORGABE_O=n; fi
++  if [ -n "$ALT_PROFIL" ]; then
++    if [[ ",$ALT_PROFIL," == *",ollama"* ]]; then VORGABE_O=j; else VORGABE_O=n; fi
++  fi
++  echo
++  echo "Die Recaps kann der Worker auch hier schreiben – mit einem lokalen Sprachmodell (Ollama, etwa 5 GB), ohne Cloud."
++  [ "$PROFIL" = "worker-cpu" ] && echo "Mit dem Prozessor dauert ein Recap allerdings lange, grob eine Stunde oder mehr."
++  if [ "$(frage "Ollama für lokale Recaps mit einrichten? (j/n)" "$VORGABE_O")" = "j" ]; then
++    PROFIL="$PROFIL,$OLLAMA_PROFIL"
++  fi
++fi
+ if [ -n "$ALT_PROFIL" ] && [ "$ALT_PROFIL" != "$PROFIL" ] && [ -f "$ZIEL/docker-compose.yml" ]; then
+-  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu >/dev/null 2>&1 || true)
++  (cd "$ZIEL" && COMPOSE_PROFILES="$ALT_PROFIL" docker compose rm -sf worker worker-cpu ollama ollama-cpu >/dev/null 2>&1 || true)
+ fi
+ 
+ # ------------------------------------------------------------------ Dateien
+@@ -258,10 +272,10 @@ TALEWARD_DOMAIN=$DOMAIN
+ ACME_EMAIL=$MAIL
+ # Version (Tag) des Servers, z. B. v0.4.3 – die automatischen Updates setzen sie selbst weiter
+ TALEWARD_VERSION=$VERSION
+-# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner)
++# Eingebauter Worker: worker (Grafikkarte), worker-cpu (Prozessor) oder leer (keiner); dazu ollama bzw. ollama-cpu
+ COMPOSE_PROFILES=$PROFIL
+ ENV
+-if [ "$PROFIL" = "worker-cpu" ] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
++if [[ "$PROFIL" == worker-cpu* ]] && ! printf '%s\n' "$EXTRA" | grep -q '^TALEWARD_WORKER_CPUS='; then
+   EXTRA=$(printf '%s\nTALEWARD_WORKER_CPUS=%s' "$EXTRA" "$WORKER_CPUS" | sed '/^$/d')
+ fi
+ [ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> "$ZIEL/.env"
+@@ -425,10 +439,15 @@ fi
+ 
+ if [ -n "$PROFIL" ]; then
+   sleep 5
+-  if docker compose ps --status running --services 2>/dev/null | grep -qx "$PROFIL"; then
+-    gruen "Worker läuft ($PROFIL). Beim ersten Auftrag lädt er die Sprachmodelle (einmalig etwa 5 GB)."
++  DIENST=${PROFIL%%,*}
++  if docker compose ps --status running --services 2>/dev/null | grep -qx "$DIENST"; then
++    gruen "Worker läuft ($DIENST). Beim ersten Auftrag lädt er die Modelle für die Transkription (einmalig etwa 5 GB)."
+   else
+-    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $PROFIL"
++    rot "Der Worker ist nicht gestartet. Nachsehen:  cd $ZIEL && sudo docker compose logs --tail=40 $DIENST"
++  fi
++  if [[ "$PROFIL" == *ollama* ]]; then
++    echo "Ollama läuft mit. Damit der Worker die Recaps schreibt: in der Verwaltung unter „Zusammenfassung“"
++    echo "„Lokales Modell“ wählen. Das Sprachmodell lädt er beim ersten Recap (einmalig etwa 5 GB)."
+   fi
+ fi
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index ee3d6ea..9b3f163 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.7"
++version = "0.4.8"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index f980b19..dcaa501 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.7"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.8"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index cd95dde..123741c 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.7"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.8"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_eingebauter_worker.py b/tests/test_eingebauter_worker.py
+index d56afc2..99e6588 100644
+--- a/tests/test_eingebauter_worker.py
++++ b/tests/test_eingebauter_worker.py
+@@ -202,3 +202,55 @@ def test_worker_beendet_sich_bei_geaenderten_einstellungen(tmp_path):
+                       neustart_noetig=lambda: True, nachsehen_s=0)
+     k.laufen()  # kehrt zurück, statt auf Aufträge zu warten – Docker startet ihn neu
+     assert k.neustart and aufrufe == []
++
++
++# ---------------------------------------------------------------- Ollama für lokale Recaps
++def test_compose_ollama_profile():
++    for name in ("docker-compose.yml", "docker-compose.heimnetz.yml"):
++        d = yaml.safe_load((WURZEL / "deploy" / name).read_text(encoding="utf-8"))
++        dienste = d["services"]
++        gpu, cpu = dienste["ollama"], dienste["ollama-cpu"]
++        assert gpu["profiles"] == ["ollama"] and cpu["profiles"] == ["ollama-cpu"]
++        for o in (gpu, cpu):
++            assert o["image"].startswith("ollama/ollama:") and "ollama-modelle:/root/.ollama" in o["volumes"]
++            assert o["healthcheck"]["test"] == ["CMD", "ollama", "list"]
++        assert gpu["deploy"]["resources"]["reservations"]["devices"][0]["driver"] == "nvidia"
++        assert "deploy" not in cpu and cpu["networks"]["default"]["aliases"] == ["ollama"]
++        for w in (dienste["worker"], dienste["worker-cpu"]):
++            assert w["environment"]["WORKER_LLM_URL"] == "http://ollama:11434"
++            assert w["depends_on"]["ollama"] == {"condition": "service_healthy", "required": False}
++            assert w["depends_on"]["ollama-cpu"]["required"] is False
++        assert "ollama-modelle" in d["volumes"]
++
++
++def test_ollama_art():
++    from app.config import Settings
++
++    assert Settings(eingebauter_worker="worker").ollama_art == ""
++    assert Settings(eingebauter_worker="worker,ollama").ollama_art == "gpu"
++    assert Settings(eingebauter_worker="worker-cpu,ollama-cpu").ollama_art == "cpu"
++    assert Settings(eingebauter_worker="worker,ollama").worker_art == "gpu"
++
++
++def test_verwaltung_zeigt_lokale_recaps(client, dbs, admin, monkeypatch, tmp_path):  # noqa: F811
++    import json
++
++    from app import config
++    from app.einstellungen import meta_schreiben
++    from app.models import Worker
++    from app.verwaltung.lokaler_worker import eingebauten_worker_koppeln
++
++    _eingebaut(monkeypatch, tmp_path, "worker,ollama")
++    eingebauten_worker_koppeln(dbs)
++    seite = client.get("/verwaltung/transkription").text
++    assert "Ollama läuft mit" in seite and 'href="/verwaltung/zusammenfassung"' in seite
++    w = dbs.query(Worker).filter_by(local=True).one()
++    w.info = json.dumps({"gpu": "RTX", "vramMb": 8192, "llm": "ministral-3:8b"})
++    from app.db import utcnow
++
++    w.last_seen_at = utcnow()
++    meta_schreiben(dbs, "llm.art", "lokal")
++    dbs.commit()
++    seite = client.get("/verwaltung/transkription").text
++    assert "vom Worker erkannt" in seite and "mit dem lokalen Sprachmodell" in seite
++    config.get_settings.cache_clear()
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 9131bc9..05c00f3 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.7"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.8"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index bf66089..d4d0c66 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.7"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.8"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 352e37b..67c2576 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.7"
++version = "0.4.8"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
