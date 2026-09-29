@@ -1,0 +1,133 @@
+From 63490f65c7f3c91ac9e3e61929a7712b9b6f8eaf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 15:43:59 +0200
+Subject: [PATCH] =?UTF-8?q?Taleward-Box:=20Dateiname=20nicht=20mehr=20von?=
+ =?UTF-8?q?=20os-release=20=C3=BCberschreiben=20(Server=200.4.10)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+bauen.sh hat /etc/os-release des Grundabbilds eingebunden; dabei wurde NAME zu
+„Debian GNU/Linux“ und das Packen scheiterte. Die Werte werden jetzt in einer
+Unter-Shell ausgelesen.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ box/bauen.sh                 | 10 ++++++----
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 7 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/box/bauen.sh b/box/bauen.sh
+index 5ad9717..97fd8b5 100755
+--- a/box/bauen.sh
++++ b/box/bauen.sh
+@@ -71,9 +71,11 @@ LOOP1=$(partition 1)
+ mount "$LOOP2" "$MNT"
+ mkdir -p "$MNT/boot/firmware"
+ mount "$LOOP1" "$MNT/boot/firmware"
+-. "$MNT/etc/os-release"
+-CODENAME=${VERSION_CODENAME:-bookworm}
+-echo "Grundsystem: ${PRETTY_NAME:-?} ($CODENAME)"
++# os-release nur auslesen, nicht einbinden – es setzt sonst Variablen wie NAME und VERSION neu
++os_wert() { (. "$MNT/etc/os-release" && eval "printf '%s' \"\${$1:-}\""); }
++CODENAME=$(os_wert VERSION_CODENAME); CODENAME=${CODENAME:-bookworm}
++GRUNDSYSTEM=$(os_wert PRETTY_NAME)
++echo "Grundsystem: ${GRUNDSYSTEM:-?} ($CODENAME)"
+ 
+ # ------------------------------------------------------------------ 3. Docker, zstd, git ins Abbild
+ if [ -z "${BOX_OHNE_CHROOT:-}" ]; then
+@@ -164,7 +166,7 @@ cat > "$AUSGABE/taleward-box.json" <<JSON
+ JSON
+ cat > "$AUSGABE/HINWEISE.md" <<TEXT
+ Taleward-Server **$FASSUNG** als fertiges Speicherkarten-Abbild für den Raspberry Pi 4 oder 5 (64 Bit, ab 4 GB).
+-Grundlage: ${PRETTY_NAME:-Raspberry Pi OS Lite}.
++Grundlage: ${GRUNDSYSTEM:-Raspberry Pi OS Lite}.
+ 
+ 1. **Raspberry Pi Imager** öffnen → Gerät wählen → „Betriebssystem“ → ganz unten „Eigenes Abbild“ → \`$NAME.img.xz\`
+    (oder in den Imager-Einstellungen das Repository \`https://github.com/$REPO/releases/latest/download/taleward-box.json\`).
+diff --git a/pyproject.toml b/pyproject.toml
+index 53a2923..2b00bd6 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.9"
++version = "0.4.10"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index a72defb..4899e31 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.9"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.10"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index ef79a52..3eacc93 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.9"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.10"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index db11ec8..410dd30 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.9"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.10"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 1f9246a..b029aa2 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -107,7 +107,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.9"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.10"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 7418a1e..cde91bc 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.9"
++version = "0.4.10"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
