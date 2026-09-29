@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import math
 import shutil
-import subprocess
 import tempfile
 import threading
 import time
@@ -124,9 +123,9 @@ def _teile(wav: Path, arbeit: Path, max_sek: float) -> list[tuple[Path, float]]:
     while start < gesamt - 0.5:
         laenge = min(max_sek, gesamt - start)
         ziel = arbeit / f"teil-{nr:02d}.ogg"
-        res = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
-                              "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
-                              str(ziel)], capture_output=True)
+        res = audio.ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
+                            "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
+                            str(ziel)], 900)
         if res.returncode != 0:
             raise AudioFehler("audio_unreadable", res.stderr.decode(errors="replace")[-300:])
         teile.append((ziel, start))

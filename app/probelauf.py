@@ -176,7 +176,7 @@ def audio_vorbereiten(quelle: Path, ziel: Path, ab_min: float, dauer_min: float 
     """Schneidet/wandelt nach 16 kHz mono WAV. Gibt die Dauer in Sekunden zurück."""
     if shutil.which("ffmpeg") is None:
         raise ProbelaufFehler("ffmpeg fehlt. Installieren mit: sudo apt install -y ffmpeg")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
     if ab_min > 0:
         cmd += ["-ss", str(ab_min * 60)]
     if dauer_min:
@@ -200,7 +200,7 @@ def hoerprobe_speichern(wav: Path, ziel: Path, dauer_s: float) -> None:
     """60 s aus der Mitte als MP3, damit man die Tisch-Simulation anhören kann."""
     start = max(0.0, dauer_s / 2 - 30)
     subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-t", "60",
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-t", "60",
          "-i", str(wav), "-c:a", "libmp3lame", "-q:a", "5", str(ziel)],
         capture_output=True,
     )

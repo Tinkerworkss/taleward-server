@@ -14,6 +14,7 @@ Erkenntnisse aus Probeläufen (Grafikkarte mit 8 GB):
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import re
 import time
@@ -23,6 +24,8 @@ from typing import Callable, Protocol
 from app import audio
 from app.audio import AudioFehler
 from app.worker_prozess import Abgebrochen
+
+log = logging.getLogger("worker")
 from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen
 
 # pyannote schickt sonst Nutzungsdaten (Audiodauer, Personenzahl) an pyannote.ai – hier nie
@@ -175,12 +178,15 @@ def _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords) -> d
     audio.zusammenfuegen(dateien, wav)
     gesamt = audio.dauer(wav)
     fortschritt(0.15)
+    log.info("Transkription läuft (%.0f min Audio) …", gesamt / 60)
     daten = motor.audio_laden(wav)
     segs = motor.transkribieren(daten, sprache, hotwords, _bereich(fortschritt, 0.15, 0.55))
     segs = _bereinigen(segs, hotwords)
+    log.info("Wörter werden zeitlich ausgerichtet …")
     segs = motor.ausrichten(segs, daten, sprache, _bereich(fortschritt, 0.55, 0.70))
     n = int(sitzung.get("expectedSpeakers") or 0)
     # Anwesende ±1: jemand kann kaum reden, oder eine Stimme wird in zwei Gruppen geteilt
+    log.info("Stimmen werden getrennt …")
     segs, embeddings = motor.sprecher_trennen(daten, segs, max(1, n - 1) if n else None, n + 1 if n else None,
                                               _bereich(fortschritt, 0.70, 0.95))
     segs = halluzinationen_entfernen(segs)

@@ -902,7 +902,7 @@ def extern_probe(
     arbeit = Path(tempfile.mkdtemp(prefix="extern-probe-"))
     try:
         ausschnitt = arbeit / "ausschnitt.wav"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-t", str(dauer * 60), "-i", str(datei), "-ac", "1",
+        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-t", str(dauer * 60), "-i", str(datei), "-ac", "1",
                         "-ar", "16000", str(ausschnitt)], check=True)
         klient = MistralKlient(k)
         segmente, sekunden = [], 0.0
