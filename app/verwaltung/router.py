@@ -262,7 +262,8 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session = 
         "in_arbeit": zustaende.get("transcribing", 0) + zustaende.get("summarizing", 0),
         "bei_sl": zustaende.get("awaiting_speakers", 0) + zustaende.get("awaiting_review", 0),
         "fehlgeschlagen": zustaende.get("failed", 0),
-        "knechte_online": sum(1 for w in workers if w.last_seen_at and w.last_seen_at > grenze and not w.paused),
+        "knechte_online": sum(1 for w in workers if w.last_seen_at and w.last_seen_at > grenze and not w.paused
+                              and w.app_paused_since is None),
         "knechte": len(workers),
     }
     db_datei = s.data_dir / "chronik.db"
@@ -637,7 +638,8 @@ def _llm_anzeige(db: Session) -> dict:
     return {"k": k, "mistral": k.ist_mistral, "key_ende": (k.api_key or "")[-4:] if k.api_key else None,
             "key_von_extern": bool(k.api_key) and not k.eigener_key,
             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
-             "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused for kn in worker)}
+             "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
+                                  for kn in worker)}
 
 
 @router.get("/zusammenfassung", response_class=HTMLResponse)

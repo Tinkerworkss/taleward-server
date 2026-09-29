@@ -338,6 +338,8 @@ class Worker(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")  # nimmt keine Aufträge an
     local: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")  # von der Verwaltung gestartet
+    # In der Worker-App pausiert (seit wann) – der Worker meldet sich weiter, nimmt aber nichts an
+    app_paused_since: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
 class Job(Base):

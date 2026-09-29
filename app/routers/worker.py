@@ -175,7 +175,13 @@ def _auftrag(db: Session, job: Job) -> dict:
 @router.post("/jobs/claim")
 def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Session = Depends(get_db)):
     erlaubt = set(worker.capabilities.split(","))
-    caps = [c for c in body.capabilities if c in erlaubt] if not worker.paused else []  # pausiert: keine Aufträge
+    # In der Worker-App pausiert: Der Worker meldet sich nur (Lebenszeichen), holt nichts ab
+    app_pause = bool(body.info.pop("pausiert", False))
+    if app_pause:
+        worker.app_paused_since = worker.app_paused_since or utcnow()
+    else:
+        worker.app_paused_since = None
+    caps = [c for c in body.capabilities if c in erlaubt] if not (worker.paused or app_pause) else []
     if "llm" in caps:
         from app.einstellungen import llm_konfig
 
@@ -184,6 +190,8 @@ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Sessi
     worker.info = json.dumps(body.info, ensure_ascii=False)[:2000]
     db.commit()
     warte = get_settings().claim_wait_seconds if body.wait_seconds is None else body.wait_seconds
+    if app_pause:
+        return _ohne_auftrag(worker.paused)
     ende = time.monotonic() + warte
     while True:
         if caps and db.get(Worker, worker.id).paused:  # während des Wartens pausiert
@@ -192,11 +200,16 @@ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Sessi
         if job is not None:
             return _auftrag(db, job)
         if time.monotonic() >= ende:
-            return Response(status_code=204)
+            return _ohne_auftrag(db.get(Worker, worker.id).paused)
         time.sleep(1)
         db.expire_all()
         worker.last_seen_at = utcnow()
         db.commit()
+
+
+def _ohne_auftrag(in_verwaltung_pausiert: bool) -> Response:
+    """204 ohne Auftrag. Ist der Worker in der Verwaltung pausiert, steht das im Kopf – die Worker-App zeigt es an."""
+    return Response(status_code=204, headers={"X-Taleward-Pausiert": "verwaltung"} if in_verwaltung_pausiert else {})
 
 
 @router.get("/jobs/{jobId}/files/{fileId}/chunks/{index}")

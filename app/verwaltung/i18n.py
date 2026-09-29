@@ -72,6 +72,7 @@ EN: dict[str, str] = {
     "Aufnahmen: bitte höchstens {n} Tage angeben.": "Recordings: please enter at most {n} days.",
     "Die Aufnahmen sollen länger bleiben. Dann müssen alle Mitglieder neu zustimmen – bitte das Kästchen dazu ankreuzen.": "Recordings are to be kept longer. All members then have to consent again – please tick the box for this.",
     "Aufnahmen": "Recordings",
+    "in der App pausiert": "paused in the app",
     "Wie lange eine Aufnahme nach der Umwandlung in Text auf dem Server bleibt. Solange sie da ist, lässt sich die Zusammenfassung gegen sie prüfen und die Transkription wiederholen. Die App nennt die Frist im Einwilligungstext.": "How long a recording stays on the server after it has been turned into text. While it is there, the summary can be checked against it and the transcription repeated. The app states the period in the consent text.",
     "Aufnahmen löschen": "Delete recordings",
     "Wenn die Spielleitung den Recap freigibt, spätestens nach der Frist (empfohlen)": "When the GM releases the recap, at the latest after the period (recommended)",

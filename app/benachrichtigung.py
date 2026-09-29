@@ -160,6 +160,9 @@ TEXTE = {
     "worker_fehlt": ("Aufträge warten, kein Worker erreichbar",
                      "{n} Auftrag/Aufträge warten seit über {h} Stunden, aber kein passender Worker ist verbunden. "
                      "Bitte den lokalen Server und den Worker prüfen (Verwaltung → Transkription)."),
+    "worker_pausiert": ("Aufträge warten, Worker pausiert",
+                        "{n} Auftrag/Aufträge warten seit über {h} Stunden. Der Worker {namen} ist pausiert – in der "
+                        "Worker-App bzw. unter Verwaltung → Transkription auf „Fortsetzen“ tippen."),
     "fehlschlag": ("Aufträge fehlgeschlagen",
                    "{n} Auftrag/Aufträge sind endgültig fehlgeschlagen: {liste}. Details und „Neu starten“ in der "
                    "Verwaltung → Warteschlange."),
@@ -204,6 +207,11 @@ EN = {
     "Bitte den lokalen Server und den Worker prüfen (Verwaltung → Transkription).":
         "{n} job(s) have been waiting for more than {h} hours, but no suitable worker is connected. Please check "
         "the local server and the worker (Admin → Transcription).",
+    "Aufträge warten, Worker pausiert": "Jobs waiting, worker paused",
+    "{n} Auftrag/Aufträge warten seit über {h} Stunden. Der Worker {namen} ist pausiert – in der "
+    "Worker-App bzw. unter Verwaltung → Transkription auf „Fortsetzen“ tippen.":
+        "{n} job(s) have been waiting for more than {h} hours. The worker {namen} is paused – tap “Resume” in the "
+        "worker app or under Admin → Transcription.",
     "Aufträge fehlgeschlagen": "Jobs failed",
     "{n} Auftrag/Aufträge sind endgültig fehlgeschlagen: {liste}. Details und „Neu starten“ in der "
     "Verwaltung → Warteschlange.":
@@ -287,7 +295,7 @@ def pruefen(db: Session) -> list[str]:
     from app.einrichtung import betriebsart
     from app.einstellungen import llm_konfig
     from app.models import Job
-    from app.queue import llm_worker_online, worker_online
+    from app.queue import llm_worker_online, pausierte_worker, worker_online
 
     k = konfig(db)
     if not k.aktiv:
@@ -299,12 +307,20 @@ def pruefen(db: Session) -> list[str]:
     grenze = jetzt - timedelta(hours=max(1, k.stunden))
     alt = select(func.count()).select_from(Job).where(Job.state == "queued", Job.engine == "local",
                                                       Job.created_at < grenze)
-    n = 0
+    n, pausiert = 0, []
     if betriebsart(db) != "cloud" and not worker_online(db, "asr"):
-        n += db.scalar(alt.where(Job.required_capability == "asr")) or 0
+        wartend = db.scalar(alt.where(Job.required_capability == "asr")) or 0
+        n += wartend
+        pausiert += pausierte_worker(db, "asr") if wartend else []
     if llm_konfig(db).art == "lokal" and not llm_worker_online(db):
-        n += db.scalar(alt.where(Job.required_capability == "llm")) or 0
-    if _zustand(db, "worker_fehlt", n > 0, n=n, h=k.stunden):
+        wartend = db.scalar(alt.where(Job.required_capability == "llm")) or 0
+        n += wartend
+        pausiert += pausierte_worker(db, "llm") if wartend else []
+    # Ist ein passender Worker nur pausiert, sagt die Meldung das – statt „kein Worker erreichbar“
+    namen = ", ".join(f"„{x}“" for x in dict.fromkeys(pausiert))
+    if _zustand(db, "worker_pausiert", n > 0 and bool(namen), n=n, h=k.stunden, namen=namen):
+        gemeldet.append("worker_pausiert")
+    if _zustand(db, "worker_fehlt", n > 0 and not namen, n=n, h=k.stunden):
         gemeldet.append("worker_fehlt")
 
     # Neue Fehlschläge (beim allerersten Lauf nur den Stand merken)

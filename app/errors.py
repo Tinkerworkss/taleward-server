@@ -196,6 +196,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
     # Status-Hinweise (ProcessingStatus.message)
     "status.no_worker": ("Zurzeit ist keine Transkription verfügbar. Die Aufnahme wird verarbeitet, sobald ein Worker bereitsteht.",
                          "Transcription is not available right now. The recording will be processed as soon as a worker is ready."),
+    "status.worker_paused": ("Der Worker ist gerade pausiert. Die Aufnahme wird verarbeitet, sobald er fortgesetzt wird.",
+                             "The worker is paused right now. The recording will be processed as soon as it resumes."),
     "status.external_planned": ("Zurzeit ist keine Transkription verfügbar. Steht bis {zeit} Uhr kein Worker bereit, übernimmt {anbieter} die Transkription (für diese Kampagne erlaubt).",
                                 "Transcription is not available right now. If no worker is ready by {zeit}, {anbieter} will transcribe the recording (allowed for this campaign)."),
     "status.failed_transcription": ("Die Transkription ist fehlgeschlagen: {detail}", "Transcription failed: {detail}"),

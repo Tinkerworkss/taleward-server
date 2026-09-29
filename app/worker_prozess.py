@@ -23,6 +23,7 @@ from app import audio
 from app.sprachmodell import SprachmodellFehler
 
 log = logging.getLogger("worker")
+PAUSE_MELDEN_S = 30  # so oft meldet sich ein pausierter Worker beim Server
 
 Fortschritt = Callable[[float], None]
 Melden = Callable[..., None]  # melden("ereignis", **daten) – für die Worker-App (chronik worker --app)
@@ -190,6 +191,7 @@ class WorkerProzess:
         self._stop = threading.Event()
         self.melden = melden
         self._pause = threading.Event()  # gesetzt = keine neuen Aufträge annehmen (laufender wird fertig)
+        self.in_verwaltung_pausiert = False  # vom Server gemeldet (X-Taleward-Pausiert)
         # Eingebauter Worker: zwischen den Aufträgen nachsehen, ob sich seine Einstellungen in der Verwaltung geändert
         # haben – dann beendet er sich, und Docker startet ihn mit den neuen Werten neu
         self.neustart_noetig = neustart_noetig
@@ -218,10 +220,27 @@ class WorkerProzess:
         if self.claim_wait is not None:
             body["waitSeconds"] = self.claim_wait
         r = self.client.post("/worker/v1/jobs/claim", json=body)
+        self._server_pause(r)
         if r.status_code == 204:
             return None
         r.raise_for_status()
         return r.json()
+
+    def pause_melden(self) -> None:
+        """In der App pausiert: dem Server Bescheid geben (Lebenszeichen, holt nichts ab). Ältere Server kennen
+        „pausiert“ nicht und antworten ohne Auftrag, weil keine Fähigkeiten mitgeschickt werden."""
+        r = self.client.post("/worker/v1/jobs/claim",
+                             json={"capabilities": [], "info": {**self.info, "pausiert": True}, "waitSeconds": 0})
+        self._server_pause(r)
+
+    def _server_pause(self, r: httpx.Response) -> None:
+        """In der Verwaltung pausiert oder fortgesetzt? Nur Änderungen melden (Protokoll und Worker-App)."""
+        an = r.headers.get("X-Taleward-Pausiert") == "verwaltung"
+        if an != self.in_verwaltung_pausiert:
+            self.in_verwaltung_pausiert = an
+            log.info("In der Verwaltung pausiert – nimmt keine Aufträge an" if an
+                     else "In der Verwaltung fortgesetzt")
+            self.melden("server_pausiert" if an else "server_fortgesetzt")
 
     def herunterladen(self, auftrag: dict) -> list[Path]:
         dateien = []
@@ -331,6 +350,7 @@ class WorkerProzess:
         pause = 1.0
         getrennt = False
         zuletzt = time.monotonic()
+        pause_gemeldet = None  # wann der Server zuletzt von der Pause erfahren hat
         while not self._stop.is_set():
             if self.neustart_noetig is not None and time.monotonic() - zuletzt >= self.nachsehen_s:
                 zuletzt = time.monotonic()
@@ -342,8 +362,15 @@ class WorkerProzess:
                 except httpx.HTTPError:
                     pass  # Server gerade nicht erreichbar – beim nächsten Mal
             if self._pause.is_set():
+                if pause_gemeldet is None or time.monotonic() - pause_gemeldet >= PAUSE_MELDEN_S:
+                    pause_gemeldet = time.monotonic()
+                    try:
+                        self.pause_melden()
+                    except httpx.HTTPError:
+                        pass  # nächster Versuch beim nächsten Takt
                 self._stop.wait(1)
                 continue
+            pause_gemeldet = None
             try:
                 if self.einen_auftrag():
                     self.melden("warte")

@@ -264,7 +264,8 @@ def processing_status(db: Session, s: GameSession, lang: str = "de") -> schemas.
         if job is not None:
             position = queue.queue_position(db, job)
         if not queue.worker_online(db, "asr"):
-            message = errors.ApiError(0, "status.no_worker").message(lang)
+            message = errors.ApiError(0, "status.worker_paused" if queue.pausierte_worker(db, "asr")
+                                      else "status.no_worker").message(lang)
             from app import extern
 
             name = extern.anbieter(db)

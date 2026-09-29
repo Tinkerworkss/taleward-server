@@ -146,6 +146,7 @@
         <td data-label="{{ _('Zustand') }}">
           {% if k.w.revoked_at %}<span class="marke-status marke-status--fehler">{{ _("gesperrt") }}</span>
           {% elif k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
+          {% elif k.online and k.w.app_paused_since %}<span class="marke-status marke-status--warten">{{ _("in der App pausiert") }}</span>
           {% elif k.online %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>
           {% else %}<span class="marke-status">{{ _("nicht verbunden") }}</span>{% endif %}
           <br><span class="leise">{{ _("zuletzt {zeit}", zeit=zeit(k.w.last_seen_at)) }}</span>

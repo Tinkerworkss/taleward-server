@@ -70,7 +70,7 @@ def llm_worker_online(db: Session) -> bool:
 
     grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
     for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze,
-                                             Worker.paused.is_(False))):
+                                             Worker.paused.is_(False), Worker.app_paused_since.is_(None))):
         try:
             if "llm" in w.capabilities.split(",") and json.loads(w.info or "{}").get("llm"):
                 return True
@@ -80,11 +80,20 @@ def llm_worker_online(db: Session) -> bool:
 
 
 def worker_online(db: Session, capability: str = "asr") -> bool:
+    """Ist ein Worker mit dieser Fähigkeit verbunden und nimmt Aufträge an (nicht pausiert)?"""
     grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
-    for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze)):
+    for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze,
+                                             Worker.paused.is_(False), Worker.app_paused_since.is_(None))):
         if capability in w.capabilities.split(","):
             return True
     return False
+
+
+def pausierte_worker(db: Session, capability: str = "asr") -> list[str]:
+    """Namen verbundener Worker, die gerade pausiert sind – in der Worker-App oder in der Verwaltung."""
+    grenze = utcnow() - timedelta(seconds=get_settings().worker_offline_after_seconds)
+    return [w.name for w in db.scalars(select(Worker).where(Worker.revoked_at.is_(None), Worker.last_seen_at > grenze))
+            if capability in w.capabilities.split(",") and (w.paused or w.app_paused_since is not None)]
 
 
 def kampagne_von(db: Session, job: Job):

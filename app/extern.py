@@ -25,7 +25,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import httpx
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app import audio, storage
@@ -59,6 +59,7 @@ def worker_seit(db: Session, zeitpunkt) -> bool:
     """War seit `zeitpunkt` irgendein (nicht pausierter, nicht gesperrter) Worker erreichbar?"""
     return db.scalar(select(func.count()).select_from(Worker).where(
         Worker.revoked_at.is_(None), Worker.paused.is_(False), Worker.last_seen_at >= zeitpunkt,
+        or_(Worker.app_paused_since.is_(None), Worker.app_paused_since >= zeitpunkt),
         Worker.capabilities.contains("asr"))) > 0
 
 
