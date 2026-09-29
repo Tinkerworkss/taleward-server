@@ -71,9 +71,11 @@ LOOP1=$(partition 1)
 mount "$LOOP2" "$MNT"
 mkdir -p "$MNT/boot/firmware"
 mount "$LOOP1" "$MNT/boot/firmware"
-. "$MNT/etc/os-release"
-CODENAME=${VERSION_CODENAME:-bookworm}
-echo "Grundsystem: ${PRETTY_NAME:-?} ($CODENAME)"
+# os-release nur auslesen, nicht einbinden – es setzt sonst Variablen wie NAME und VERSION neu
+os_wert() { (. "$MNT/etc/os-release" && eval "printf '%s' \"\${$1:-}\""); }
+CODENAME=$(os_wert VERSION_CODENAME); CODENAME=${CODENAME:-bookworm}
+GRUNDSYSTEM=$(os_wert PRETTY_NAME)
+echo "Grundsystem: ${GRUNDSYSTEM:-?} ($CODENAME)"
 
 # ------------------------------------------------------------------ 3. Docker, zstd, git ins Abbild
 if [ -z "${BOX_OHNE_CHROOT:-}" ]; then
@@ -164,7 +166,7 @@ cat > "$AUSGABE/taleward-box.json" <<JSON
 JSON
 cat > "$AUSGABE/HINWEISE.md" <<TEXT
 Taleward-Server **$FASSUNG** als fertiges Speicherkarten-Abbild für den Raspberry Pi 4 oder 5 (64 Bit, ab 4 GB).
-Grundlage: ${PRETTY_NAME:-Raspberry Pi OS Lite}.
+Grundlage: ${GRUNDSYSTEM:-Raspberry Pi OS Lite}.
 
 1. **Raspberry Pi Imager** öffnen → Gerät wählen → „Betriebssystem“ → ganz unten „Eigenes Abbild“ → \`$NAME.img.xz\`
    (oder in den Imager-Einstellungen das Repository \`https://github.com/$REPO/releases/latest/download/taleward-box.json\`).
