@@ -658,6 +658,7 @@ TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-A
 def _llm_anzeige(db: Session) -> dict:
     from app.einstellungen import extern_konfig, llm_konfig
     from app.sprachmodell import PREISE
+    from app.zusammenfassung import gegenpruefen_an
 
     k = llm_konfig(db)
     preis = (k.cent_ein, k.cent_aus) if k.cent_ein is not None and k.cent_aus is not None \
@@ -668,7 +669,7 @@ def _llm_anzeige(db: Session) -> dict:
             "key_von_extern": bool(k.api_key) and not k.eigener_key,
             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
-                                  for kn in worker)}
+                                  for kn in worker), "gegenpruefen": gegenpruefen_an(db)}
 
 
 @router.get("/zusammenfassung", response_class=HTMLResponse)
@@ -682,6 +683,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
                               api_url: str = Form(""), api_modell: str = Form(""), api_key: str = Form(""),
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
+                              gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
     """Wer Recap und Vorschläge schreibt. Überschreibt die .env; der Schlüssel wird nie angezeigt."""
     from app.einstellungen import LLM_ARTEN, llm_konfig
@@ -728,6 +730,10 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     meta_schreiben(db, "llm.lokal_kontext", str(kontext))
     meta_schreiben(db, "llm.cent_ein", preise[0])
     meta_schreiben(db, "llm.cent_aus", preise[1])
+    if gegenpruefen_feld:  # nur, wenn das Formular den Schalter enthält (ältere offene Seiten ändern ihn nicht)
+        from app.zusammenfassung import K_GEGENPRUEFEN
+
+        meta_schreiben(db, K_GEGENPRUEFEN, "an" if gegenpruefen else "aus")
     if key_loeschen:
         meta_schreiben(db, "llm.api_key", "")
     elif key:

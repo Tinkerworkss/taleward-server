@@ -13,7 +13,7 @@ from app.models import AuthMethod, Organization, OrgMember, User
 from app.security import create_token, verify_password
 from app.services import user_out
 
-API_VERSION = "0.4.5"
+API_VERSION = "0.4.6"
 
 router = APIRouter(tags=["Auth"])
 

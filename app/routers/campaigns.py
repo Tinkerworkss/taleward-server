@@ -126,6 +126,10 @@ def patch_campaign(
                 offen.status = "cancelled"
         elif not body.archived:
             c.archived_at = None
+    if "hotwords" in f and body.hotwords is not None:
+        from app import namenshilfe
+
+        namenshilfe.setzen(db, c, body.hotwords)
     if "cover_preset" in f:
         from app.bilder import cover_ordner, loeschen
 

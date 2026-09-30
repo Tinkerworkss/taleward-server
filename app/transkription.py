@@ -41,6 +41,8 @@ MIN_REDEZEIT = 5.0  # Sekunden; kleinere Cluster werden keiner Stimme zugeordnet
 PROBE_ZIEL = 6.0  # gewünschte Länge einer Hörprobe
 PROBE_MAX = 8.0
 PROBE_TEXT_MAX = 300
+UNSICHER_UNTER = 0.5  # Wörter, die die Ausrichtung schlechter als so trifft, meldet der Worker als unsicher (0.4.6)
+MAX_UNSICHER = 50     # je Abschnitt
 
 
 class Motor(Protocol):
@@ -93,6 +95,22 @@ def _probe_segment(segs: list[dict]) -> dict:
     return max(segs, key=lambda s: s["end"] - s["start"])
 
 
+def unsichere_woerter(seg: dict) -> list[dict]:
+    """Wörter mit schwacher Ausrichtung (whisperx.align: score 0–1). Eine schlecht getroffene Ausrichtung deutet auf
+    ein falsch erkanntes Wort – bei Eigennamen der häufigste Fehler. Nur Wort, Zeit und Wert; kein Audio."""
+    aus, satzende = [], True
+    for w in seg.get("words") or []:
+        wort = str(w.get("word") or "").strip()
+        if not wort:
+            continue
+        score = w.get("score")
+        if isinstance(score, (int, float)) and score < UNSICHER_UNTER and isinstance(w.get("start"), (int, float)):
+            aus.append({"word": wort[:100], "start": round(float(w["start"]), 2), "score": round(float(score), 3),
+                        "anfang": satzende})
+        satzende = wort[-1] in ".!?:…"
+    return aus[:MAX_UNSICHER]
+
+
 def sprecher_auswerten(segmente: list[dict], wav: Path, arbeit: Path, embeddings: dict | None = None,
                        track_member_id: str | None = None) -> tuple[list[dict], list[dict]]:
     """Segmente → (Segmente für die Zentrale, Stimmen mit Redezeit, Hörprobe, Beispieltext, Abdruck)."""
@@ -123,7 +141,7 @@ def sprecher_auswerten(segmente: list[dict], wav: Path, arbeit: Path, embeddings
         stimmen.append(eintrag)
     aus = [{"start": round(float(s["start"]), 2), "end": round(float(s["end"]), 2),
             "speaker": s.get("speaker") if s.get("speaker") not in (None, "UNBEKANNT", *zu_klein) else None,
-            "text": s["text"].strip()} for s in segmente]
+            "text": s["text"].strip(), "lowWords": unsichere_woerter(s)} for s in segmente]
     return aus, stimmen
 
 
@@ -184,6 +202,14 @@ def _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords) -> d
     segs = _bereinigen(segs, hotwords)
     taetigkeit("Wörter werden zeitlich ausgerichtet …", schritt="ausrichten")
     segs = motor.ausrichten(segs, daten, sprache, _bereich(fortschritt, 0.55, 0.70))
+    if sitzung.get("nurText"):
+        # Erneute Transkription mit korrigierter Namenshilfe: Stimmen sind schon zugeordnet, die Zentrale übernimmt
+        # sie zeitlich – keine Sprechertrennung, keine Hörproben, kein Stimmabdruck
+        segs = halluzinationen_entfernen(segs, nur_ohne_sprecher=False)
+        fortschritt(1.0)
+        return {"audioSeconds": round(gesamt, 1), "speakers": [],
+                "segments": [{"start": round(float(x["start"]), 2), "end": round(float(x["end"]), 2), "speaker": None,
+                              "text": x["text"].strip(), "lowWords": unsichere_woerter(x)} for x in segs]}
     n = int(sitzung.get("expectedSpeakers") or 0)
     # Anwesende ±1: jemand kann kaum reden, oder eine Stimme wird in zwei Gruppen geteilt
     taetigkeit("Stimmen werden getrennt …", schritt="sprecher")

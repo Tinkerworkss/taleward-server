@@ -39,9 +39,14 @@ in den Code siehe [ENTWICKLUNG.md](ENTWICKLUNG.md).
    bestätigt. Danach werden Hörproben und Stimmabdrücke der Session gelöscht. Bei Discord-Aufnahmen (eine Spur je
    Person) entfällt der Schritt.
 5. **Zusammenfassung** als Auftrag `summarize`: Recap, offene Fäden und Vorschläge für die Bibel – über eine Cloud-API
-   im Server oder über Ollama auf einem Worker. Zitate in den Vorschlägen werden im Transkript nachgeprüft.
-6. **Prüfen und veröffentlichen** (SL): Recap bearbeiten, Vorschläge annehmen oder verwerfen. Erst dann sehen
-   Spielende den Recap, und angenommene Vorschläge landen in der Bibel.
+   im Server oder über Ollama auf einem Worker. Zitate in den Vorschlägen werden im Transkript nachgeprüft
+   (`app/belege.py`, Kennzeichen `evidence_not_found`).
+6. **Gegenprüfung** (ab 0.4.6, abschaltbar): Ein eigener Aufruf bewertet jeden Absatz des Recaps gegen die Grundlage,
+   beanstandete Absätze werden einmal nachgebessert und noch einmal geprüft. Die Zentrale setzt die genannten Stellen
+   auf das echte Transkript (`app/pruefteil.py`) – `Recap.review`, nur für die SL.
+7. **Prüfen und veröffentlichen** (SL): Recap bearbeiten, unsicher erkannte Namen korrigieren (Textersetzung oder,
+   solange das Audio da ist, erneute Transkription mit der korrigierten Namenshilfe – `app/unsicher.py`), Vorschläge
+   annehmen oder verwerfen. Erst dann sehen Spielende den Recap, und angenommene Vorschläge landen in der Bibel.
 
 Die Aufnahme selbst bleibt je nach Einstellung bis zur Freigabe (höchstens 7 Tage) oder wird gleich nach der
 Transkription gelöscht (`app/aufbewahrung.py`).

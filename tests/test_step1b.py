@@ -22,7 +22,7 @@ def test_info_ist_oeffentlich(client):
     r = client.get(f"{API}/info")
     assert r.status_code == 200
     i = r.json()
-    assert i["apiVersion"] == "0.4.5" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+    assert i["apiVersion"] == "0.4.6" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
 
 
 def test_registrierung_geschlossen(client, dbs):

@@ -160,8 +160,15 @@ def holds_lease(job: Job | None, worker: Worker) -> bool:
     )
 
 
-def extend_lease(db: Session, job: Job, progress: float | None) -> None:
+def extend_lease(db: Session, job: Job, progress: float | None, step: str | None = None) -> None:
     job.lease_expires_at = utcnow() + timedelta(seconds=get_settings().lease_seconds)
+    if job.session_id and job.type == "summarize":
+        sess = db.get(GameSession, job.session_id)
+        if sess is not None and sess.state == "summarizing":
+            if progress is not None:
+                sess.progress = max(0.0, min(1.0, progress))
+            if step:
+                sess.status_message = f"summarizing.{step}"
     if progress is not None:
         job.progress = max(0.0, min(1.0, progress))
         if job.type == "document" and job.document_id:

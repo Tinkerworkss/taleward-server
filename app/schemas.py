@@ -6,7 +6,7 @@ response_model_exclude_unset=True, und die Ausgabe-Funktionen in services.py set
 Feld ausdrücklich.
 """
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
@@ -222,6 +222,7 @@ class CampaignOut(CampaignSummaryOut):
     world_info: str | None
     allow_external_transcription: bool
     allow_cloud_summary: bool = False
+    hotwords: list[str] | None = None  # 0.4.6: nur für die SL, für Spieler weggelassen
     members: list[MemberOut]
 
 
@@ -245,6 +246,7 @@ class CampaignPatch(ApiModel):
     allow_external_transcription: bool | None = None
     allow_cloud_summary: bool | None = None
     archived: bool | None = None
+    hotwords: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=200)
 
 
 class JoinRequest(ApiModel):
@@ -338,6 +340,7 @@ class ProcessingStatusOut(ApiModel):
     queue_position: int | None
     message: str | None
     updated_at: datetime
+    estimated_seconds: int | None = None
 
 
 class GmNoteOut(ApiModel):
@@ -371,6 +374,7 @@ class RecapOut(ApiModel):
     text: str
     open_threads: list[str]
     published_at: datetime | None
+    review: dict | None = None  # 0.4.6: Prüfteil, nur für die SL (für Spieler weggelassen)
 
 
 class RecapIn(ApiModel):
@@ -400,7 +404,7 @@ class ProposalOut(ApiModel):
     public_suggested: bool
     visibility_reason: str | None
     confidence: float
-    flags: list[Literal["joke_suspected", "low_confidence", "contradicts_bible"]]
+    flags: list[Literal["joke_suspected", "low_confidence", "contradicts_bible", "evidence_not_found"]]
     evidence: list[EvidenceOut]
     decision: Literal["open", "accepted", "rejected"]
 
@@ -546,3 +550,15 @@ class CampaignDocumentOut(ApiModel):
 
 class DocumentApplyIn(ApiModel):
     apply_world_info: bool = False
+
+
+# ---------- Qualitätsprüfung (0.4.6) ----------
+class CorrectionIn(ApiModel):
+    heard: str = Field(min_length=1, max_length=100)
+    correct: str = Field(max_length=100)
+    add_to_hotwords: bool = True
+
+
+class CorrectionsIn(ApiModel):
+    corrections: list[CorrectionIn] = Field(min_length=1, max_length=100)
+    retranscribe: bool = False

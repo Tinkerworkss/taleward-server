@@ -437,6 +437,74 @@ Antworte nur mit JSON: {"proposals": [{"entryType": "…", "action": "…", "tar
 "flags": [], "evidence": [{"start": "m:ss", "quote": "…"}]}]}. Sprache der Texte: {sprache}."""
 
 
+SYSTEM_PRUEFUNG = """Du prüfst den Recap einer Pen-&-Paper-Session gegen seine Grundlage (Transkript oder \
+Szenennotizen; Zeitangaben stehen vorn in eckigen Klammern, z. B. „[12:34]“). Du schreibst nichts um, du bewertest nur.
+Für jeden nummerierten Absatz:
+- urteil: "belegt" (jede Aussage steht in der Grundlage), "teilweise" (einiges belegt, anderes nicht), "unbelegt" \
+(kommt in der Grundlage nicht vor), "widerspricht" (die Grundlage sagt etwas anderes) oder "witz" (stammt aus einem \
+Witz oder einem Gespräch außerhalb des Spiels).
+- Streng sein: Ausschmückungen, die so nicht vorkamen (Gefühle, Aussehen, Gerüche, Wetter, Gedanken), machen einen \
+Absatz höchstens "teilweise".
+- stellen: 1 bis 3 Stellen der Grundlage, auf die sich der Absatz stützt – Zeitangabe "m:ss" und ein kurzes \
+wörtliches Zitat daraus (höchstens 20 Wörter). Leer, wenn nichts belegt ist.
+- begruendung: ein kurzer Satz, was fehlt, abweicht oder erfunden ist. Leer bei "belegt".
+Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "stellen": [{"zeit": "m:ss", "zitat": "…"}], \
+"begruendung": "…"}]}. Sprache der Begründungen: {sprache}."""
+
+SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
+sie beanstandet; der Grund steht jeweils dabei.
+Schreibe jeden genannten Absatz neu, sodass er nur noch enthält, was die Grundlage belegt. Lass Unbelegtes und \
+Ausgeschmücktes weg, statt es umzuformulieren – lieber kürzer. Gleicher Ton, Erzählstimme in der Vergangenheit, Figuren \
+nach ihren Charakteren. Bleibt von einem Absatz nichts Belegtes übrig, gib als text "" zurück. Reiner Text ohne Markdown.
+Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+
+URTEILE = {"belegt": "supported", "teilweise": "partial", "unbelegt": "unsupported", "widerspricht": "contradicted",
+           "witz": "off_game", "supported": "supported", "partial": "partial", "unsupported": "unsupported",
+           "contradicted": "contradicted", "off_game": "off_game"}
+BEANSTANDET = ("unsupported", "contradicted", "off_game")
+
+
+def absaetze(text: str) -> list[str]:
+    """Absätze eines Recaps (durch Leerzeile getrennt) – wie die App sie zählt."""
+    return [a.strip() for a in re.split(r"\n\s*\n", text.strip()) if a.strip()]
+
+
+def pruefung_lesen(d: dict, anzahl: int) -> list[dict]:
+    """Antwort der Gegenprüfung → je Absatz {index, verdict, note, evidence: [{start, quote}]} (start in Sekunden,
+    noch nicht gegen das Transkript geprüft – das macht die Zentrale). Fehlende Absätze: unchecked."""
+    roh = d.get("absaetze") or d.get("paragraphs") or []
+    nach_nr: dict[int, dict] = {}
+    for a in roh if isinstance(roh, list) else []:
+        if not isinstance(a, dict):
+            continue
+        try:
+            nr = int(a.get("nr") or a.get("index") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= nr <= anzahl and nr not in nach_nr:
+            nach_nr[nr] = a
+    aus = []
+    for nr in range(1, anzahl + 1):
+        a = nach_nr.get(nr)
+        if a is None:
+            aus.append({"index": nr - 1, "verdict": "unchecked", "note": None, "evidence": []})
+            continue
+        urteil = URTEILE.get(str(a.get("urteil") or a.get("verdict") or "").strip().lower(), "unchecked")
+        belege = []
+        for st in (a.get("stellen") or a.get("evidence") or [])[:3]:
+            if isinstance(st, str):
+                st = {"zeit": st}
+            if not isinstance(st, dict):
+                continue
+            zeit = zeit_lesen(st.get("zeit") if st.get("zeit") is not None else st.get("start"))
+            zitat = klartext(st.get("zitat") or st.get("quote") or "")[:300]
+            if zeit is not None or zitat:
+                belege.append({"start": zeit, "quote": zitat})
+        note = klartext(a.get("begruendung") or a.get("note") or "")[:500] or None
+        aus.append({"index": nr - 1, "verdict": urteil, "note": note, "evidence": belege})
+    return aus
+
+
 def _erwaehnt(name: str, text: str) -> bool:
     """Kommt der Name (oder ein markantes Wort daraus) im Text vor?"""
     klein = text.lower()
@@ -564,6 +632,18 @@ class Ablauf:
     max_transkript_tokens: int = 90_000  # darüber: erst Szenennotizen
     stueck_tokens: int = 6_000
     zaehler: Zaehler = field(default_factory=Zaehler)
+    schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
+
+    def _schritt(self, name: str) -> None:
+        try:
+            if self.schritt is not None:
+                self.schritt(name)
+            else:
+                from app.worker_prozess import schritt_melden
+
+                schritt_melden(name)
+        except Exception:  # noqa: BLE001 – ein Zwischenstand darf nie den Auftrag kosten
+            log.debug("Zwischenstand %s nicht gemeldet", name, exc_info=True)
 
     def grundlage(self, ein: dict, fortschritt: Callable[[float], None]) -> tuple[str, str]:
         """Transkript oder – wenn zu lang – Szenennotizen daraus. Liefert (Überschrift, Text)."""
@@ -573,6 +653,7 @@ class Ablauf:
             return "Transkript", text
         kopf = _kopf(ein)
         system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
+        self._schritt("notes")
         for runde in range(3):  # sehr lange Sessions bei kleinem Kontext: Notizen noch einmal verdichten
             teile = stuecke(zeilen, self.stueck_tokens)
             notizen = []
@@ -595,6 +676,7 @@ class Ablauf:
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"\n\n{titel}:\n{grundlage}")
         system = SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
+        self._schritt("recap")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         text = recap_text(d)
         if not text:
@@ -603,7 +685,65 @@ class Ablauf:
             log.warning("Sprachmodell: Recap-Antwort ohne text (%s)", form)
             raise SprachmodellFehler(f"Das Sprachmodell hat keinen Recap geliefert (Antwort: {form}).")
         faeden = [klartext(f)[:300] for f in (d.get("openThreads") or d.get("open_threads") or []) if klartext(f)][:10]
-        return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": klartext(text), "openThreads": faeden}
+        text = klartext(text)
+        if "\n\n" not in text and "\n" in text:  # Absätze nur mit einfachem Umbruch – für App und Prüfung trennen
+            text = re.sub(r"\n+", "\n\n", text)
+        return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": text, "openThreads": faeden}
+
+    def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
+        """Gegenprüfung (Stufe 3): jeden Absatz gegen die Grundlage bewerten – ein eigener Aufruf, der den Recap
+        nicht geschrieben hat und nichts umschreibt."""
+        teile = absaetze(text)
+        if not teile:
+            return []
+        liste = "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))
+        nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nRecap, Absatz für Absatz:\n{liste}"
+        system = SYSTEM_PRUEFUNG.replace("{sprache}", _sprache(ein))
+        return pruefung_lesen(self.zaehler.aufruf(self.klient, system, nutzer), len(teile))
+
+    def nachbessern(self, ein: dict, titel: str, grundlage: str, text: str, befund: list[dict]) -> str | None:
+        """Beanstandete Absätze einmal neu schreiben lassen. None, wenn nichts zu tun war oder nichts kam."""
+        teile = absaetze(text)
+        schlecht = [b for b in befund if b["verdict"] in BEANSTANDET and b["index"] < len(teile)]
+        if not schlecht:
+            return None
+        liste = "\n\n".join(f"Absatz {b['index'] + 1} (Grund: {b['note'] or b['verdict']}):\n{teile[b['index']]}"
+                             for b in schlecht)
+        nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nBeanstandete Absätze:\n{liste}"
+        system = SYSTEM_NACHBESSERUNG.replace("{sprache}", _sprache(ein))
+        d = self.zaehler.aufruf(self.klient, system, nutzer)
+        neu = {}
+        for a in d.get("absaetze") or d.get("paragraphs") or []:
+            try:
+                nr = int(a.get("nr") or a.get("index") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if any(b["index"] == nr - 1 for b in schlecht) and isinstance(a.get("text"), str):
+                neu[nr - 1] = klartext(a["text"])
+        if not neu:
+            return None
+        return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile) if neu.get(i, t).strip())
+
+    def gegenpruefen(self, ein: dict, titel: str, grundlage: str, r: dict) -> dict:
+        """Prüfung mit höchstens einer Nachbesserung. Ändert r["text"], wenn nachgebessert wurde. Scheitert das
+        Sprachmodell hier, bleibt der Recap wie er ist – die Absätze gelten dann als ungeprüft."""
+        pruefung = {"model": self.klient.modell, "revised": False, "paragraphs": []}
+        try:
+            self._schritt("review")
+            befund = self.pruefen(ein, titel, grundlage, r["text"])
+            if any(b["verdict"] in BEANSTANDET for b in befund):
+                self._schritt("revision")
+                neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
+                if neu:
+                    r["text"], pruefung["revised"] = neu, True
+                    self._schritt("review")
+                    befund = self.pruefen(ein, titel, grundlage, neu)
+            pruefung["paragraphs"] = befund
+        except SprachmodellFehler as e:
+            log.warning("Gegenprüfung übersprungen: %s", e)
+            pruefung["paragraphs"] = [{"index": i, "verdict": "unchecked", "note": None, "evidence": []}
+                                      for i in range(len(absaetze(r["text"])))]
+        return pruefung
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
@@ -620,21 +760,27 @@ class Ablauf:
         nutzer = (f"{_kopf(ein)}\n\nBibel (für Spieler sichtbar; gmNotes sind geheim):\n{bibel or '(leer)'}"
                   f"\n\nGeheime Einträge (nur Spielleitung):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE)))
+        self._schritt("proposals")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")])
 
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
-                   fortschritt: Callable[[float], None] = lambda _p: None) -> dict:
+                   fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
         """Das ganze Ergebnis. Die Grundlage (Transkript bzw. Notizen) ist für beide gleich; die Notizen entstehen
-        aus der Recap-Eingabe, die nichts Geheimes enthält."""
+        aus der Recap-Eingabe, die nichts Geheimes enthält. Die Gegenprüfung sieht nur, was der Recap sah."""
         titel, grundlage = self.grundlage(recap_ein, fortschritt)
         r = self.recap(recap_ein, titel, grundlage)
+        fortschritt(0.6 if gegenpruefen else 0.8)
+        pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         fortschritt(0.8)
         v = self.vorschlaege(vorschlag_ein, titel, grundlage)
         fortschritt(1.0)
-        return {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
-                "tokensOut": self.zaehler.tokens_out}
+        aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
+               "tokensOut": self.zaehler.tokens_out}
+        if pruefung is not None:
+            aus["review"] = pruefung
+        return aus
 
 
 def _kern(titel: str) -> str:

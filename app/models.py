@@ -97,6 +97,8 @@ class Campaign(Base):
     allow_external_transcription: Mapped[bool] = mapped_column(Boolean, default=False)
     # 0.3.10: Recap/Vorschläge (und Unterlagen) über die Cloud-API nur, wenn die SL es erlaubt
     allow_cloud_summary: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # 0.4.6: Namenshilfe der SL als JSON {"extra": [], "entfernt": [], "ignoriert": []} (app/namenshilfe.py)
+    namenshilfe: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     members: Mapped[list["Member"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
@@ -184,6 +186,9 @@ class GameSession(Base):
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     progress: Mapped[float | None] = mapped_column(Float, nullable=True)
     status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 0.4.6: erneute Transkription mit korrigierter Namenshilfe (höchstens zweimal; läuft gerade → True)
+    nachtranskriptionen: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    nachtranskription: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     state_updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -394,6 +399,8 @@ class TranscriptSegment(Base):
     end: Mapped[float] = mapped_column(Float)
     speaker_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     text: Mapped[str] = mapped_column(Text)
+    # 0.4.6: unsicher erkannte Wörter [{"word", "start", "score", "anfang"}] – Grundlage für uncertain-terms
+    unsicher: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class UsageLog(Base):
@@ -428,6 +435,7 @@ class Recap(Base):
     open_threads: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # von der SL bearbeitet
+    review: Mapped[str | None] = mapped_column(Text, nullable=True)  # 0.4.6: Prüfteil als JSON, nur für die SL
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

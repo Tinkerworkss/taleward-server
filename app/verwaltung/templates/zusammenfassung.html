@@ -59,6 +59,13 @@
         <span class="hilfe">{{ _("Für 8 GB Grafikspeicher: ministral-3:8b. Der Worker lädt es beim ersten Auftrag selbst herunter.") }}</span></label>
       <label>{{ _("Kontextgröße (Tokens)") }} <input type="number" name="lokal_kontext" value="{{ k.lokal_kontext }}" min="4096" max="262144" step="1024"></label>
     </fieldset>
+
+    <fieldset>
+      <legend>{{ _("Prüfung") }}</legend>
+      <input type="hidden" name="gegenpruefen_feld" value="1">
+      <label class="haken"><input type="checkbox" name="gegenpruefen" value="1"{% if llm.gegenpruefen %} checked{% endif %}> {{ _("Recap gegenprüfen") }}</label>
+      <p class="hilfe">{{ _("Ein zweiter Durchgang des Sprachmodells prüft jeden Absatz gegen das Transkript, bessert Unbelegtes einmal nach und zeigt der Spielleitung vor der Freigabe, worauf sich jeder Absatz stützt. Kostet etwa ein Drittel mehr Rechenzeit.") }}</p>
+    </fieldset>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
   </form>
   <p class="hilfe">{{ _("Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.") }}</p>

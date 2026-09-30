@@ -147,21 +147,30 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
 
 
 # ---------- Recap ----------
-def recap_out(s: GameSession, r: Recap) -> schemas.RecapOut:
-    return schemas.RecapOut(session_id=s.id, number=s.number, title=r.title, text=r.text,
-                            open_threads=json.loads(r.open_threads), published_at=s.published_at)
+def recap_out(s: GameSession, r: Recap, sl: bool = False) -> schemas.RecapOut:
+    """Der Prüfteil (review, 0.4.6) nur für die SL – für Spieler gar nicht im JSON."""
+    out = schemas.RecapOut(session_id=s.id, number=s.number, title=r.title, text=r.text,
+                           open_threads=json.loads(r.open_threads), published_at=s.published_at)
+    if sl:
+        from app import pruefteil
+
+        out.review = pruefteil.lesen(r.review)
+    return out
 
 
-@router.get("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut)
+@router.get("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut,
+            response_model_exclude_unset=True)
 def get_recap(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    s = load_session(db, sessionId, user).session  # Spieler: nur veröffentlichte Sessions
+    acc = load_session(db, sessionId, user)  # Spieler: nur veröffentlichte Sessions
+    s = acc.session
     r = db.get(Recap, s.id)
     if r is None:
         raise errors.not_found("recap")
-    return recap_out(s, r)
+    return recap_out(s, r, acc.is_gm)
 
 
-@router.put("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut)
+@router.put("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut,
+            response_model_exclude_unset=True)
 def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(current_user),
               db: Session = Depends(get_db)):
     acc = load_session(db, sessionId, user)
@@ -188,9 +197,94 @@ def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(curren
         if any(len(f) > 1000 for f in faeden):
             raise errors.bad_request("validation_error", "validation_error.open_threads")
         r.open_threads = json.dumps(faeden, ensure_ascii=False)
+    if "text" in felder:
+        from app import pruefteil
+
+        pruefung = pruefteil.lesen(r.review)
+        if pruefung["state"] == "done" and not pruefung["stale"]:
+            pruefung["stale"] = True  # Absätze können verrutscht sein – die App zeigt „vor deiner Änderung“
+            r.review = pruefteil.als_json(pruefung)
     r.edited_at = utcnow()
     db.commit()
-    return recap_out(s, r)
+    return recap_out(s, r, True)
+
+
+# ---------- Unsichere Namen (0.4.6) ----------
+def _korrigierbar(db: Session, s: GameSession) -> bool:
+    """awaiting_review, oder failed mit schon vorhandenem Transkript (Zusammenfassung gescheitert)."""
+    from app.models import TranscriptSegment
+
+    if s.state == "awaiting_review":
+        return True
+    return s.state == "failed" and db.scalar(
+        select(TranscriptSegment.id).where(TranscriptSegment.session_id == s.id).limit(1)) is not None
+
+
+@router.get("/sessions/{sessionId}/uncertain-terms", tags=["Chronik"])
+def uncertain_terms(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app import unsicher
+
+    s = _nur_sl(db, sessionId, user).session
+    weg = unsicher.audio_weg_am(db, s)
+    return {
+        "audioAvailable": unsicher.audio_da(db, s),
+        "audioDeletesAt": weg.isoformat().replace("+00:00", "Z") if weg else None,
+        "retranscribesLeft": max(0, unsicher.MAX_NACHTRANSKRIPTIONEN - (s.nachtranskriptionen or 0)),
+        "terms": unsicher.begriffe(db, s) if _korrigierbar(db, s) or s.state == "published" else [],
+    }
+
+
+@router.post("/sessions/{sessionId}/corrections", tags=["Chronik"])
+def corrections(sessionId: str, body: schemas.CorrectionsIn, request: Request, user: User = Depends(current_user),
+                db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+
+    from app import namenshilfe, queue, unsicher
+    from app.models import Campaign, Upload
+
+    acc = load_session(db, sessionId, user)
+    if not acc.is_gm:
+        raise errors.forbidden()
+    s = acc.session
+    if not _korrigierbar(db, s):
+        raise errors.conflict("wrong_state")
+    r = db.get(Recap, s.id)
+    if not body.retranscribe and r is None:
+        raise errors.conflict("wrong_state")
+    if body.retranscribe:
+        if not unsicher.audio_da(db, s):
+            raise errors.conflict("audio_gone")
+        if (s.nachtranskriptionen or 0) >= unsicher.MAX_NACHTRANSKRIPTIONEN:
+            raise errors.conflict("retranscribe_limit")
+    c = db.get(Campaign, s.campaign_id)
+    paare = []
+    for k in body.corrections:
+        heard, correct = " ".join(k.heard.split()), " ".join(k.correct.split())
+        if not heard:
+            raise errors.bad_request("validation_error")
+        if not correct:
+            namenshilfe.ignorieren(c, heard)
+            continue
+        paare.append((heard, correct))
+        if k.add_to_hotwords:
+            namenshilfe.hinzufuegen(db, c, correct)
+    if body.retranscribe:
+        up = db.scalar(select(Upload).where(Upload.session_id == s.id, Upload.state == "completed")
+                       .order_by(Upload.completed_at.desc()).limit(1))
+        # Offene Aufträge dieser Session (z. B. eine laufende Zusammenfassung nach failed) beenden
+        from app.models import Job
+
+        for j in db.scalars(select(Job).where(Job.session_id == s.id, Job.state.in_(("queued", "leased")))):
+            j.state, j.lease_expires_at, j.error_code = "failed", None, "superseded"
+        s.nachtranskriptionen = (s.nachtranskriptionen or 0) + 1
+        s.nachtranskription = True
+        queue.create_transcribe_job(db, s, up)
+        db.commit()
+        return JSONResponse(status_code=202, content=processing_status(db, s, sprache(request))
+                            .model_dump(mode="json", by_alias=True))
+    unsicher.ersetzen(db, s, paare)
+    db.commit()
+    return recap_out(s, r, True)
 
 
 # ---------- Veröffentlichen ----------

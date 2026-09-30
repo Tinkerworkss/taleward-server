@@ -24,6 +24,14 @@ class Modell:
         self.vorschlaege = vorschlaege or []
 
     def antwort(self, system: str, nutzer: str) -> dict:
+        if system.startswith("Du prüfst den Recap"):  # Gegenprüfung (0.4.6)
+            if "Absatz 2:" in nutzer:
+                return {"absaetze": [
+                    {"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "0:40", "zitat": "Wir reiten nach Rabenfels"}]},
+                    {"nr": 2, "urteil": "unbelegt", "stellen": [], "begruendung": "Regen kommt nicht vor."}]}
+            return {"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "0:40", "zitat": "reiten nach"}]}]}
+        if system.startswith("Du überarbeitest"):  # Nachbesserung: unbelegter Absatz fällt weg
+            return {"absaetze": [{"nr": 2, "text": ""}]}
         if "Szenennotizen" in system:
             return {"notizen": ["[0:00] Die Gruppe reitet nach Rabenfels."]}
         if "Recap" in system:
@@ -52,7 +60,7 @@ class Modell:
                                          "usage": {"prompt_tokens": 100_000, "completion_tokens": 4_000}})
 
     def recap_aufruf(self):
-        return next(a for a in self.aufrufe if "Recap" in a["system"])
+        return next(a for a in self.aufrufe if a["system"].startswith("Du schreibst den Recap"))
 
     def vorschlags_aufruf(self):
         return next(a for a in self.aufrufe if "Kampagnen-Bibel" in a["system"])
@@ -131,7 +139,11 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
 
     recap, vorschlag = api.recap_aufruf(), api.vorschlags_aufruf()
-    assert len(api.aufrufe) == 2 and recap["body"]["response_format"] == {"type": "json_object"}
+    # Recap, Gegenprüfung, Nachbesserung, zweite Prüfung, Vorschläge (0.4.6)
+    assert len(api.aufrufe) == 5 and recap["body"]["response_format"] == {"type": "json_object"}
+    for a in api.aufrufe[1:4]:  # Prüfung und Nachbesserung sehen nur, was der Recap sah
+        for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
+            assert verboten not in a["nutzer"] + a["system"], verboten
     # Recap: nichts Geheimes, nicht einmal der Name des geheimen Eintrags
     roh = recap["nutzer"] + recap["system"]
     for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
@@ -147,6 +159,13 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
 
     r = client.get(f"{API}/sessions/{s['id']}/recap", headers=w["gm"]).json()
     assert r["title"] == "Kapitel 1: Der Ritt" and r["openThreads"] == ["Wer hat den Brief geschrieben?"]
+    # Prüfteil: der unbelegte Absatz wurde einmal nachgebessert (hier: gestrichen), der Rest belegt
+    assert r["text"] == "Die Gruppe ritt nach Rabenfels."
+    rv = r["review"]
+    assert rv["state"] == "done" and rv["revised"] is True and rv["stale"] is False
+    assert rv["report"] == {"total": 1, "supported": 1, "partial": 0, "unsupported": 0, "contradicted": 0, "offGame": 0}
+    assert rv["paragraphs"][0]["evidence"][0]["start"] == 40.0
+    assert rv["paragraphs"][0]["evidence"][0]["quote"].startswith("reiten nach")
     vs = {v["title"]: v for v in client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()}
     assert set(vs) == {"Der Wirt", "Der Graue Fürst", "Rabenfels"}  # Ungültiges fällt weg
     assert vs["Der Wirt"]["evidence"] == [{"start": 40.0, "quote": "Wir reiten"}]  # erfundenes Zitat fällt weg
@@ -160,8 +179,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert "geheimen Notizen" in vs["Rabenfels"]["visibilityReason"] and "low_confidence" in vs["Rabenfels"]["flags"]
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
     assert (log.engine, log.model, log.tokens_in, log.tokens_out) == ("external", "mistral-large-latest",
-                                                                     200_000, 8_000)
-    assert log.cost_cents == round((200_000 * 50 + 8_000 * 150) / 1e6)  # Preistabelle Mistral Large
+                                                                     500_000, 20_000)
+    assert log.cost_cents == round((500_000 * 50 + 20_000 * 150) / 1e6)  # Preistabelle Mistral Large
     # Spieler sehen weiterhin nichts davon
     assert client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["pl"]).status_code == 404
 

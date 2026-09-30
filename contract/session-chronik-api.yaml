@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.5
+  version: 0.4.6
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -125,6 +125,11 @@ info:
     Änderungen in 0.4.5: Kampagnen abschließen (PATCH archived, CampaignSummary.archivedAt) und löschen
     (DELETE /campaigns/{id}), Mitglied entfernen bzw. selbst verlassen (DELETE …/members/{memberId}, Member.leftAt),
     Regeln für Rollenwechsel (last_gm), unveröffentlichtes Kapitel verwerfen (DELETE /sessions/{id}).
+    Änderungen in 0.4.6 (Qualitätsprüfung): Proposal.flags `evidence_not_found`; Recap.review (Absätze mit Belegen und
+    Prüfbericht, nur SL); GET /sessions/{id}/uncertain-terms und POST /sessions/{id}/corrections (unsichere Namen
+    korrigieren, optional erneut transkribieren); Campaign.hotwords (Namenshilfe, nur SL); feste Schlüssel für
+    ProcessingStatus.message während summarizing. Kein neuer ProcessingState. Alles Neue ist nur für die SL und wird
+    Spielern gar nicht ausgeliefert (nicht null, sondern weggelassen); ältere Apps ignorieren die Felder.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -675,6 +680,11 @@ paths:
                 language: { $ref: "#/components/schemas/ContentLanguage" }
                 allowExternalTranscription: { type: boolean }
                 allowCloudSummary: { type: boolean }
+                hotwords:
+                  type: array
+                  maxItems: 200
+                  items: { type: string, maxLength: 40 }
+                  description: Namenshilfe ganz ersetzen (nur SL, ab 0.4.6). Doppelte und leere Einträge verwirft der Server.
                 archived:
                   type: boolean
                   description: |
@@ -1438,6 +1448,80 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/uncertain-terms:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    get:
+      tags: [Chronik]
+      summary: Unsicher erkannte Namen und Begriffe (nur SL, ab 0.4.6; Spieler 404)
+      description: |
+        Aus den Wort-Sicherheiten der Transkription, gebündelt je Schreibweise; nur Großgeschriebenes und Wörter, die
+        nicht im Wörterbuch der Sprache stehen; nach Häufigkeit sortiert. Ähnlich klingende Bibel- und Charakternamen
+        kommen als Vorschlag mit. Leere Liste = nichts zu prüfen (die App überspringt dann den Schritt).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  audioAvailable: { type: boolean, description: "Audio noch da → erneute Transkription möglich" }
+                  audioDeletesAt: { type: [string, "null"], format: date-time }
+                  retranscribesLeft: { type: integer, description: "Wie oft noch erneut transkribiert werden darf (höchstens 2 je Session)" }
+                  terms:
+                    type: array
+                    items: { $ref: "#/components/schemas/UncertainTerm" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{sessionId}/corrections:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chronik]
+      summary: Schreibweisen korrigieren, optional erneut transkribieren (nur SL, ab 0.4.6)
+      description: |
+        Nur in awaiting_review (und failed nach der Zusammenfassung), sonst 409 `wrong_state`.
+        retranscribe false: Textersetzung in Transkript, Recap-Entwurf und Vorschlägen; die Prüfung (review) wird neu
+        berechnet → 200 mit dem Recap.
+        retranscribe true: nur solange audioAvailable (sonst 409 `audio_gone`), höchstens zweimal je Session
+        (409 `retranscribe_limit`). Zustand geht auf transcribing, die Stimmzuordnung bleibt, danach summarizing und
+        wieder awaiting_review → 202 mit ProcessingStatus samt estimatedSeconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [corrections]
+              properties:
+                corrections:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [heard, correct]
+                    properties:
+                      heard: { type: string }
+                      correct: { type: string, description: "Leer = Begriff so lassen, nur nicht mehr melden" }
+                      addToHotwords: { type: boolean, default: true, description: "Künftig als Namenshilfe der Kampagne" }
+                retranscribe: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Ersetzt (ohne retranscribe) – der aktualisierte Recap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recap" }
+        "202":
+          description: Eingereiht (retranscribe)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /sessions/{sessionId}/transcript:
     parameters: [{ $ref: "#/components/parameters/sessionId" }]
@@ -2245,6 +2329,14 @@ components:
             worldInfo:
               type: [string, "null"]
               description: Hintergrund der Spielwelt für alle Mitglieder (Absätze durch Leerzeilen getrennt)
+            hotwords:
+              type: array
+              maxItems: 200
+              items: { type: string, maxLength: 40 }
+              description: |
+                Namenshilfe für die Transkription (nur SL, ab 0.4.6; für Spieler weggelassen). Der Server leitet sie
+                anfangs aus Charakternamen, Bibel und worldInfo ab; Korrekturen aus POST …/corrections mit addToHotwords
+                kommen dazu. Per PATCH /campaigns/{id} ganz ersetzbar.
             members:
               type: array
               items: { $ref: "#/components/schemas/Member" }
@@ -2310,8 +2402,19 @@ components:
         state: { $ref: "#/components/schemas/ProcessingState" }
         progress: { type: [number, "null"], minimum: 0, maximum: 1 }
         queuePosition: { type: [integer, "null"] }
-        message: { type: [string, "null"], description: "z. B. Fehlertext bei failed" }
+        message:
+          type: [string, "null"]
+          description: |
+            z. B. Fehlertext bei failed oder ein Hinweis beim Warten. Ab 0.4.6 in summarizing einer dieser Schlüssel,
+            den die App übersetzt: summarizing.notes (Szenennotizen), summarizing.recap, summarizing.proposals,
+            summarizing.review (Gegenprüfung), summarizing.revision (Nachbesserung). Andere Texte zeigt die App wie
+            bisher unverändert an.
         updatedAt: { type: string, format: date-time }
+        estimatedSeconds:
+          type: [integer, "null"]
+          description: |
+            Geschätzte Restdauer in Sekunden (ab 0.4.6), vor allem in der 202-Antwort von POST …/corrections mit
+            retranscribe (aus der letzten Rechenzeit dieser Session). null = keine Schätzung.
 
     Speaker:
       type: object
@@ -2358,7 +2461,10 @@ components:
         confidence: { type: number, minimum: 0, maximum: 1 }
         flags:
           type: array
-          items: { type: string, enum: [joke_suspected, low_confidence, contradicts_bible] }
+          items: { type: string, enum: [joke_suspected, low_confidence, contradicts_bible, evidence_not_found] }
+          description: |
+            evidence_not_found (ab 0.4.6) = kein Zitat des Vorschlags im Transkript gefunden; die App nennt den Grund
+            („Beleg im Transkript nicht gefunden“). Ältere Apps behandeln unbekannte Kennzeichen wie low_confidence.
         evidence:
           type: array
           description: Belegstellen im Transkript
@@ -2425,6 +2531,73 @@ components:
         text: { type: string, description: Vorlesbarer Recap, Absätze durch Leerzeilen getrennt }
         openThreads: { type: array, items: { type: string } }
         publishedAt: { type: [string, "null"], format: date-time }
+        review: { $ref: "#/components/schemas/RecapReview" }
+
+    RecapReview:
+      type: object
+      description: |
+        Prüfteil des Recaps (ab 0.4.6). Nur für die SL, vor und nach der Veröffentlichung; für Spieler weggelassen.
+        Absatz = durch Leerzeile getrennter Block in Recap.text, gleiche Reihenfolge. Der Server streicht nichts; jede
+        Entscheidung bleibt bei der SL. Nach PUT …/recap bleiben die Angaben stehen, können aber verrutschen:
+        dann stale true, die App zeigt die Prüfung als „vor deiner Änderung“.
+      properties:
+        state: { type: string, enum: [pending, done, skipped], description: "skipped = Prüfung in der Verwaltung abgeschaltet oder kein Modell" }
+        stale: { type: boolean, default: false, description: "Recap wurde nach der Prüfung bearbeitet" }
+        checkedAt: { type: [string, "null"], format: date-time }
+        model: { type: [string, "null"], description: "Sprachmodell der Gegenprüfung" }
+        revised: { type: boolean, description: "Beanstandete Absätze wurden einmal neu geschrieben" }
+        report:
+          type: object
+          properties:
+            total: { type: integer }
+            supported: { type: integer }
+            partial: { type: integer }
+            unsupported: { type: integer }
+            contradicted: { type: integer }
+            offGame: { type: integer }
+        paragraphs:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer, description: "0-basiert, Absatz in text" }
+              verdict:
+                type: string
+                enum: [supported, partial, unsupported, contradicted, off_game, unchecked]
+                description: |
+                  supported = alle Aussagen belegt; partial = teilweise; unsupported = kein Beleg; contradicted =
+                  Transkript sagt etwas anderes; off_game = vermutlich Witz oder außerhalb des Spiels; unchecked =
+                  übersprungen (z. B. Zeitgrenze).
+              note: { type: [string, "null"], description: "Kurze Begründung des Prüfers für die SL" }
+              evidence:
+                type: array
+                description: Belegstellen im Transkript (echte Zeitpunkte)
+                items:
+                  type: object
+                  properties:
+                    start: { type: number }
+                    end: { type: [number, "null"] }
+                    quote: { type: string }
+                    speakerMemberId: { type: [string, "null"] }
+
+    UncertainTerm:
+      type: object
+      properties:
+        id: { type: string }
+        heard: { type: string, example: "Tharvok" }
+        alternatives: { type: array, items: { type: string }, example: ["Darvok", "Tarvok"] }
+        occurrences: { type: integer }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        examples:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            properties:
+              start: { type: number }
+              quote: { type: string }
+        suggestedEntryId: { type: [string, "null"], description: "Ähnlich klingender Bibel-Eintrag" }
+        suggestedMemberId: { type: [string, "null"], description: "Ähnlich klingender Charaktername" }
 
     EntryInput:
       type: object

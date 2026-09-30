@@ -169,12 +169,17 @@ def campaign_summary(db: Session, c: Campaign, me: Member) -> schemas.CampaignSu
 
 def campaign_out(db: Session, c: Campaign, me: Member) -> schemas.CampaignOut:
     members = sorted(c.members, key=lambda m: (m.role != "gm", m.joined_at))
-    return schemas.CampaignOut(
+    out = schemas.CampaignOut(
         **_summary_fields(db, c, me), description=c.description, language=c.language, system=c.system,
         system_name=c.system_name, world_info=c.world_info,
         allow_external_transcription=c.allow_external_transcription, allow_cloud_summary=c.allow_cloud_summary,
         members=[member_out(m, me) for m in members],
     )
+    if me.role == "gm":  # Namenshilfe (0.4.6) nur für die SL – für Spieler gar nicht im JSON
+        from app import namenshilfe
+
+        out.hotwords = namenshilfe.anzeige(db, c)
+    return out
 
 
 def random_cover() -> str:
@@ -277,6 +282,8 @@ def processing_status(db: Session, s: GameSession, lang: str = "de") -> schemas.
                 zeit = extern.ab_wann(db, job).astimezone(__import__("zoneinfo").ZoneInfo("Europe/Berlin"))
                 message = errors.ApiError(0, "status.external_planned", anbieter=extern.ANBIETER[name],
                                           zeit=zeit.strftime("%d.%m. %H:%M")).message(lang)
+    elif s.state == "summarizing" and (s.status_message or "").startswith("summarizing."):
+        pass  # es arbeitet schon jemand daran – Zwischenschritt für die App (0.4.6)
     elif s.state == "summarizing":
         from app.einstellungen import llm_konfig
 
@@ -295,8 +302,25 @@ def processing_status(db: Session, s: GameSession, lang: str = "de") -> schemas.
             message = errors.ApiError(0, "status.no_summarizer").message(lang)
     return schemas.ProcessingStatusOut(
         state=s.state, progress=s.progress, queue_position=position,
-        message=message, updated_at=s.state_updated_at,
+        message=message, updated_at=s.state_updated_at, estimated_seconds=restdauer(db, s),
     )
+
+
+def restdauer(db: Session, s: GameSession) -> int | None:
+    """Geschätzte Restdauer einer erneuten Transkription samt Zusammenfassung (0.4.6) – aus der letzten Rechenzeit
+    dieser Session. Sonst None."""
+    if not s.nachtranskription or s.state not in ("queued", "transcribing"):
+        return None
+    from app.models import UsageLog
+
+    summe = 0.0
+    for art in ("transcription", "summary"):
+        sekunden = db.scalar(select(UsageLog.compute_seconds).where(UsageLog.session_id == s.id, UsageLog.kind == art)
+                             .order_by(UsageLog.created_at.desc()).limit(1))
+        summe += float(sekunden or 0)
+    if summe <= 0:
+        return None
+    return int(round(summe * (1 - (s.progress or 0) * 0.7 if s.state == "transcribing" else 1)))
 
 
 def build_attendees(db: Session, campaign_id: str, items: list[schemas.AttendeeIn]) -> list[Attendee]:

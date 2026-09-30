@@ -391,6 +391,10 @@ EN: dict[str, str] = {
     "Setzen und überall abmelden": "Set and sign out everywhere",
     "Verwalter-Recht entziehen": "Remove administrator rights",
     "Konto löschen": "Delete account",
+    "Prüfung": "Review",
+    "Recap gegenprüfen": "Cross-check the recap",
+    "Ein zweiter Durchgang des Sprachmodells prüft jeden Absatz gegen das Transkript, bessert Unbelegtes einmal nach und zeigt der Spielleitung vor der Freigabe, worauf sich jeder Absatz stützt. Kostet etwa ein Drittel mehr Rechenzeit.":
+        "A second pass of the language model checks every paragraph against the transcript, revises unsupported parts once and shows the game master what each paragraph is based on before sharing. Takes about a third more computing time.",
     "Löscht Konto, Anmeldungen, Charakterbilder, Hintergrund und Stimmprofil endgültig. Kommentare bleiben als „gelöschtes Konto“ stehen, Kapitel und Recaps bleiben unverändert. Ist die Person irgendwo die einzige Spielleitung, geht es erst, wenn dort jemand anderes Spielleitung ist.":
         "Permanently deletes the account, sign-ins, character portraits, backstory and voice profile. Comments remain as “deleted account”; chapters and recaps stay unchanged. If the person is the only game master somewhere, this only works once someone else is game master there.",
     "Benutzername zur Bestätigung": "Username to confirm",

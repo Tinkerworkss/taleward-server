@@ -54,6 +54,16 @@ def taetigkeit(text: str, **daten) -> None:
             pass
 
 
+_schritt: Callable[[str], None] | None = None  # während eines Zusammenfassungs-Auftrags gesetzt
+
+
+def schritt_melden(name: str) -> None:
+    """Zwischenschritt der Zusammenfassung (notes, recap, review, revision, proposals) – geht mit dem nächsten
+    Herzschlag an die Zentrale, die App zeigt ihn übersetzt an."""
+    if _schritt is not None:
+        _schritt(name)
+
+
 class Abgebrochen(Exception):
     """Lease verloren oder Worker wird beendet."""
 
@@ -108,16 +118,22 @@ def verarbeite_attrappe(auftrag: dict, dateien: list[Path], arbeit: Path, fortsc
         t, k = 0.0, 0
         redezeit = [0.0] * n
         erste: dict[int, float] = {}
+        # Ein unsicher erkannter Name zum Ausprobieren der Namensprüfung (0.4.6) – mit Namenshilfe „richtig“ erkannt
+        name = next((h for h in sitzung.get("hotwords") or [] if h.casefold() in ("tharvok", "darvok")), "Tharvok")
         while t < gesamt:
             nr = k % n
             ende = min(t + 18, gesamt)
-            segmente.append({"start": t, "end": ende, "speaker": f"SPEAKER_{nr:02d}",
-                             "text": f"Platzhalter (Testmodus): Stimme {nr + 1}, Abschnitt {k + 1}."})
+            seg = {"start": t, "end": ende, "speaker": None if sitzung.get("nurText") else f"SPEAKER_{nr:02d}",
+                   "text": f"Platzhalter (Testmodus): Stimme {nr + 1}, Abschnitt {k + 1}."}
+            if k in (0, 2):
+                seg["text"] += f" Wir treffen {name} am Tor."
+                seg["lowWords"] = [{"word": name, "start": round(t + 3, 2), "score": 0.31, "anfang": False}]
+            segmente.append(seg)
             redezeit[nr] += ende - t
             erste.setdefault(nr, t)
             t, k = t + 20, k + 1
         for nr in range(n):
-            if nr not in erste:
+            if nr not in erste or sitzung.get("nurText"):
                 continue
             probe = audio.hoerprobe(wav, erste[nr], 5.0, arbeit / f"probe-{nr}.ogg")
             sprecher.append({"label": f"SPEAKER_{nr:02d}", "speakingSeconds": redezeit[nr],
@@ -163,7 +179,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
         ablauf = Ablauf(klient, max_transkript_tokens=max(2000, klient.kontext - 5000),
                         stueck_tokens=max(1500, (klient.kontext - 4000) // 2))
         try:
-            d = ablauf.ausfuehren(z["recap"], z["proposals"], fortschritt)
+            d = ablauf.ausfuehren(z["recap"], z["proposals"], fortschritt, gegenpruefen=bool(z.get("review")))
         finally:
             klient.entladen()
         _messung["tokenS"] = ablauf.zaehler.token_s_mittel
@@ -313,17 +329,25 @@ class WorkerProzess:
         t0 = time.monotonic()
         self.melden("auftrag", jobId=job, typ=auftrag.get("type") or "transcribe", dateien=len(auftrag["files"]))
         self.aufraeumen()
-        stand = {"p": 0.0, "verloren": False, "gemeldet": -1.0}
+        stand = {"p": 0.0, "verloren": False, "gemeldet": -1.0, "schritt": None}
         herz_stop = threading.Event()
+        sofort = threading.Event()  # neuer Zwischenschritt: nicht bis zum nächsten Takt warten
 
         def herzschlag():
             takt = max(5, auftrag["leaseSeconds"] // 3)
-            while not herz_stop.wait(takt):
+            while True:
+                sofort.wait(takt)
+                sofort.clear()
+                if herz_stop.is_set():
+                    return
                 # Netz kurz weg: nicht erst zum nächsten Takt wieder klopfen, sonst ist nach drei verpassten
                 # Herzschlägen die Lease weg und ein fertiges Ergebnis wird verworfen
+                koerper = {"progress": stand["p"]}
+                if stand["schritt"]:
+                    koerper["step"] = stand["schritt"]
                 for _ in range(HERZ_NACHSCHLAEGE + 1):
                     try:
-                        r = self.client.post(f"/worker/v1/jobs/{job}/progress", json={"progress": stand["p"]})
+                        r = self.client.post(f"/worker/v1/jobs/{job}/progress", json=koerper)
                         if r.status_code == 409:
                             stand["verloren"] = True
                             return
@@ -340,10 +364,15 @@ class WorkerProzess:
             if stand["verloren"] or self._stop.is_set():
                 raise Abgebrochen()
 
+        def schritt(name: str) -> None:
+            stand["schritt"] = name
+            sofort.set()
+
         herz = threading.Thread(target=herzschlag, daemon=True)
         herz.start()
-        global _taetigkeit
+        global _taetigkeit, _schritt
         _taetigkeit = lambda text, **d: self.melden("taetigkeit", jobId=job, text=text, **d)  # noqa: E731
+        _schritt = schritt
         try:
             if auftrag.get("type") in ("summarize", "document"):
                 if self.zusammenfassen is None:
@@ -382,8 +411,10 @@ class WorkerProzess:
             self._melde_fehler(job, "worker_error", f"{type(e).__name__}: {e}"[:500], True)
         finally:
             _taetigkeit = None
+            _schritt = None
             _messung.clear()
             herz_stop.set()
+            sofort.set()
             self.aufraeumen()
         return True
 

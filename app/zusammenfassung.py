@@ -186,6 +186,17 @@ class Ergebnis:
     tokens_in: int = 0
     tokens_out: int = 0
     kosten_cent: int = 0
+    pruefung: dict | None = None  # Antwort der Gegenprüfung (0.4.6); None = nicht geprüft
+
+
+K_GEGENPRUEFEN = "pruefung.gegenpruefen"
+
+
+def gegenpruefen_an(db: Session) -> bool:
+    """Verwaltung → Zusammenfassung: „Recap gegenprüfen“ (Standard an)."""
+    from app.einstellungen import meta_lesen
+
+    return meta_lesen(db, K_GEGENPRUEFEN) != "aus"
 
 
 def attrappe(e: Eingabe) -> Ergebnis:
@@ -235,7 +246,14 @@ def attrappe(e: Eingabe) -> Ergebnis:
                            target_entry_id=ziel.id, suggested_visibility="public",
                            visibility_reason="Die Gruppe ist ihm begegnet (Testmodus)", confidence=0.7,
                            evidence=belege[:1]))
-    return Ergebnis(titel, text, faeden, v, modell="attrappe")
+    # Prüfteil zum Ausprobieren in der App: erster Absatz belegt, zweiter teilweise
+    pruefung = {"model": "attrappe", "revised": False, "paragraphs": [
+        {"index": 0, "verdict": "supported", "note": None, "evidence": belege[:1]},
+        {"index": 1, "verdict": "partial",
+         "note": "Platzhalter: Die Dauer steht so nicht im Transkript." if not en
+         else "Placeholder: the duration is not stated in the transcript.", "evidence": belege[1:2]},
+    ]}
+    return Ergebnis(titel, text, faeden, v, modell="attrappe", pruefung=pruefung)
 
 
 def ergebnis_aus(d: dict, kosten_cent: int = 0) -> Ergebnis:
@@ -248,7 +266,8 @@ def ergebnis_aus(d: dict, kosten_cent: int = 0) -> Ergebnis:
          for p in d.get("proposals") or []]
     return Ergebnis(titel=d.get("title") or "", text=d["text"], offene_faeden=list(d.get("openThreads") or []),
                     vorschlaege=v, modell=d.get("model") or "?", tokens_in=int(d.get("tokensIn") or 0),
-                    tokens_out=int(d.get("tokensOut") or 0), kosten_cent=kosten_cent)
+                    tokens_out=int(d.get("tokensOut") or 0), kosten_cent=kosten_cent,
+                    pruefung=d.get("review") if isinstance(d.get("review"), dict) else None)
 
 
 def api_klient(k):
@@ -272,7 +291,9 @@ def zusammenfasser(db: Session):
         def ueber_api(db_, s):
             klient = api_klient(k)
             basis = eingabe_bauen(db_, s)
-            d = Ablauf(klient).ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis))
+            ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name))
+            d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
+                                  gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, klient.kosten_cent(d["tokensIn"], d["tokensOut"])), "external"
         return ueber_api
     return None
@@ -309,16 +330,23 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
     """Ersetzt Recap und Vorschläge dieser Session (bei Neustart) und stellt die Session zur Prüfung bereit."""
     db.execute(delete(Proposal).where(Proposal.session_id == s.id))
     db.execute(delete(Recap).where(Recap.session_id == s.id))
-    db.add(Recap(session_id=s.id, title=erg.titel.strip()[:300] or f"Kapitel {s.number}", text=erg.text.strip(),
+    from app import pruefteil
+
+    sprache = db.get(Campaign, s.campaign_id).language
+    mitglied = {sp.id: sp.assigned_member_id for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}
+    abschnitte = [pruefteil.Abschnitt(seg.start, seg.end, seg.text, mitglied.get(seg.speaker_id or ""))
+                  for seg in db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id)
+                                        .order_by(TranscriptSegment.position))]
+    stellen = pruefteil.Stellen(abschnitte)
+    text = erg.text.strip()
+    db.add(Recap(session_id=s.id, title=erg.titel.strip()[:300] or f"Kapitel {s.number}", text=text,
                  open_threads=json.dumps([f.strip() for f in erg.offene_faeden if f.strip()], ensure_ascii=False),
-                 model=erg.modell))
+                 model=erg.modell, review=pruefteil.als_json(pruefteil.bauen(erg.pruefung, text, stellen, sprache))))
     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == s.campaign_id))}
     geheime_texte = [t for e in eintraege.values() for t in (e.gm_notes or "",
                                                               e.summary if e.visibility != "public" else "") if t]
-    sprache = db.get(Campaign, s.campaign_id).language
     # Qualitätsprüfung Stufe 1: Belege gegen das Transkript prüfen (erfundene Zitate fallen weg)
-    transkript = belege.Transkript([(seg.start, seg.text) for seg in db.scalars(
-        select(TranscriptSegment).where(TranscriptSegment.session_id == s.id).order_by(TranscriptSegment.position))])
+    transkript = stellen.woerter
     ohne_beleg = 0
     for pos, v in enumerate(erg.vorschlaege):
         ziel = eintraege.get(v.target_entry_id or "")
@@ -336,8 +364,9 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
         if not geprueft:
             ohne_beleg += 1
             sicherheit = min(sicherheit, belege.KEIN_BELEG_SICHERHEIT)
-            if "low_confidence" not in flags:
-                flags.append("low_confidence")
+            for f in ("low_confidence", "evidence_not_found"):  # 0.4.6: die App nennt den Grund
+                if f not in flags:
+                    flags.append(f)
         if sichtbar == "public" and _geheimes_im_detail(v.detail, geheime_texte):
             sichtbar, grund = "gm_only", GEHEIM_HINWEIS.get(sprache, GEHEIM_HINWEIS["de"])
             if "low_confidence" not in flags:
@@ -425,6 +454,21 @@ def arbeitsprozess_starten(session_factory) -> threading.Event | None:
 
     threading.Thread(target=schleife, name="zusammenfassung", daemon=True).start()
     return stop
+
+
+def schritt_setzen(db: Session, session_id: str, name: str) -> None:
+    """Zwischenschritt der Zusammenfassung für die App (ProcessingStatus.message = summarizing.<name>). Eigene kurze
+    Datenbanksitzung, damit der laufende Auftrag nichts halb Fertiges festschreibt."""
+    from sqlalchemy.orm import Session as DbSession
+
+    try:
+        with DbSession(bind=db.get_bind()) as eigene:
+            s = eigene.get(GameSession, session_id)
+            if s is not None and s.state == "summarizing":
+                s.status_message = f"summarizing.{name}"
+                eigene.commit()
+    except Exception:  # noqa: BLE001 – Anzeige ist Beiwerk
+        log.debug("Zwischenschritt nicht gespeichert", exc_info=True)
 
 
 def erwaehnt(db: Session, e: Entry, s: GameSession, notiz: str) -> None:

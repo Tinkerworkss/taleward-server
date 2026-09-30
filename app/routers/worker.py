@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import FileResponse
@@ -58,6 +59,15 @@ class ClaimIn(ApiModel):
 
 class ProgressIn(ApiModel):
     progress: float | None = Field(default=None, ge=0, le=1)
+    # 0.4.6: Zwischenschritt der Zusammenfassung → ProcessingStatus.message „summarizing.<step>“
+    step: Literal["notes", "recap", "review", "revision", "proposals"] | None = None
+
+
+class LowWordIn(ApiModel):
+    word: str = Field(max_length=100)
+    start: float = Field(ge=0)
+    score: float = Field(ge=0, le=1)
+    anfang: bool = False  # erstes Wort eines Satzes (Großschreibung sagt dann nichts)
 
 
 class SegmentIn(ApiModel):
@@ -65,6 +75,7 @@ class SegmentIn(ApiModel):
     end: float = Field(ge=0)
     speaker: str | None = None
     text: str = Field(max_length=20000)
+    low_words: list[LowWordIn] = Field(default=[], max_length=500)  # 0.4.6: unsicher ausgerichtete Wörter
 
 
 class SpeakerIn(ApiModel):
@@ -118,7 +129,7 @@ def _stimm_auftrag(job: Job) -> dict:
 def _zusammenfassungs_auftrag(db: Session, job: Job) -> dict:
     """Zusammenfassung auf einem Worker mit Sprachmodell: die beiden getrennten Eingaben, kein Audio."""
     from app.einstellungen import llm_konfig
-    from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
+    from app.zusammenfassung import eingabe_bauen, gegenpruefen_an, recap_eingabe, vorschlag_eingabe
 
     s = db.get(GameSession, job.session_id)
     k = llm_konfig(db)
@@ -127,7 +138,7 @@ def _zusammenfassungs_auftrag(db: Session, job: Job) -> dict:
         "jobId": job.id, "type": job.type, "leaseSeconds": get_settings().lease_seconds, "attempt": job.attempts,
         "files": [],
         "summarize": {"recap": recap_eingabe(basis), "proposals": vorschlag_eingabe(db, s, basis),
-                      "model": k.lokal_modell, "context": k.lokal_kontext},
+                      "model": k.lokal_modell, "context": k.lokal_kontext, "review": gegenpruefen_an(db)},
     }
 
 
@@ -166,6 +177,8 @@ def _auftrag(db: Session, job: Job) -> dict:
             "language": c.language, "system": c.system, "systemName": c.system_name, "source": up.source,
             "expectedSpeakers": len(anwesend) if up.source == "table" else len(up.files),
             "hotwords": fuer_kampagne(db, c),
+            # 0.4.6: erneute Transkription – nur der Text, Stimmen sind schon zugeordnet
+            "nurText": bool(s.nachtranskription),
         },
         "files": files,
     }
@@ -258,7 +271,7 @@ def voice_result(jobId: str, body: VoiceResultIn, worker: Worker = Depends(curre
 @router.post("/jobs/{jobId}/progress", status_code=204)
 def progress(jobId: str, body: ProgressIn, worker: Worker = Depends(current_worker), db: Session = Depends(get_db)):
     job = _job_for(db, jobId, worker)
-    extend_lease(db, job, body.progress)
+    extend_lease(db, job, body.progress, body.step)
     db.commit()
     return Response(status_code=204)
 
@@ -291,6 +304,8 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
     s = db.get(GameSession, job.session_id)
     up = db.get(Upload, job.upload_id)
     discord = up.source == "discord"
+    if s.nachtranskription:
+        return _nachtranskription_uebernehmen(db, s, job, body, engine, worker_id, kosten_cent, discord)
     # Ergebnis eines früheren Versuchs verwerfen
     db.execute(delete(TranscriptSegment).where(TranscriptSegment.session_id == s.id))
     db.execute(delete(Speaker).where(Speaker.session_id == s.id))
@@ -316,7 +331,8 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
                 obj.sample_path = str(storage.sample_path(s.id, obj.id))
     for pos, seg in enumerate(sorted(body.segments, key=lambda x: x.start)):
         db.add(TranscriptSegment(session_id=s.id, position=pos, start=round(seg.start, 2), end=round(seg.end, 2),
-                                 speaker_id=zuordnung.get(seg.speaker or ""), text=seg.text.strip()))
+                                 speaker_id=zuordnung.get(seg.speaker or ""), text=seg.text.strip(),
+                                 unsicher=_unsicher_json(seg)))
     db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="transcription", engine=engine,
                     model=body.model, worker_id=worker_id, audio_seconds=body.audio_seconds,
                     compute_seconds=body.compute_seconds, cost_cents=kosten_cent))
@@ -349,6 +365,57 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
         set_state(s, "awaiting_speakers")
 
 
+def _unsicher_json(seg: SegmentIn) -> str | None:
+    if not seg.low_words:
+        return None
+    return json.dumps([{"word": w.word, "start": round(w.start, 2), "score": round(w.score, 3), "anfang": w.anfang}
+                       for w in seg.low_words], ensure_ascii=False)
+
+
+def _nachtranskription_uebernehmen(db: Session, s: GameSession, job: Job, body: ResultIn, engine: str,
+                                   worker_id: str | None, kosten_cent: int, discord: bool) -> None:
+    """Erneute Transkription (0.4.6, POST …/corrections mit retranscribe): Nur der Text wird ersetzt. Die bestätigte
+    Stimmzuordnung bleibt – jeder neue Abschnitt bekommt die Stimme des alten Abschnitts, mit dem er sich zeitlich am
+    meisten überschneidet (Discord: die Spur). Neue Stimmen und Hörproben des Workers werden verworfen."""
+    alt = list(db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id)
+                          .order_by(TranscriptSegment.start)))
+    spur = {sp.raw_label: sp.id for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))} if discord else {}
+
+    def stimme(start: float, ende: float, label: str | None) -> str | None:
+        if discord and label and label in spur:
+            return spur[label]
+        bester, wert = None, 0.0
+        for a in alt:
+            if a.end < start - 2 or a.start > ende + 2:
+                continue
+            ueberlappung = min(a.end, ende) - max(a.start, start)
+            abstand = -min(abs(a.start - start), abs(a.end - ende))
+            w = ueberlappung if ueberlappung > 0 else abstand / 100
+            if bester is None or w > wert:
+                bester, wert = a.speaker_id, w
+        return bester
+
+    neu = [(seg, stimme(seg.start, seg.end, seg.speaker)) for seg in sorted(body.segments, key=lambda x: x.start)]
+    db.execute(delete(TranscriptSegment).where(TranscriptSegment.session_id == s.id))
+    for pos, (seg, sid) in enumerate(neu):
+        db.add(TranscriptSegment(session_id=s.id, position=pos, start=round(seg.start, 2), end=round(seg.end, 2),
+                                 speaker_id=sid, text=seg.text.strip(), unsicher=_unsicher_json(seg)))
+    db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="transcription", engine=engine,
+                    model=body.model, worker_id=worker_id, audio_seconds=body.audio_seconds,
+                    compute_seconds=body.compute_seconds, cost_cents=kosten_cent))
+    from app import aufbewahrung
+
+    if not aufbewahrung.lesen(db).bis_freigabe:
+        storage.delete_upload_files(db.get(Upload, job.upload_id).id)
+        s.audio_deleted_at = utcnow()
+    s.nachtranskription = False
+    s.transcription_engine = engine
+    job.state, job.finished_at, job.progress, job.engine = "done", utcnow(), 1.0, engine
+    job.lease_expires_at = None
+    db.flush()
+    create_summarize_job(db, s)
+
+
 class ProposalIn(ApiModel):
     entry_type: str
     action: str
@@ -368,6 +435,7 @@ class SummaryResultIn(ApiModel):
     text: str = Field(min_length=1, max_length=40000)
     open_threads: list[str] = Field(default=[], max_length=20)
     proposals: list[ProposalIn] = Field(default=[], max_length=30)
+    review: dict | None = None  # 0.4.6: Gegenprüfung (sprachmodell.Ablauf.gegenpruefen)
     model: str | None = Field(default=None, max_length=100)
     tokens_in: int = Field(default=0, ge=0)
     tokens_out: int = Field(default=0, ge=0)
@@ -388,8 +456,9 @@ def summary_result(jobId: str, body: SummaryResultIn, worker: Worker = Depends(c
     ein = vorschlag_eingabe(db, s, eingabe_bauen(db, s))
     roh = [p.model_dump(by_alias=True) for p in body.proposals]
     d = {"title": body.title, "text": body.text, "openThreads": body.open_threads, "model": body.model,
-         "tokensIn": body.tokens_in, "tokensOut": body.tokens_out,
-         "proposals": pruefen(roh, {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]})}
+         "tokensIn": body.tokens_in, "tokensOut": body.tokens_out, "review": body.review,
+         "proposals": pruefen(roh, {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
+                              charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")])}
     speichern(db, s, ergebnis_aus(d), body.compute_seconds, engine="local", worker_id=worker.id)
     job.state, job.finished_at, job.progress, job.lease_expires_at = "done", utcnow(), 1.0, None
     db.commit()
