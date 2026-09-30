@@ -105,9 +105,13 @@ class OllamaKlient:
     """Ollama auf dem lokalen Server (native Schnittstelle, weil nur sie die Kontextgröße einstellen lässt).
     Das Modell bleibt nur kurz geladen, damit die Grafikkarte für die Transkription frei wird."""
 
+    STILLSTAND_S = 180.0   # so lange darf zwischen zwei Antwortstücken höchstens vergehen (Modell laden: Minuten)
+    LANGSAM_TOKEN_S = 2.0  # darunter ist der Rechner für Recaps zu schwach (Prozessor statt Grafikkarte)
+
     def __init__(self, url: str, modell: str, kontext: int = 12288, client: httpx.Client | None = None):
         self.url, self.modell, self.kontext = url.rstrip("/"), modell, kontext
-        self.client = client or httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0))
+        self.client = client or httpx.Client(timeout=httpx.Timeout(self.STILLSTAND_S, connect=10.0))
+        self.token_s: float | None = None  # gemessene Geschwindigkeit des letzten Aufrufs
 
     def version(self) -> str | None:
         try:
@@ -169,31 +173,80 @@ class OllamaKlient:
         # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
         # reached“ ab). Daher eine leichte Wiederholungsstrafe und eine Obergrenze für die Antwortlänge – und bei einem
         # Abbruch ein zweiter Versuch mit etwas mehr Streuung.
+        # Streamend, mit Stillstands-Zeitgrenze statt Gesamtzeit: auf einem schwachen Rechner dauert eine Antwort
+        # auch mal 20 Minuten – solange Stücke kommen, ist alles gut; kommt drei Minuten nichts, hängt Ollama.
         for versuch, (temperatur, strafe) in enumerate(((0.3, 1.1), (0.6, 1.2))):
-            body = {"model": self.modell, "stream": False, "format": "json", "keep_alive": "2m",
+            body = {"model": self.modell, "stream": True, "format": "json", "keep_alive": "2m",
                     "options": {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
                                 "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS},
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
             try:
-                r = self.client.post(f"{self.url}/api/chat", json=body)
+                status, fehler, d = self._streamen(body)
+            except httpx.ReadTimeout as e:
+                raise SprachmodellFehler(f"Ollama antwortet seit {int(self.STILLSTAND_S)} s nicht mehr – "
+                                         "Modell hängt oder der Rechner ist überlastet.") from e
             except httpx.HTTPError as e:
                 raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
-            if r.status_code >= 400 and "repeat" in r.text and versuch == 0:
+            if (status >= 400 or fehler) and "repeat" in fehler and versuch == 0:
                 log.info("Sprachmodell hat sich wiederholt – zweiter Versuch mit mehr Streuung")
                 continue
             break
-        if r.status_code >= 400:
-            raise SprachmodellFehler(f"Ollama meldet {r.status_code}: {r.text[:200]}")
-        d = r.json()
-        return Antwort((d.get("message") or {}).get("content") or "", int(d.get("prompt_eval_count") or 0),
-                       int(d.get("eval_count") or 0))
+        if status >= 400 or fehler:
+            raise SprachmodellFehler(f"Ollama meldet {status}: {fehler[:200]}")
+        tokens_aus, dauer_ns = int(d.get("eval_count") or 0), int(d.get("eval_duration") or 0)
+        if tokens_aus >= 50 and dauer_ns > 0:
+            self.token_s = tokens_aus / (dauer_ns / 1e9)
+            if self.token_s < self.LANGSAM_TOKEN_S:
+                log.warning("Sprachmodell sehr langsam (%.1f Token/s) – dieser Rechner sollte Recaps dem Server "
+                            "überlassen (Worker-App: „Recaps hier schreiben“ abschalten)", self.token_s)
+        return Antwort(d.get("inhalt", ""), int(d.get("prompt_eval_count") or 0), tokens_aus)
 
-    def entladen(self) -> None:
-        """Grafikspeicher sofort freigeben (der nächste Auftrag kann eine Transkription sein)."""
+    def _streamen(self, body: dict) -> tuple[int, str, dict]:
+        """(Status, Fehlertext, Daten) – Daten enthalten den zusammengesetzten Text unter „inhalt“."""
+        import json as _json
+
+        with self.client.stream("POST", f"{self.url}/api/chat", json=body) as r:
+            if r.status_code >= 400:
+                text = r.read().decode("utf-8", "replace")
+                try:
+                    fehler = str(_json.loads(text).get("error") or text)
+                except ValueError:
+                    fehler = text
+                return r.status_code, fehler, {}
+            teile: list[str] = []
+            letztes: dict = {}
+            for zeile in r.iter_lines():
+                if not zeile.strip():
+                    continue
+                try:
+                    d = _json.loads(zeile)
+                except ValueError:
+                    continue
+                if d.get("error"):
+                    return 500, str(d["error"]), {}
+                teile.append((d.get("message") or {}).get("content") or "")
+                if d.get("done"):
+                    letztes = d
+        letztes["inhalt"] = "".join(teile)
+        return 200, "", letztes
+
+    def entladen(self, warten_s: float = 20.0) -> None:
+        """Grafikspeicher sofort freigeben (der nächste Auftrag kann eine Transkription sein) – und kurz warten,
+        bis das Modell wirklich weg ist, sonst lädt Whisper in einen noch halb belegten Speicher."""
         try:
             self.client.post(f"{self.url}/api/generate", json={"model": self.modell, "keep_alive": 0}, timeout=30)
         except httpx.HTTPError:
-            pass
+            return
+        ende = time.monotonic() + warten_s
+        while time.monotonic() < ende:
+            try:
+                r = self.client.get(f"{self.url}/api/ps", timeout=5)
+                geladen = [m.get("name") or m.get("model") for m in r.json().get("models", [])]
+            except (httpx.HTTPError, ValueError):
+                return
+            if not geladen:
+                return
+            time.sleep(0.5)
 
     def kosten_cent(self, tokens_in: int, tokens_out: int) -> int:
         return 0

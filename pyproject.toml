@@ -1,6 +1,6 @@
 [project]
 name = "taleward-server"
-version = "0.4.19"
+version = "0.4.20"
 description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
@@ -26,6 +26,7 @@ dependencies = [
 # KI-Verarbeitung (Transkription, Sprechertrennung). Installieren mit: uv sync --extra ki
 ki = [
     "whisperx==3.8.6",
+    "truststore>=0.10",  # Zertifikate aus dem Windows-/macOS-Speicher (Virenscanner, Firmen-Proxy)
 ]
 
 [project.scripts]

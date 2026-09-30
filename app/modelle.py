@@ -187,6 +187,13 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
     except ModellFehler:
         raise
     except Exception as e:  # noqa: BLE001 – Netz
+        # Server gerade nicht erreichbar (WLAN beim Anmelden noch nicht da, Server kurz weg): liegt die zuletzt
+        # gemerkte Fassung vollständig hier, arbeiten wir damit weiter – sonst müsste der Worker 10 Minuten warten.
+        vorhanden = _vorhanden(repo)
+        if vorhanden is not None:
+            log.warning("Server nicht erreichbar (%s) – nehme das gemerkte Modell %s@%s",
+                        type(e).__name__, repo, vorhanden.fassung[:12])
+            return vorhanden
         raise ModellFehler(f"Server nicht erreichbar, um das Modell {repo} zu laden ({type(e).__name__}).") from e
     if v is None:
         return None
@@ -215,6 +222,19 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
             raise
     _merken(repo, fassung)
     return Bereit(repo, fassung, ordner, "server")
+
+
+def _vorhanden(repo: str) -> Bereit | None:
+    """Die gemerkte Fassung eines Servermodells, wenn sie vollständig auf der Platte liegt."""
+    from app.config import get_settings
+
+    fassung = gemerkt().get(repo)
+    if not fassung:
+        return None
+    ordner = get_settings().data_dir / "modelle" / repo.replace("/", "__") / fassung
+    if not (ordner / ".vollstaendig").exists():
+        return None
+    return Bereit(repo, fassung, ordner, "gemerkt")
 
 
 def _meldung(repo: str, e: Exception) -> str:

@@ -33,6 +33,12 @@ def _still(ereignis: str, **daten) -> None:
     pass
 
 
+DOWNLOAD_VERSUCHE = 4
+DOWNLOAD_PAUSE_S = 3
+HERZ_NACHSCHLAEGE = 4  # Wiederholungen eines fehlgeschlagenen Herzschlags …
+HERZ_PAUSE_S = 5       # … in diesem Abstand
+
+
 class Abgebrochen(Exception):
     """Lease verloren oder Worker wird beendet."""
 
@@ -248,17 +254,37 @@ class WorkerProzess:
             ziel = self.arbeit / f"{f['position']:04d}-{f['fileId']}"
             with open(ziel, "wb") as out:
                 for c in f["chunks"]:
-                    if self._stop.is_set():
-                        raise Abgebrochen()
-                    r = self.client.get(c["url"])
-                    if r.status_code == 409:
-                        raise Abgebrochen()
-                    r.raise_for_status()
-                    if len(r.content) != c["sizeBytes"]:
-                        raise audio.AudioFehler("download_incomplete", f"Teil {c['index']} unvollständig", True)
-                    out.write(r.content)
+                    out.write(self._teil_laden(c))
             dateien.append(ziel)
         return dateien
+
+    def _teil_laden(self, c: dict) -> bytes:
+        """Ein Stück Audio holen – mit Wiederholung: ein WLAN-Schluckauf bei 40 Stücken darf nicht den ganzen
+        Auftrag kosten (der Server zählt jeden Fehlversuch, nach dreien ist die Session verloren)."""
+        letzter: Exception | None = None
+        for versuch in range(DOWNLOAD_VERSUCHE):
+            if self._stop.is_set():
+                raise Abgebrochen()
+            try:
+                r = self.client.get(c["url"])
+                if r.status_code == 409:
+                    raise Abgebrochen()
+                if r.status_code >= 500:
+                    raise httpx.HTTPStatusError(f"Server meldet {r.status_code}", request=r.request, response=r)
+                r.raise_for_status()
+                if len(r.content) != c["sizeBytes"]:
+                    raise audio.AudioFehler("download_incomplete", f"Teil {c['index']} unvollständig", True)
+                return r.content
+            except (httpx.HTTPError, audio.AudioFehler) as e:
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                    raise
+                letzter = e
+                if versuch < DOWNLOAD_VERSUCHE - 1:
+                    log.warning("Teil %s: %s – neuer Versuch in %d s", c.get("index"), type(e).__name__,
+                                DOWNLOAD_PAUSE_S * (versuch + 1))
+                    self._stop.wait(DOWNLOAD_PAUSE_S * (versuch + 1))
+        assert letzter is not None
+        raise letzter
 
     def einen_auftrag(self) -> bool:
         """Holt höchstens einen Auftrag und bearbeitet ihn. True, wenn einer bearbeitet wurde."""
@@ -276,13 +302,18 @@ class WorkerProzess:
         def herzschlag():
             takt = max(5, auftrag["leaseSeconds"] // 3)
             while not herz_stop.wait(takt):
-                try:
-                    r = self.client.post(f"/worker/v1/jobs/{job}/progress", json={"progress": stand["p"]})
-                    if r.status_code == 409:
-                        stand["verloren"] = True
-                        return
-                except httpx.HTTPError:
-                    pass  # Netz kurz weg – nächster Versuch beim nächsten Takt
+                # Netz kurz weg: nicht erst zum nächsten Takt wieder klopfen, sonst ist nach drei verpassten
+                # Herzschlägen die Lease weg und ein fertiges Ergebnis wird verworfen
+                for _ in range(HERZ_NACHSCHLAEGE + 1):
+                    try:
+                        r = self.client.post(f"/worker/v1/jobs/{job}/progress", json={"progress": stand["p"]})
+                        if r.status_code == 409:
+                            stand["verloren"] = True
+                            return
+                        break
+                    except httpx.HTTPError:
+                        if herz_stop.wait(HERZ_PAUSE_S):
+                            return
 
         def fortschritt(p: float) -> None:
             stand["p"] = max(stand["p"], min(1.0, p))

@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
     modellablage.holen(dbs, klient=hf_transport())
-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.19"}
+    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.20"}
     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
                headers=h)
@@ -97,6 +97,14 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
     # zweiter Start: aus dem Zwischenspeicher
     monkeypatch.setattr(quelle, "laden", lambda *a: (_ for _ in ()).throw(AssertionError("nicht neu laden")))
     assert modelle.vom_server(REPO, quelle).pfad == b.pfad
+    # Server gerade nicht erreichbar (WLAN beim Anmelden): die gemerkte, vollständige Fassung reicht
+    import httpx
+
+    monkeypatch.setattr(quelle, "verzeichnis", lambda repo: (_ for _ in ()).throw(httpx.ConnectError("aus")))
+    offline = modelle.vom_server(REPO, quelle)
+    assert offline.pfad == b.pfad and offline.quelle == "gemerkt"
+    monkeypatch.undo()
+    monkeypatch.setattr(quelle, "laden", lambda *a: (_ for _ in ()).throw(AssertionError("nicht neu laden")))
 
     # Manipulierte Datei auf dem Weg → Abbruch, nichts halb Geladenes bleibt
     import shutil

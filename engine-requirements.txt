@@ -461,6 +461,8 @@ triton==3.4.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   torch
     #   whisperx
+truststore==0.10.4
+    # via taleward-server
 typer==0.27.2
     # via taleward-server
 typing-extensions==4.16.0

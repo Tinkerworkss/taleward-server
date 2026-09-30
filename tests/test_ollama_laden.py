@@ -47,8 +47,18 @@ def _chat_klient(antworten):
     koerper = []
 
     def antwort(req: httpx.Request):
+        if req.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": []})
         koerper.append(json.loads(req.content))
+        assert koerper[-1]["stream"] is True
         status, inhalt = antworten.pop(0)
+        if status == 200:  # Ollama streamt Zeile für Zeile
+            text = inhalt["message"]["content"]
+            zeilen = [{"message": {"content": text[:3]}, "done": False},
+                      {"message": {"content": text[3:]}, "done": True,
+                       "prompt_eval_count": inhalt.get("prompt_eval_count", 0), "eval_count": inhalt.get("eval_count", 0),
+                       "eval_duration": inhalt.get("eval_duration", 0)}]
+            return httpx.Response(200, content="\n".join(json.dumps(z) for z in zeilen).encode())
         return httpx.Response(status, json=inhalt)
 
     k = OllamaKlient("http://ollama:11434", "ministral-3:8b", client=httpx.Client(transport=httpx.MockTransport(antwort)))
@@ -85,3 +95,40 @@ def test_anderer_fehler_wird_nicht_wiederholt():
         assert len(koerper) == 1
     else:
         raise AssertionError("kein Fehler")
+
+
+def test_stillstand_ist_ein_klarer_fehler():
+    def antwort(req: httpx.Request):
+        raise httpx.ReadTimeout("nichts kommt")
+
+    k = OllamaKlient("http://ollama:11434", "m", client=httpx.Client(transport=httpx.MockTransport(antwort)))
+    try:
+        k.chat("s", "n")
+    except SprachmodellFehler as e:
+        assert "antwortet seit" in str(e)
+    else:
+        raise AssertionError("kein Fehler")
+
+
+def test_langsamer_rechner_wird_gemessen(caplog):
+    k, _ = _chat_klient([(200, {"message": {"content": '{"a": 1}'}, "eval_count": 100, "eval_duration": int(100e9)})])
+    with caplog.at_level("WARNING", logger="worker"):
+        k.chat("s", "n")
+    assert k.token_s == 1.0 and any("sehr langsam" in r.message for r in caplog.records)
+
+
+def test_entladen_wartet_bis_das_modell_weg_ist(monkeypatch):
+    from app import sprachmodell
+
+    abfragen = {"n": 0}
+
+    def antwort(req: httpx.Request):
+        if req.url.path == "/api/generate":
+            return httpx.Response(200, json={})
+        abfragen["n"] += 1
+        return httpx.Response(200, json={"models": [] if abfragen["n"] >= 3 else [{"name": "m"}]})
+
+    monkeypatch.setattr(sprachmodell.time, "sleep", lambda s: None)
+    k = OllamaKlient("http://ollama:11434", "m", client=httpx.Client(transport=httpx.MockTransport(antwort)))
+    k.entladen()
+    assert abfragen["n"] == 3

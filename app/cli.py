@@ -291,6 +291,22 @@ def worker_token_revoke(name: str = typer.Option(..., "--name")):
     typer.echo(f"Worker '{name}' gesperrt.")
 
 
+def _systemzertifikate() -> None:
+    """Zertifikate aus dem Speicher des Betriebssystems nutzen (Windows, macOS). Virenscanner mit HTTPS-Prüfung
+    (Kaspersky, ESET, Avast …) und Firmen-Proxys schieben eigene Stammzertifikate dazwischen; die kennt das
+    mitgelieferte certifi-Bündel nicht, und der Server wäre „nicht erreichbar“, obwohl der Browser ihn öffnet."""
+    import logging
+
+    try:
+        import truststore
+    except ImportError:
+        return
+    try:
+        truststore.inject_into_ssl()
+    except Exception as e:  # noqa: BLE001 – dann eben nur certifi
+        logging.getLogger("worker").warning("Systemzertifikate nicht nutzbar: %s", e)
+
+
 @app.command("worker")
 def worker(
     attrappe: bool = typer.Option(False, "--testmodus", "--attrappe", help="Ohne KI: Platzhaltertext statt Transkription (zum Testen ohne Grafikkarte)"),
@@ -322,6 +338,7 @@ def worker(
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # nicht jede Anfrage protokollieren
+    _systemzertifikate()
     s = get_settings()
     server = server or s.worker_server_url
     token = token or s.worker_token or _token_aus_datei(s.worker_token_file)
