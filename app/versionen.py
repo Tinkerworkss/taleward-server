@@ -27,6 +27,16 @@ def veraltet(app_version: str | None, minimum: str | None) -> bool:
 
 async def pruefen(request: Request, call_next):
     pfad = request.url.path
+    antwort = await _pruefen(request, call_next, pfad)
+    # Kein Zwischenspeicher für Schnittstellen-Antworten: Ein Proxy oder Browser hat auf einem Server eine frisch
+    # angelegte Kampagne aus der Liste „vergessen“ lassen. Endpunkte, die bewusst zwischenspeichern lassen
+    # (Charakterbilder), setzen den Kopf selbst und behalten ihn.
+    if pfad.startswith("/api/v1/") and "cache-control" not in antwort.headers:
+        antwort.headers["Cache-Control"] = "no-store"
+    return antwort
+
+
+async def _pruefen(request: Request, call_next, pfad: str):
     browser = pfad.startswith("/api/v1/auth/oidc/") and pfad.endswith("/start")  # Systembrowser, ohne App-Header
     if request.method != "OPTIONS" and pfad.startswith("/api/v1/") and pfad not in FREI and not browser:
         from app.db import session_factory
