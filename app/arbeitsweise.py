@@ -9,11 +9,12 @@ import shutil
 import subprocess
 
 # Stufen nach verfügbarem Grafikspeicher (MB). Gemessen: large-v3 mit Stapel 8 braucht auf einer 8-GB-Karte höchstens
-# ~5,5 GB. Die übrigen Werte sind vorsichtige Schätzungen.
+# ~5,5 GB – plus Windows-Oberfläche und Browser (0,5–1,5 GB). Eine 6-GB-Karte bekommt darum Stapel 4. Die übrigen
+# Werte sind vorsichtige Schätzungen.
 STUFEN = [
     # ab MB, Modell,          Stapel, Ausrichtung, Sprecher
     (10000, "large-v3",       16,     "cuda",      "cuda"),
-    (6000,  "large-v3",       8,      "cuda",      "cuda"),
+    (7000,  "large-v3",       8,      "cuda",      "cuda"),
     (4500,  "large-v3",       4,      "cuda",      "cuda"),
     (3500,  "large-v3-turbo", 4,      "cuda",      "cuda"),
     (2000,  "large-v3-turbo", 2,      "cpu",       "cpu"),

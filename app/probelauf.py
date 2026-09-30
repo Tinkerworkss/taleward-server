@@ -9,6 +9,7 @@ import ctypes
 import gc
 import glob
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -38,6 +39,21 @@ def fmt_dauer(sek: float) -> str:
     return f"{sek / 60:.1f} min"
 
 
+def _nvml_kandidaten() -> list[str]:
+    if sys.platform != "win32":
+        return ["libnvidia-ml.so.1", "libnvidia-ml.so"]
+    system = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    namen = ["nvml.dll", str(system / "System32" / "nvml.dll"), r"C:\Program Files\NVIDIA Corporation\NVSMI\nvml.dll"]
+    # DCH-Treiber (Standard über Windows Update) legen nvml.dll oft nur im Treiberspeicher ab; nvidia-smi findet sie
+    # über die Registry, ctypes nicht – sonst liefe jede Sekunde nvidia-smi als Prozess (siehe _Nvml).
+    ablage = system / "System32" / "DriverStore" / "FileRepository"
+    try:
+        treffer = sorted(ablage.glob("nv*/nvml.dll"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        treffer = []
+    return namen + [str(p) for p in treffer]
+
+
 class _Nvml:
     """Grafikspeicher direkt über die NVIDIA-Bibliothek (nvml) – ohne jede Sekunde ein Programm zu starten.
 
@@ -54,8 +70,7 @@ class _Nvml:
     def _handle(cls):
         if cls._geladen is None:
             cls._geladen = False
-            namen = (["nvml.dll", r"C:\Program Files\NVIDIA Corporation\NVSMI\nvml.dll"] if sys.platform == "win32"
-                     else ["libnvidia-ml.so.1", "libnvidia-ml.so"])
+            namen = _nvml_kandidaten()
             for name in namen:
                 try:
                     lib = ctypes.CDLL(name)

@@ -17,6 +17,7 @@ import base64
 import logging
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Callable, Protocol
@@ -145,14 +146,10 @@ def verarbeiter(motor: Motor):
         hotwords = [h for h in sitzung.get("hotwords") or [] if h.strip()]
         with VramMesser() as vram:
             try:
-                if sitzung["source"] == "discord":
-                    ergebnis = _discord(motor, auftrag, dateien, arbeit, fortschritt, sprache, hotwords)
-                else:
-                    ergebnis = _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords)
-            except (AudioFehler, Abgebrochen):
-                raise
-            except Exception as e:  # Speicher voll, Modell nicht ladbar … → verständliche Meldung
-                raise _uebersetzen(e) from e
+                ergebnis = _mit_ausweichen(motor, lambda: (
+                    _discord(motor, auftrag, dateien, arbeit, fortschritt, sprache, hotwords)
+                    if sitzung["source"] == "discord"
+                    else _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords)))
             finally:
                 gpu_freigeben()
         ergebnis.update(computeSeconds=round(time.monotonic() - t0, 1), model=f"whisperx/{motor.modell}",
@@ -224,6 +221,31 @@ def _discord(motor, auftrag, dateien, arbeit, fortschritt, sprache, hotwords) ->
     return {"audioSeconds": round(laengste, 1), "segments": alle_segmente, "speakers": stimmen}
 
 
+def _mit_ausweichen(motor, lauf: Callable[[], dict]) -> dict:
+    """Führt `lauf` aus; bei vollem Grafikspeicher einmal sparsamer (siehe `Motor.sparsamer`) statt dreimal gleich."""
+    for versuch in range(2):
+        try:
+            return lauf()
+        except (AudioFehler, Abgebrochen):
+            raise
+        except Exception as e:  # Speicher voll, Modell nicht ladbar … → verständliche Meldung
+            fehler = _uebersetzen(e)
+            sparsamer = getattr(motor, "sparsamer", None)
+            if fehler.code == "cuda_oom" and versuch == 0 and sparsamer and sparsamer():
+                gpu_freigeben()
+                continue
+            raise fehler from e
+    raise AssertionError("unerreichbar")
+
+
+def laufzeit_hinweis(e: Exception) -> str:
+    text = f"Die KI-Bibliotheken lassen sich nicht laden ({type(e).__name__}: {str(e)[:200]})."
+    if sys.platform == "win32":
+        text += (" Meist fehlt die „Microsoft Visual C++ Redistributable 2015–2022 (x64)“ – von microsoft.com "
+                 "installieren und den Worker neu starten.")
+    return text
+
+
 def _uebersetzen(e: Exception) -> AudioFehler:
     text = f"{type(e).__name__}: {e}"
     klein = text.lower()
@@ -233,6 +255,8 @@ def _uebersetzen(e: Exception) -> AudioFehler:
     if any(k in text for k in ("401", "403", "gated", "Unauthorized", "restricted")):
         return AudioFehler("worker_setup", "Der Worker hat keinen Zugang zum Sprechermodell (Hugging Face). "
                                            "Die Betreiberin bzw. der Betreiber muss HF_TOKEN prüfen.", retryable=False)
+    if "winerror 126" in klein or "winerror 1114" in klein or "dll load failed" in klein:
+        return AudioFehler("worker_setup", laufzeit_hinweis(e), retryable=False)
     if "cudnn" in klein or "libcu" in klein:
         return AudioFehler("worker_setup", "Auf dem Worker fehlt eine CUDA-Bibliothek "
                                            "(uv sync --extra ki erneut ausführen).", retryable=False)
@@ -269,6 +293,8 @@ class WhisperXMotor:
             import whisperx  # noqa: F401
         except ImportError:
             raise EinrichtungsFehler("Die KI-Pakete fehlen. Installieren mit: uv sync --extra ki") from None
+        except OSError as e:  # Windows: DLL nicht ladbar (WinError 126/1114) – meist fehlt die Visual-C++-Laufzeit
+            raise EinrichtungsFehler(laufzeit_hinweis(e)) from None
         # whisperx lädt seine Teile erst beim ersten Aufruf nach (transformers, scipy, sklearn, pyannote …). Das
         # passiert hier einmal beim Start statt mitten im ersten Auftrag, parallel zur Speichermessung (Windows:
         # gleichzeitiges Laden großer DLLs und Starten von Threads kann sich gegenseitig blockieren).
@@ -283,6 +309,11 @@ class WhisperXMotor:
         if braucht_gpu and not torch.cuda.is_available():
             raise EinrichtungsFehler("PyTorch sieht keine Grafikkarte. `nvidia-smi` prüfen und ggf. den NVIDIA-Treiber "
                                      "aktualisieren – oder in der Worker-App den Prozessor wählen.")
+        if self.geraet == "cuda" and self.genauigkeit.endswith("float16"):
+            faehigkeit = tuple(getattr(torch.cuda, "get_device_capability", lambda i: (9, 0))(0))
+            if faehigkeit < (7, 0):  # Pascal (GTX 10x0) und älter: kein schnelles float16 → CTranslate2 lehnt ab
+                log.info("Grafikkarte kann kein float16 (Compute Capability %d.%d) – rechne mit int8", *faehigkeit)
+                self.genauigkeit = "int8"
         if braucht_gpu and self.grenze_mb:
             gesamt = torch.cuda.get_device_properties(0).total_memory / 2 ** 20
             torch.cuda.set_per_process_memory_fraction(min(1.0, self.grenze_mb / gesamt), 0)
@@ -305,6 +336,21 @@ class WhisperXMotor:
                 "vramMb": VramMesser.gesamt_mb() if braucht_gpu else None, "modell": self.modell,
                 "genauigkeit": self.genauigkeit, "geraete": self.geraete, "grenzeMb": self.grenze_mb or None,
                 "modelle": {b.repo: (b.fassung or "")[:12] for b in self.bereit.values()}}
+
+    def sparsamer(self) -> bool:
+        """Nach „Grafikspeicher voll“: eine Stufe zurück (halber Stapel, Ausrichtung und Sprecher auf dem Prozessor).
+        Liefert False, wenn nichts mehr zu sparen ist."""
+        if self.geraet != "cuda":
+            return False
+        vorher = (self.batch, self.geraet_ausrichten, self.geraet_sprecher)
+        if self.geraet_ausrichten == "cuda" or self.geraet_sprecher == "cuda":
+            self.geraet_ausrichten = self.geraet_sprecher = "cpu"
+        elif self.batch > 1:
+            self.batch = max(1, self.batch // 2)
+        if (self.batch, self.geraet_ausrichten, self.geraet_sprecher) == vorher:
+            return False
+        log.info("Grafikspeicher war voll – weiter mit Stapel %d, Geräte %s", self.batch, self.geraete)
+        return True
 
     @property
     def geraete(self) -> str:
