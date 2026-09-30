@@ -1,0 +1,298 @@
+From 98036ccce0e24125a0863fc29a6261162e40f345 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 30 Sep 2026 08:39:21 +0200
+Subject: [PATCH] =?UTF-8?q?Worker=20meldet=20seine=20T=C3=A4tigkeit:=20Sch?=
+ =?UTF-8?q?ritte=20und=20Token/s=20des=20Sprachmodells=20(Server=200.4.21)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Neues Ereignis „taetigkeit“ für die Worker-App: Transkription läuft, Wörter werden ausgerichtet, Stimmen werden
+getrennt, und je Aufruf des Sprachmodells gelesene/geschriebene Token und Token/s. Das „fertig“-Ereignis nennt die
+mittlere Geschwindigkeit. Die Schnittstelle zum Server ist unverändert.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 31 +++++++++++++++++++++++--------
+ app/transkription.py         |  8 ++++----
+ app/worker_prozess.py        | 24 +++++++++++++++++++++++-
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_ollama_laden.py   | 17 +++++++++++++++++
+ tests/test_worker_app.py     |  9 +++++++--
+ uv.lock                      |  2 +-
+ 10 files changed, 79 insertions(+), 20 deletions(-)
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 6445b28..891a395 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -414,20 +414,35 @@ class Zaehler:
+     tokens_out: int = 0
+     aufrufe: int = 0
+ 
++    token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
++
+     def aufruf(self, klient: Klient, system: str, nutzer: str) -> dict:
+-        a = klient.chat(system, nutzer)
+-        self.tokens_in += a.tokens_in
+-        self.tokens_out += a.tokens_out
+-        self.aufrufe += 1
++        a = self._chat(klient, system, nutzer)
+         try:
+             return _json(a)
+         except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
+-            a = klient.chat(system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
+-            self.tokens_in += a.tokens_in
+-            self.tokens_out += a.tokens_out
+-            self.aufrufe += 1
++            a = self._chat(klient, system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
+             return _json(a)
+ 
++    def _chat(self, klient: Klient, system: str, nutzer: str) -> Antwort:
++        a = klient.chat(system, nutzer)
++        self.tokens_in += a.tokens_in
++        self.tokens_out += a.tokens_out
++        self.aufrufe += 1
++        rate = getattr(klient, "token_s", None)
++        if rate:
++            from app.worker_prozess import taetigkeit
++
++            self.token_s.append(rate)
++            taetigkeit(f"Sprachmodell: Aufruf {self.aufrufe}, {a.tokens_in:,} Token gelesen, {a.tokens_out:,} "
++                       f"geschrieben, {rate:.1f} Token/s".replace(",", "."),
++                       schritt="sprachmodell", tokenS=round(rate, 1), aufruf=self.aufrufe)
++        return a
++
++    @property
++    def token_s_mittel(self) -> float | None:
++        return round(sum(self.token_s) / len(self.token_s), 1) if self.token_s else None
++
+ 
+ @dataclass
+ class Ablauf:
+diff --git a/app/transkription.py b/app/transkription.py
+index aa1cc5a..cb183d6 100644
+--- a/app/transkription.py
++++ b/app/transkription.py
+@@ -24,7 +24,7 @@ from typing import Callable, Protocol
+ 
+ from app import audio
+ from app.audio import AudioFehler
+-from app.worker_prozess import Abgebrochen
++from app.worker_prozess import Abgebrochen, taetigkeit
+ 
+ log = logging.getLogger("worker")
+ from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen  # noqa: E402 (nach den Umgebungsvariablen)
+@@ -178,15 +178,15 @@ def _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords) -> d
+     audio.zusammenfuegen(dateien, wav)
+     gesamt = audio.dauer(wav)
+     fortschritt(0.15)
+-    log.info("Transkription läuft (%.0f min Audio) …", gesamt / 60)
++    taetigkeit(f"Transkription läuft ({gesamt / 60:.0f} min Audio) …", schritt="transkription", audioSekunden=round(gesamt))
+     daten = motor.audio_laden(wav)
+     segs = motor.transkribieren(daten, sprache, hotwords, _bereich(fortschritt, 0.15, 0.55))
+     segs = _bereinigen(segs, hotwords)
+-    log.info("Wörter werden zeitlich ausgerichtet …")
++    taetigkeit("Wörter werden zeitlich ausgerichtet …", schritt="ausrichten")
+     segs = motor.ausrichten(segs, daten, sprache, _bereich(fortschritt, 0.55, 0.70))
+     n = int(sitzung.get("expectedSpeakers") or 0)
+     # Anwesende ±1: jemand kann kaum reden, oder eine Stimme wird in zwei Gruppen geteilt
+-    log.info("Stimmen werden getrennt …")
++    taetigkeit("Stimmen werden getrennt …", schritt="sprecher")
+     segs, embeddings = motor.sprecher_trennen(daten, segs, max(1, n - 1) if n else None, n + 1 if n else None,
+                                               _bereich(fortschritt, 0.70, 0.95))
+     segs = halluzinationen_entfernen(segs)
+diff --git a/app/worker_prozess.py b/app/worker_prozess.py
+index 635f12a..f38d513 100644
+--- a/app/worker_prozess.py
++++ b/app/worker_prozess.py
+@@ -39,6 +39,21 @@ HERZ_NACHSCHLAEGE = 4  # Wiederholungen eines fehlgeschlagenen Herzschlags …
+ HERZ_PAUSE_S = 5       # … in diesem Abstand
+ 
+ 
++_taetigkeit: Callable[..., None] | None = None  # während eines Auftrags gesetzt (ein Auftrag zur Zeit)
++_messung: dict = {}  # Kennzahlen des laufenden Auftrags für das „fertig“-Ereignis (z. B. tokenS)
++
++
++def taetigkeit(text: str, **daten) -> None:
++    """Was der Worker gerade tut – eine Zeile fürs Protokoll und, in der Worker-App, für die Statuskarte
++    („Transkription läuft (47 min Audio)“, „Sprachmodell: 14,8 Token/s“)."""
++    log.info(text)
++    if _taetigkeit is not None:
++        try:
++            _taetigkeit(text, **daten)
++        except Exception:  # noqa: BLE001 – Anzeige ist Beiwerk
++            pass
++
++
+ class Abgebrochen(Exception):
+     """Lease verloren oder Worker wird beendet."""
+ 
+@@ -151,6 +166,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
+             d = ablauf.ausfuehren(z["recap"], z["proposals"], fortschritt)
+         finally:
+             klient.entladen()
++        _messung["tokenS"] = ablauf.zaehler.token_s_mittel
+         d["model"] = f"ollama/{klient.modell}@{kennung}"
+         d["computeSeconds"] = round(time.monotonic() - t0, 1)
+         return d
+@@ -169,6 +185,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
+             d = ablauf.ausfuehren(z["input"], fortschritt)
+         finally:
+             klient.entladen()
++        _messung["tokenS"] = ablauf.zaehler.token_s_mittel
+         d["model"] = f"ollama/{klient.modell}@{kennung}"
+         d["computeSeconds"] = round(time.monotonic() - t0, 1)
+         return d
+@@ -325,6 +342,8 @@ class WorkerProzess:
+ 
+         herz = threading.Thread(target=herzschlag, daemon=True)
+         herz.start()
++        global _taetigkeit
++        _taetigkeit = lambda text, **d: self.melden("taetigkeit", jobId=job, text=text, **d)  # noqa: E731
+         try:
+             if auftrag.get("type") in ("summarize", "document"):
+                 if self.zusammenfassen is None:
+@@ -344,7 +363,8 @@ class WorkerProzess:
+                 r.raise_for_status()
+                 log.info("Auftrag %s fertig", job)
+                 self.melden("fertig", jobId=job, sekunden=round(time.monotonic() - t0, 1),
+-                            audioSekunden=ergebnis.get("audioSeconds"), peakVramMb=ergebnis.get("peakVramMb"))
++                            audioSekunden=ergebnis.get("audioSeconds"), peakVramMb=ergebnis.get("peakVramMb"),
++                            tokenS=_messung.get("tokenS"))
+         except Abgebrochen:
+             if not stand["verloren"]:
+                 self._melde_fehler(job, "worker_stopped", "Der Worker wurde beendet.", True)
+@@ -361,6 +381,8 @@ class WorkerProzess:
+             log.exception("Fehler bei Auftrag %s", job)
+             self._melde_fehler(job, "worker_error", f"{type(e).__name__}: {e}"[:500], True)
+         finally:
++            _taetigkeit = None
++            _messung.clear()
+             herz_stop.set()
+             self.aufraeumen()
+         return True
+diff --git a/pyproject.toml b/pyproject.toml
+index 4116b06..c98560c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.20"
++version = "0.4.21"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 72d7642..fb8b03d 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.20"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.21"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index c1dc2c9..84d25cb 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.20"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.21"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 3052f8c..6b97561 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.20"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.21"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_ollama_laden.py b/tests/test_ollama_laden.py
+index ab5080b..ed80528 100644
+--- a/tests/test_ollama_laden.py
++++ b/tests/test_ollama_laden.py
+@@ -132,3 +132,20 @@ def test_entladen_wartet_bis_das_modell_weg_ist(monkeypatch):
+     k = OllamaKlient("http://ollama:11434", "m", client=httpx.Client(transport=httpx.MockTransport(antwort)))
+     k.entladen()
+     assert abfragen["n"] == 3
++
++
++def test_taetigkeit_meldet_token_pro_sekunde(monkeypatch):
++    """Die Worker-App zeigt, was der Worker gerade tut – beim Sprachmodell die Geschwindigkeit."""
++    from app import worker_prozess
++    from app.sprachmodell import Zaehler
++
++    gemeldet = []
++    monkeypatch.setattr(worker_prozess, "_taetigkeit", lambda text, **d: gemeldet.append((text, d)))
++    k, _ = _chat_klient([(200, {"message": {"content": '{"a": 1}'}, "prompt_eval_count": 3800, "eval_count": 900,
++                                "eval_duration": int(60e9)})])
++    z = Zaehler()
++    assert z.aufruf(k, "s", "n") == {"a": 1}
++    text, daten = gemeldet[-1]
++    assert "15.0 Token/s" in text and "3.800 Token gelesen" in text
++    assert daten == {"schritt": "sprachmodell", "tokenS": 15.0, "aufruf": 1}
++    assert z.token_s_mittel == 15.0
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 89faeb0..c9bf58c 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -33,8 +33,13 @@ def test_ereignisse_eines_auftrags(client, world, dbs, tmp_path):
+     p = [x["p"] for x in e if x["ereignis"] == "fortschritt"]
+     assert p == sorted(p) and p[-1] <= 1.0
+     # Keine Inhalte: nur bekannte Felder
+-    erlaubt = {"ereignis", "zeit", "jobId", "typ", "dateien", "p", "sekunden", "audioSekunden", "peakVramMb"}
++    erlaubt = {"ereignis", "zeit", "jobId", "typ", "dateien", "p", "sekunden", "audioSekunden", "peakVramMb", "tokenS",
++               "text", "schritt"}
+     assert all(set(x) <= erlaubt for x in e)
++    # Was der Worker gerade tut, kommt als Ereignis – nur mit dem Text der Tätigkeit, nie mit Inhalten
++    from app import worker_prozess
++
++    assert worker_prozess._taetigkeit is None  # nach dem Auftrag wieder abgemeldet
+ 
+ 
+ def test_fehlschlag_wird_gemeldet(client, world, dbs, tmp_path):
+@@ -107,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.20"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.21"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index e636795..f8b0def 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.20"
++version = "0.4.21"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
