@@ -1,0 +1,271 @@
+From d35594cdce58856dbd5d78c2ee7bc37ae14b2d43 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 30 Sep 2026 23:02:14 +0200
+Subject: [PATCH] Sprachmodell: dritter Versuch ohne JSON-Grammatik,
+ wiederholte Phrasen im Transkript zusammengefasst (Server 0.4.25)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Der Zusammenfassungs-Auftrag scheiterte dreimal mit „prediction aborted, token repeat limit reached“:
+das kleine Modell dreht im JSON-Modus Schleifen. Jetzt drei Versuche (der letzte ohne erzwungene
+JSON-Grammatik, mit frequency_penalty), ein klarer Fehlertext mit Hinweis auf ein anderes Modell, und
+Halluzinationen der Spracherkennung (eine Phrase vier- oder mehrmals hintereinander) werden vor dem
+Sprachmodell auf ein Vorkommen gekürzt.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 76 ++++++++++++++++++++++++++++++------
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_ollama_laden.py   | 30 ++++++++++++--
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 8 files changed, 98 insertions(+), 20 deletions(-)
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index d83636e..fc34819 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -169,17 +169,27 @@ class OllamaKlient:
+                         gemeldet = prozent - prozent % 10
+                         melden(f"Sprachmodell {self.modell}: {gemeldet} % von {gesamt / 2 ** 30:.1f} GB")
+ 
++    # (Temperatur, Wiederholungsstrafe, JSON-Grammatik) je Versuch. Der dritte läuft ohne die erzwungene
++    # JSON-Grammatik: sie verbietet dem Modell das Aufhören mitten in der Struktur, und genau dort drehen kleine,
++    # quantisierte Modelle ihre Schleifen – frei formuliert liefern sie meist doch noch JSON, das _json() herauslöst.
++    VERSUCHE = ((0.3, 1.1, True), (0.6, 1.2, True), (0.8, 1.3, False))
++
+     def chat(self, system: str, nutzer: str) -> Antwort:
+         # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
+         # reached“ ab). Daher eine leichte Wiederholungsstrafe und eine Obergrenze für die Antwortlänge – und bei einem
+-        # Abbruch ein zweiter Versuch mit etwas mehr Streuung.
++        # Abbruch weitere Versuche mit mehr Streuung, der letzte ohne JSON-Grammatik.
+         # Streamend, mit Stillstands-Zeitgrenze statt Gesamtzeit: auf einem schwachen Rechner dauert eine Antwort
+         # auch mal 20 Minuten – solange Stücke kommen, ist alles gut; kommt drei Minuten nichts, hängt Ollama.
+-        for versuch, (temperatur, strafe) in enumerate(((0.3, 1.1), (0.6, 1.2))):
+-            body = {"model": self.modell, "stream": True, "format": "json", "keep_alive": "2m",
+-                    "options": {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
+-                                "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS},
++        status, fehler, d = 0, "", {}
++        for versuch, (temperatur, strafe, grammatik) in enumerate(self.VERSUCHE):
++            optionen = {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
++                        "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS}
++            if versuch:
++                optionen["frequency_penalty"] = 0.2 * versuch
++            body = {"model": self.modell, "stream": True, "keep_alive": "2m", "options": optionen,
+                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
++            if grammatik:
++                body["format"] = "json"
+             try:
+                 status, fehler, d = self._streamen(body)
+             except httpx.ReadTimeout as e:
+@@ -187,10 +197,15 @@ class OllamaKlient:
+                                          "Modell hängt oder der Rechner ist überlastet.") from e
+             except httpx.HTTPError as e:
+                 raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
+-            if (status >= 400 or fehler) and "repeat" in fehler and versuch == 0:
+-                log.info("Sprachmodell hat sich wiederholt – zweiter Versuch mit mehr Streuung")
++            if (status >= 400 or fehler) and "repeat" in fehler and versuch + 1 < len(self.VERSUCHE):
++                log.info("Sprachmodell hat sich wiederholt – %s Versuch mit mehr Streuung%s",
++                         ("zweiter", "dritter")[versuch], "" if self.VERSUCHE[versuch + 1][2] else ", ohne JSON-Grammatik")
+                 continue
+             break
++        if (status >= 400 or fehler) and "repeat" in fehler:
++            raise SprachmodellFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
++                                     f"(Wiederholungsschleife; Ollama: {fehler[:120]}). Ein anderes oder größeres "
++                                     "Modell hilft – Verwaltung → Transkription → Lokales Sprachmodell.")
+         if status >= 400 or fehler:
+             raise SprachmodellFehler(f"Ollama meldet {status}: {fehler[:200]}")
+         tokens_aus, dauer_ns = int(d.get("eval_count") or 0), int(d.get("eval_duration") or 0)
+@@ -275,16 +290,55 @@ def zeit_lesen(wert) -> float | None:
+     return None
+ 
+ 
++def _wort(w: str) -> str:
++    return w.casefold().strip('",.!?;:…„“')
++
++
++def entdoppeln(text: str, mindestens: int = 4) -> str:
++    """Eine Wortfolge (1–6 Wörter), die sich vier- oder mehrmals hintereinander wiederholt, bleibt einmal stehen –
++    Spracherkennung halluziniert bei Stille oder Musik gern „Danke. Danke. Danke. …“, und ein kleines Sprachmodell
++    schreibt so etwas gern weiter, bis Ollama abbricht."""
++    woerter = text.split()
++    out: list[str] = []
++    i = 0
++    while i < len(woerter):
++        gefunden = 0
++        for n in range(1, 7):
++            if i + n * mindestens > len(woerter):
++                break
++            muster = [_wort(w) for w in woerter[i:i + n]]
++            if not all(muster):
++                continue
++            k = 1
++            while [_wort(w) for w in woerter[i + k * n:i + (k + 1) * n]] == muster:
++                k += 1
++            if k >= mindestens:
++                out += woerter[i:i + n] + ["…"]
++                gefunden = k * n
++                break
++        if gefunden:
++            i += gefunden
++        else:
++            out.append(woerter[i])
++            i += 1
++    return " ".join(out)
++
++
+ def transkript_zeilen(transkript: list[dict]) -> list[str]:
+-    """Zeilen „[m:ss] Sprecher: Text“; aufeinanderfolgende Zeilen derselben Person werden zusammengelegt."""
++    """Zeilen „[m:ss] Sprecher: Text“; aufeinanderfolgende Zeilen derselben Person werden zusammengelegt.
++    Aufeinanderfolgende gleichlautende Stücke (Halluzination der Spracherkennung) stehen nur einmal."""
+     out: list[str] = []
+-    letzter, puffer, start = None, [], 0.0
++    letzter, puffer, start, zuletzt = None, [], 0.0, ""
+     for z in transkript:
++        text = entdoppeln(z["text"].strip())
+         if z["sprecher"] != letzter or sum(len(p) for p in puffer) > 1500:
+             if puffer:
+                 out.append(f"[{_zeit(start)}] {letzter}: {' '.join(puffer)}")
+-            letzter, puffer, start = z["sprecher"], [], z["start"]
+-        puffer.append(z["text"].strip())
++            letzter, puffer, start, zuletzt = z["sprecher"], [], z["start"], ""
++        if text.casefold() == zuletzt and len(text) > 1:
++            continue
++        zuletzt = text.casefold()
++        puffer.append(text)
+     if puffer:
+         out.append(f"[{_zeit(start)}] {letzter}: {' '.join(puffer)}")
+     return out
+diff --git a/pyproject.toml b/pyproject.toml
+index deebf8d..6c13b14 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.24"
++version = "0.4.25"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 832176b..ada4318 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.24"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.25"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 1402b96..5cb6233 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.24"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.25"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 65da1d0..b978472 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.24"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.25"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_ollama_laden.py b/tests/test_ollama_laden.py
+index 7d18d08..3744696 100644
+--- a/tests/test_ollama_laden.py
++++ b/tests/test_ollama_laden.py
+@@ -77,16 +77,40 @@ def test_wiederholungsschleife_wird_einmal_neu_versucht():
+     assert zweite["temperature"] > erste["temperature"] and zweite["repeat_penalty"] > erste["repeat_penalty"]
+ 
+ 
+-def test_wiederholungsschleife_zweimal_ist_ein_fehler():
+-    k, koerper = _chat_klient([(500, {"error": "token repeat limit reached"})] * 2)
++def test_dritter_versuch_ohne_json_grammatik():
++    k, koerper = _chat_klient([
++        (500, {"error": "token repeat limit reached"}),
++        (500, {"error": "token repeat limit reached"}),
++        (200, {"message": {"content": 'Hier: {"ok": true}'}, "prompt_eval_count": 10, "eval_count": 5}),
++    ])
++    assert k.chat("sys", "nutzer").text == 'Hier: {"ok": true}'
++    assert [b.get("format") for b in koerper] == ["json", "json", None]
++    assert koerper[2]["options"]["frequency_penalty"] > koerper[1]["options"]["frequency_penalty"] > 0
++    assert "frequency_penalty" not in koerper[0]["options"]
++
++
++def test_wiederholungsschleife_dreimal_ist_ein_klarer_fehler():
++    k, koerper = _chat_klient([(500, {"error": "prediction aborted, token repeat limit reached"})] * 3)
+     try:
+         k.chat("sys", "nutzer")
+     except SprachmodellFehler as e:
+-        assert "repeat" in str(e) and len(koerper) == 2
++        assert "festgefahren" in str(e) and "repeat" in str(e) and len(koerper) == 3
+     else:
+         raise AssertionError("kein Fehler")
+ 
+ 
++def test_wiederholte_phrasen_im_transkript_werden_zusammengefasst():
++    from app.sprachmodell import entdoppeln, transkript_zeilen
++
++    assert entdoppeln("Danke. Danke. Danke. Danke. Danke. Und dann") == "Danke. … Und dann"
++    assert entdoppeln("Untertitel im Auftrag des ZDF " * 4) == "Untertitel im Auftrag des ZDF …"
++    assert entdoppeln("Nein, nein, nein. Ich meine es ernst.") == "Nein, nein, nein. Ich meine es ernst."
++    # Gleichlautende Stücke hintereinander stehen einmal – aber nicht über einen Sprecherwechsel hinweg
++    zeilen = transkript_zeilen([{"start": 0, "sprecher": "A", "text": "Ja."}, {"start": 1, "sprecher": "B", "text": "Ja."},
++                                {"start": 2, "sprecher": "B", "text": "ja."}, {"start": 3, "sprecher": "B", "text": "Gut."}])
++    assert zeilen == ["[0:00] A: Ja.", "[0:01] B: Ja. Gut."]
++
++
+ def test_anderer_fehler_wird_nicht_wiederholt():
+     k, koerper = _chat_klient([(500, {"error": "out of memory"})])
+     try:
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 0e3e2bf..11e8978 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.24"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.25"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 7f80757..3c8a74c 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.24"
++version = "0.4.25"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
