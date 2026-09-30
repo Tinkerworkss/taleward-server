@@ -220,3 +220,17 @@ def test_markdown_wird_aus_modelltexten_entfernt():
     v = pruefen([{"entryType": "quest", "action": "create", "title": "**Flucht**", "detail": "*wichtig*",
                   "gmNotes": "# Geheim", "visibilityReason": "**klar**", "suggestedVisibility": "public"}], set(), set())
     assert (v[0]["title"], v[0]["detail"], v[0]["gmNotes"], v[0]["visibilityReason"]) == ("Flucht", "wichtig", "Geheim", "klar")
+
+
+def test_keine_vorschlaege_fuer_spielercharaktere():
+    from app.sprachmodell import ist_spielercharakter, pruefen
+
+    chars = ["Litha Flamel", "Tubo", "Jemma Reed"]
+    assert ist_spielercharakter("Litha Flamel (Deckname: Rita)", chars)
+    assert ist_spielercharakter("Tubo – der Flüchtige", chars) and ist_spielercharakter("JEMMA REED", chars)
+    assert not ist_spielercharakter("Tubos Versteck", chars) and not ist_spielercharakter("Rita", chars)
+    roh = [{"entryType": "npc", "action": "create", "title": "Litha Flamel (Deckname: Rita)", "detail": "x"},
+           {"entryType": "location", "action": "create", "title": "Tubos Versteck", "detail": "x"},
+           {"entryType": "npc", "action": "update", "targetEntryId": "e1", "title": "Tubo", "detail": "x"}]
+    v = pruefen(roh, {"e1"}, set(), charaktere=chars)
+    assert [x["title"] for x in v] == ["Tubos Versteck", "Tubo"]

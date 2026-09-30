@@ -621,7 +621,8 @@ class Ablauf:
                   f"\n\nGeheime Einträge (nur Spielleitung):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE)))
         d = self.zaehler.aufruf(self.klient, system, nutzer)
-        return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]})
+        return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
+                       charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")])
 
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
                    fortschritt: Callable[[float], None] = lambda _p: None) -> dict:
@@ -636,8 +637,28 @@ class Ablauf:
                 "tokensOut": self.zaehler.tokens_out}
 
 
-def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str]) -> list[dict]:
-    """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg."""
+def _kern(titel: str) -> str:
+    """„Litha Flamel (Deckname: Rita)“ → „litha flamel“ – Klammern und Zusätze nach Doppelpunkt/Gedankenstrich weg."""
+    t = re.sub(r"\s*[(\[].*?[)\]]", "", titel)
+    t = re.split(r"\s+[–-]\s+|:", t, maxsplit=1)[0]
+    return " ".join(re.findall(r"\w+", t.casefold()))
+
+
+def ist_spielercharakter(titel: str, charaktere) -> bool:
+    """Trägt der Vorschlag den Namen eines Spielercharakters? (Nur der Name selbst, nicht „Tubos Versteck“.)"""
+    kern = _kern(titel)
+    if not kern:
+        return False
+    for c in charaktere:
+        name = " ".join(re.findall(r"\w+", str(c).casefold()))
+        if name and (kern == name or kern == _kern(str(c))):
+            return True
+    return False
+
+
+def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=()) -> list[dict]:
+    """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg – auch neue
+    Einträge für die Charaktere der Spieler, die das Modell trotz Anweisung gern anlegt."""
     out = []
     for v in roh if isinstance(roh, list) else []:
         if not isinstance(v, dict):
@@ -646,6 +667,9 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str]) -> list[dict]:
         titel, detail = klartext(v.get("title")), klartext(v.get("detail"))
         ziel = v.get("targetEntryId") or None
         if typ not in ENTRY_TYPES or art not in ("create", "update", "reveal") or not titel:
+            continue
+        if art == "create" and ist_spielercharakter(titel, charaktere):
+            log.info("Vorschlag „%s“ verworfen – Spielercharakter", titel)
             continue
         if art == "update" and ziel not in bibel_ids | geheim_ids:
             continue
