@@ -208,3 +208,15 @@ def test_fehlender_recap_nennt_nur_die_form():
         assert "title:str[9]" in str(e) and "summary_de:{a}" in str(e) and "Kapitel" not in str(e)
     else:
         raise AssertionError("kein Fehler")
+
+
+def test_markdown_wird_aus_modelltexten_entfernt():
+    from app.sprachmodell import klartext, pruefen
+
+    assert klartext("**Ziel:** Nach *Norden*. - **Lage:** Knapp. - **Risiko:** Wachen. 1. Schnell 2. Leise") == (
+        "Ziel: Nach Norden.\n- Lage: Knapp.\n- Risiko: Wachen.\n1. Schnell\n2. Leise")
+    assert klartext("## Kapitel\nEin 5*3 Feld - und `weiter`.") == "Kapitel\nEin 5*3 Feld - und weiter."
+    assert klartext(None) == ""
+    v = pruefen([{"entryType": "quest", "action": "create", "title": "**Flucht**", "detail": "*wichtig*",
+                  "gmNotes": "# Geheim", "visibilityReason": "**klar**", "suggestedVisibility": "public"}], set(), set())
+    assert (v[0]["title"], v[0]["detail"], v[0]["gmNotes"], v[0]["visibilityReason"]) == ("Flucht", "wichtig", "Geheim", "klar")

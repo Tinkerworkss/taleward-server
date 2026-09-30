@@ -408,6 +408,7 @@ Gespräche außerhalb des Spiels kommen nicht vor.
 - Offensichtliche Witze sind kein Spielgeschehen.
 - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
 - Offene Fäden: 0 bis 6 kurze Sätze zu ungelösten Fragen, Versprechen und Zielen der Gruppe.
+- Reiner Text ohne Markdown: keine Sternchen, keine Rauten, keine Zwischenüberschriften, keine Listen.
 Antworte nur mit JSON: {"title": "…", "text": "…", "openThreads": ["…"]}. Sprache: {sprache}."""
 
 SYSTEM_VORSCHLAEGE = """Du pflegst die Kampagnen-Bibel einer Pen-&-Paper-Runde (Einträge: npc, location, quest, \
@@ -429,6 +430,8 @@ gesprochen hat. visibilityReason: ein kurzer Satz.
 einem vorhandenen Eintrag).
 - evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}.
 - Keine Einträge für die Charaktere der Spieler. Höchstens {max} Vorschläge, das Wichtigste zuerst. Lieber wenige gute.
+- detail und gmNotes sind reiner Text ohne Markdown (keine Sternchen, keine Rauten); mehrere Punkte als eigene Zeilen. \
+Keine Vermutungen – nur, was gesagt wurde.
 Antworte nur mit JSON: {"proposals": [{"entryType": "…", "action": "…", "targetEntryId": null, "title": "…", \
 "detail": "…", "gmNotes": null, "suggestedVisibility": "…", "visibilityReason": "…", "confidence": 0.7, \
 "flags": [], "evidence": [{"start": "m:ss", "quote": "…"}]}]}. Sprache der Texte: {sprache}."""
@@ -441,6 +444,22 @@ def _erwaehnt(name: str, text: str) -> bool:
         return True
     woerter = [w for w in re.findall(r"\w+", name.lower()) if len(w) >= 4 and w not in ("der", "die", "das", "the")]
     return any(re.search(rf"\b{re.escape(w)}", klein) for w in woerter)
+
+
+def klartext(text) -> str:
+    """Markdown aus Modelltexten entfernen – die App zeigt reinen Text, und kleine Modelle streuen trotz Anweisung
+    **fett**, ## Überschriften und Listen in einer Zeile („… - **Ziel:** … - **Lage:** …“) ein."""
+    t = str(text or "")
+    t = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", t)  # Überschriften
+    t = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), t)  # fett
+    t = re.sub(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])", r"\1", t)  # kursiv
+    t = t.replace("`", "")
+    if len(re.findall(r"\s+[-•]\s+(?=[A-ZÄÖÜ0-9])", t)) >= 2:  # Liste in einer Zeile → eigene Zeilen
+        t = re.sub(r"\s+[-•]\s+(?=[A-ZÄÖÜ0-9])", "\n- ", t)
+    if len(re.findall(r"\s+\d{1,2}\.\s+(?=[A-ZÄÖÜ])", t)) >= 2:  # „… 1. Route … 2. Tarnung …“
+        t = re.sub(r"\s+(\d{1,2}\.)\s+(?=[A-ZÄÖÜ])", r"\n\1 ", t)
+    t = re.sub(r"(?m)^\s*[•*]\s+", "- ", t)
+    return re.sub(r"[ \t]+\n", "\n", t).strip()
 
 
 RECAP_SCHLUESSEL = ("text", "recap", "summary", "zusammenfassung", "body", "content", "story", "inhalt")
@@ -583,9 +602,8 @@ class Ablauf:
             form = ", ".join(f"{k}:{_form(v)}" for k, v in d.items()) or "leer"
             log.warning("Sprachmodell: Recap-Antwort ohne text (%s)", form)
             raise SprachmodellFehler(f"Das Sprachmodell hat keinen Recap geliefert (Antwort: {form}).")
-        faeden = [str(f).strip()[:300] for f in (d.get("openThreads") or d.get("open_threads") or [])
-                  if str(f).strip()][:10]
-        return {"title": str(d.get("title") or d.get("titel") or "").strip()[:300], "text": text, "openThreads": faeden}
+        faeden = [klartext(f)[:300] for f in (d.get("openThreads") or d.get("open_threads") or []) if klartext(f)][:10]
+        return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": klartext(text), "openThreads": faeden}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
@@ -625,7 +643,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str]) -> list[dict]:
         if not isinstance(v, dict):
             continue
         typ, art = v.get("entryType"), v.get("action")
-        titel, detail = str(v.get("title") or "").strip(), str(v.get("detail") or "").strip()
+        titel, detail = klartext(v.get("title")), klartext(v.get("detail"))
         ziel = v.get("targetEntryId") or None
         if typ not in ENTRY_TYPES or art not in ("create", "update", "reveal") or not titel:
             continue
@@ -655,9 +673,8 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str]) -> list[dict]:
             flags.append("low_confidence")
         out.append({
             "entryType": typ, "action": art, "targetEntryId": ziel, "title": titel[:300], "detail": detail[:4000],
-            "gmNotes": (str(v.get("gmNotes") or "").strip()[:4000] or None) if art == "create" else None,
-            "suggestedVisibility": sicht, "visibilityReason": (str(v.get("visibilityReason") or "").strip()[:500]
-                                                               or None),
+            "gmNotes": (klartext(v.get("gmNotes"))[:4000] or None) if art == "create" else None,
+            "suggestedVisibility": sicht, "visibilityReason": klartext(v.get("visibilityReason"))[:500] or None,
             "confidence": sicherheit, "flags": flags, "evidence": belege[:3],
         })
         if len(out) >= MAX_VORSCHLAEGE:
@@ -713,7 +730,7 @@ def dokument_pruefen(roh: list, bibel: dict[str, str]) -> list[dict]:
         if not isinstance(v, dict):
             continue
         typ, art = v.get("entryType"), v.get("action")
-        titel = str(v.get("title") or "").strip()
+        titel = klartext(v.get("title"))
         ziel = v.get("targetEntryId") or None
         if typ not in ENTRY_TYPES or art not in ("create", "update") or not titel:
             continue
@@ -742,8 +759,8 @@ def dokument_pruefen(roh: list, bibel: dict[str, str]) -> list[dict]:
             flags.append("low_confidence")
         out.append({
             "entryType": typ, "action": art, "targetEntryId": ziel, "title": titel[:300],
-            "detail": str(v.get("detail") or "").strip()[:4000],
-            "gmNotes": str(v.get("gmNotes") or "").strip()[:4000] or None,
+            "detail": klartext(v.get("detail"))[:4000],
+            "gmNotes": klartext(v.get("gmNotes"))[:4000] or None,
             "publicSuggested": bool(v.get("publicSuggested")),
             "visibilityReason": str(v.get("visibilityReason") or "").strip()[:500] or None,
             "confidence": sicherheit, "flags": flags, "evidence": belege[:3],
