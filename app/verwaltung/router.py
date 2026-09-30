@@ -272,7 +272,7 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session = 
         "uploads": _ordnergroesse(s.data_dir / "uploads"),
         "hoerproben": _ordnergroesse(s.data_dir / "samples"),
     }
-    from app import einrichtung, kosten, sicherung
+    from app import aufbewahrung, einrichtung, kosten, sicherung
     from app.einstellungen import meta_lesen
 
     punkte = [] if meta_lesen(db, "assistent.ausgeblendet") else einrichtung.stand(db)
@@ -280,7 +280,8 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session = 
     speicher["bilder"] = _ordnergroesse(s.data_dir / "bilder") + _ordnergroesse(s.data_dir / "unterlagen")
     return _seite(request, "uebersicht.html", user, db, zahlen=zahlen, speicher=speicher, api_version=API_VERSION,
                   db_datei=db_datei, knecht=KNECHT.zustand(), fehler=fehler, sicherungen=sicherung.liste()[:7],
-                  sicherung_einst=sicherung.einstellungen(db), punkte=punkte, kosten=kosten_info)
+                  sicherung_einst=sicherung.einstellungen(db), punkte=punkte, kosten=kosten_info,
+                  eingebaut=_eingebaut_anzeige(db), aufbewahrung=aufbewahrung.lesen(db))
 
 
 # ---------------------------------------------------------------- Konten

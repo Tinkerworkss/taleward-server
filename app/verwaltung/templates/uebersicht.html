@@ -27,6 +27,18 @@
 {% if zahlen.wartend and not zahlen.knechte_online %}
 <div class="meldung meldung--fehler">{{ _("Sessions warten, aber kein Worker ist bereit.") }} <a href="/verwaltung/transkription">{{ _("Worker starten") }}</a></div>
 {% endif %}
+{% if eingebaut %}
+<div class="karte">
+  <h2>{{ _("Eingebauter Worker") }}</h2>
+  {% set k = eingebaut.knecht %}
+  <p>{% if k and k.online %}{% if k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
+    {% elif k.job %}<span class="marke-status marke-status--gut">{{ _("arbeitet") }}</span>
+    {% else %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>{% endif %}
+    {% else %}<span class="marke-status marke-status--fehler">{{ _("nicht verbunden") }}</span>{% endif %}
+    {% if k and k.info %} {{ k.info.gpu or _("Prozessor") }}{% if eingebaut.vram_karte %} · {{ (eingebaut.vram_karte / 1024) | round(1) }} GB{% endif %}{% if k.info.llm %} · {{ _("Sprachmodell") }} {{ k.info.llm }}{% endif %}{% endif %}
+    · <a href="/verwaltung/transkription">{{ _("Einstellungen") }}</a></p>
+</div>
+{% else %}
 <div class="karte">
   <h2>{{ _("Lokaler Worker") }}</h2>
   {% if knecht.laeuft %}
@@ -35,6 +47,7 @@
   <p><span class="marke-status">{{ _("aus") }}</span> <a href="/verwaltung/transkription">{{ _("Starten") }}</a></p>
   {% endif %}
 </div>
+{% endif %}
 {% if kosten.limit or kosten.monat %}
 <div class="karte">
   <h2>{{ _("Kosten für Cloud-Dienste") }}</h2>
@@ -45,7 +58,7 @@
 <div class="karte">
   <h2>{{ _("Speicher") }}</h2>
   <p>{{ _("Datenbank {a} · Bilder und Unterlagen {d} · Aufnahmen in Bearbeitung {b} · Hörproben {c}", a=groesse(speicher.datenbank), d=groesse(speicher.bilder), b=groesse(speicher.uploads), c=groesse(speicher.hoerproben)) }}</p>
-  <p class="leise">{{ _("Aufnahmen werden nach der Transkription gelöscht, spätestens nach 7 Tagen.") }}</p>
+  <p class="leise">{% if aufbewahrung.bis_freigabe %}{{ _("Aufnahmen bleiben bis zur Freigabe des Recaps, höchstens {n} Tage.", n=aufbewahrung.tage) }}{% else %}{{ _("Aufnahmen werden gleich nach der Transkription gelöscht.") }}{% endif %} <a href="/verwaltung/einstellungen#aufnahmen">{{ _("Ändern") }}</a></p>
 </div>
 <div class="karte" id="sicherung">
   <h2>{{ _("Sicherung") }}</h2>

@@ -366,8 +366,10 @@ EN: dict[str, str] = {
     "Speicher": "Storage",
     "Datenbank {a} · Aufnahmen in Bearbeitung {b} · Hörproben {c}":
         "Database {a} · recordings in progress {b} · voice samples {c}",
-    "Aufnahmen werden nach der Transkription gelöscht, spätestens nach 7 Tagen.":
-        "Recordings are deleted after transcription, at the latest after 7 days.",
+    "Aufnahmen bleiben bis zur Freigabe des Recaps, höchstens {n} Tage.":
+        "Recordings stay until the recap is released, at most {n} days.",
+    "Aufnahmen werden gleich nach der Transkription gelöscht.": "Recordings are deleted right after transcription.",
+    "Ändern": "Change",
     "Sicherung herunterladen": "Download backup",
     "Die Sicherung ist eine vollständige Kopie der Datenbank mit allen Inhalten (Konten, Kampagnen, Recaps, Transkripte, Einstellungen). Sicher aufbewahren.":
         "The backup is a complete copy of the database with all content (accounts, campaigns, recaps, transcripts, settings). Keep it safe.",
