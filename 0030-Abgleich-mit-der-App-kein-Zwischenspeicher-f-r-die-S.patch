@@ -1,0 +1,385 @@
+From 8c6fcafdec967849974332a276121a708aa00f31 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 30 Sep 2026 14:51:53 +0200
+Subject: [PATCH] =?UTF-8?q?Abgleich=20mit=20der=20App:=20kein=20Zwischensp?=
+ =?UTF-8?q?eicher=20f=C3=BCr=20die=20Schnittstelle,=20Vertrag=20aus=20der?=
+ =?UTF-8?q?=20App=20=C3=BCbernommen=20(Server=200.4.22)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Alle Antworten unter /api/v1 tragen Cache-Control: no-store (Endpunkte mit eigener Vorgabe wie Charakterbilder
+  behalten sie). Auf einem Server fehlte eine frisch angelegte Kampagne in der Liste – ein Proxy oder Browser hatte
+  die alte Antwort noch.
+- contract/session-chronik-api.yaml ist jetzt die Fassung der App (Titel „Taleward API“, taleward.org, Grundregeln
+  zu App-Versionen, Web-Fassung und Anmelden mit Diensten). Eine Grundregel korrigiert: Audio bleibt je nach
+  audioRetention, nicht immer sofort gelöscht.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/versionen.py                  | 10 ++++
+ contract/session-chronik-api.yaml | 96 ++++++++++++++++++++-----------
+ pyproject.toml                    |  2 +-
+ tests/test_aktualisierung.py      |  2 +-
+ tests/test_assistent.py           |  2 +-
+ tests/test_modellablage.py        |  2 +-
+ tests/test_worker_app.py          |  2 +-
+ tests/test_zwischenspeicher.py    | 22 +++++++
+ uv.lock                           |  2 +-
+ 9 files changed, 102 insertions(+), 38 deletions(-)
+ create mode 100644 tests/test_zwischenspeicher.py
+
+diff --git a/app/versionen.py b/app/versionen.py
+index 33de6b0..3ad6ef1 100644
+--- a/app/versionen.py
++++ b/app/versionen.py
+@@ -27,6 +27,16 @@ def veraltet(app_version: str | None, minimum: str | None) -> bool:
+ 
+ async def pruefen(request: Request, call_next):
+     pfad = request.url.path
++    antwort = await _pruefen(request, call_next, pfad)
++    # Kein Zwischenspeicher für Schnittstellen-Antworten: Ein Proxy oder Browser hat auf einem Server eine frisch
++    # angelegte Kampagne aus der Liste „vergessen“ lassen. Endpunkte, die bewusst zwischenspeichern lassen
++    # (Charakterbilder), setzen den Kopf selbst und behalten ihn.
++    if pfad.startswith("/api/v1/") and "cache-control" not in antwort.headers:
++        antwort.headers["Cache-Control"] = "no-store"
++    return antwort
++
++
++async def _pruefen(request: Request, call_next, pfad: str):
+     browser = pfad.startswith("/api/v1/auth/oidc/") and pfad.endswith("/start")  # Systembrowser, ohne App-Header
+     if request.method != "OPTIONS" and pfad.startswith("/api/v1/") and pfad not in FREI and not browser:
+         from app.db import session_factory
+diff --git a/contract/session-chronik-api.yaml b/contract/session-chronik-api.yaml
+index 121c867..e5bbc9e 100644
+--- a/contract/session-chronik-api.yaml
++++ b/contract/session-chronik-api.yaml
+@@ -1,9 +1,9 @@
+ openapi: 3.1.0
+ info:
+-  title: Session-Chronik API
++  title: Taleward API
+   version: 0.4.5
+   description: |
+-    Schnittstelle zwischen der Session-Chronik-App (Android/PWA) und dem Verarbeitungsserver.
++    Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
+ 
+     Grundregeln:
+     - Alle Endpunkte außer /auth/login, /auth/register und /info erfordern ein Bearer-Token.
+@@ -24,16 +24,37 @@ info:
+     - Der Server protokolliert pro Session und Unterlage Audiodauer, Rechenzeit, Tokens des Sprachmodells und
+       geschätzte Kosten. Abgerechnet würde beim Betreiber der Kampagne (SL) oder – falls übernommen – bei der
+       Organisation. Spieler verursachen nie Kosten.
++    - App-Versionen (ab 0.3.9): Die App schickt an Server ab 0.3.9 bei jeder Anfrage `X-Taleward-App: <Version>`
++      (CORS: Header erlauben!). Ist minAppVersion gesetzt und die App älter – oder fehlt der Header ganz –, antwortet
++      der Server auf alles außer /info, /einladung und /verwaltung mit 426 `app_outdated` (message nennt die
++      Mindestversion). Die App sperrt dann die Kampagnen dieses Servers und zeigt den Download (appDownloadUrl).
+     - App-Updates (ab 0.4.1): Der Server holt täglich das neueste Release aus `Tinkerworkss/taleward-app` (Tag `v1.2.3`
+       oder `app-v1.2.3`, Anhang `*.apk`), prüft die SHA-256 und bietet die Datei selbst an
+       (`https://<server>/downloads/app/<version>/<datei>.apk`, öffentlich). /info nennt latestAppVersion, appDownloadUrl
+       (immer dieser Server), appDownloadSha256, appDownloadSizeBytes, releaseNotes; von Hand eingetragene Werte haben
+       Vorrang. Freigabe automatisch oder von Hand – sie regelt nur, was dieser Server verteilt, und verbietet keine
+       neueren Apps (einzige Sperre: minAppVersion → 426).
++      App: Die höchste latestAppVersion aller Server gewinnt, geladen vom anbietenden Server. APK-Fassung: herunterladen,
++      SHA-256 prüfen, Installationsdialog (REQUEST_INSTALL_PACKAGES, FileProvider); Play-Store-Fassung ohne Updater
++      („Update im Play Store“). Beide mit demselben Schlüssel signiert. Kompatibilitätsfenster: Die App unterstützt
++      apiVersion ab einer festen Untergrenze (mindestens 12 Monate zurück); ältere Server gelten als „veraltet“.
+     - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser unter `/app/` – zentral auf der Taleward-Website
+-      und optional auf jedem Server. Server erlauben CORS für die Herkunft der zentralen Website (Voreinstellung, in der
+-      Verwaltung abschaltbar) und die eigene; Header mindestens Authorization, Content-Type, Accept-Language,
+-      X-Taleward-App, X-Chunk-SHA256; Methoden GET, POST, PUT, PATCH, DELETE. Voraussetzung: HTTPS.
++      (`https://taleward.org/app/`) und optional auf jedem Server (`https://<server>/app/`). Sie spricht direkt mit
++      den Vereinsservern, die Website sieht keine Inhalte. Server müssen dafür CORS erlauben: Herkunft der zentralen
++      Website (Voreinstellung, in der Verwaltung abschaltbar) und die eigene; erlaubte Header mindestens Authorization,
++      Content-Type, Accept-Language, X-Taleward-App, X-Chunk-SHA256; Methoden GET, POST, PUT, PATCH, DELETE.
++      Voraussetzung: HTTPS (Browser blockieren http-Server von einer https-Seite aus).
++    - Anmelden mit einem Dienst (ab 0.4.0) – die App spricht nie selbst mit Google & Co.:
++      1. App erzeugt verifier (43–128 Zeichen, zufällig) und challenge = BASE64URL(SHA-256(verifier)).
++      2. App öffnet im Systembrowser (Android Custom Tabs) GET /auth/oidc/{provider}/start?challenge=…&purpose=login|link
++         (bei link zusätzlich &linkToken=… aus POST /me/providers/{provider}/link).
++      3. Server leitet zum Dienst, bekommt die Antwort auf https://<server>/auth/oidc/{provider}/callback und leitet auf
++         `taleward://auth?ticket=…&serverId=…` weiter (Ticket 2 min, einmalig) bzw. `taleward://auth?error=<code>`.
++      4. App: POST /auth/oidc/exchange {ticket, verifier} → status ok | register | email_in_use.
++      Der Server speichert vom Dienst nur die Kennung (sub) und die bestätigte E-Mail, nie dessen Tokens. Jeder Server
++      meldet sich selbst bei den Diensten an (keine zentrale Stelle). Voraussetzung: HTTPS mit eigener Domain.
++    - E-Mail ist freiwillig und nur für Kontozwecke (Passwort vergessen, Bestätigung). Sie erscheint nur für die Person
++      selbst (/me, Login, Registrierung, Export), nie für andere.
+     - Die App schickt `Accept-Language: de` oder `en`. Der Server liefert `message` in dieser Sprache
+       (Standard und Rückfall: de). Inhalte (Recaps, Bibel) folgen dagegen `Campaign.language`.
+     - Einwilligung: Jede anwesende Person muss selbst zugestimmt haben – entweder dauerhaft in der eigenen App
+@@ -97,16 +118,19 @@ info:
+     CORS-Regeln, Parameter `returnTo` bei /auth/oidc/{provider}/start für den Rückweg in den Browser.
+     Änderungen in 0.4.3: CoverPreset um 19 Titelbilder erweitert (dark-fantasy bis riverside-mystery), bestehende
+     IDs unverändert.
+-    Änderungen in 0.4.4: `ServerInfo.audioRetention` (Aufbewahrung der Aufnahmen für die Prüfung der Zusammenfassung).
+-    Wird die Aufbewahrung in der Verwaltung verlängert, setzt der Server `recordingConsentAt` aller Mitglieder zurück;
+-    die App fragt dann mit dem neuen Wortlaut erneut.
++    Änderungen in 0.4.4: ServerInfo.audioRetention – wie lange das Session-Audio bleibt; die App nennt es im
++    Einwilligungstext (dauerhaft und vor Ort), dazu den Cloud-Dienst, falls die Kampagne ihn erlaubt. Wird die
++    Aufbewahrung in der Verwaltung verlängert, setzt der Server recordingConsentAt aller Mitglieder zurück; die App
++    fragt dann mit dem neuen Wortlaut erneut.
+     Änderungen in 0.4.5: Kampagnen abschließen (PATCH archived, CampaignSummary.archivedAt) und löschen
+     (DELETE /campaigns/{id}), Mitglied entfernen bzw. selbst verlassen (DELETE …/members/{memberId}, Member.leftAt),
+     Regeln für Rollenwechsel (last_gm), unveröffentlichtes Kapitel verwerfen (DELETE /sessions/{id}).
+ 
+ servers:
++  - url: https://taleward.example.org/api/v1
++    description: Server eines Vereins oder einer Gruppe (Beispiel)
+   - url: http://localhost:8000/api/v1
+-    description: Lokaler Entwicklungsserver
++    description: Lokaler Server zum Entwickeln
+ 
+ security:
+   - bearerAuth: []
+@@ -258,8 +282,11 @@ paths:
+       tags: [Auth]
+       summary: Anmelden mit einem Dienst starten – nur im Systembrowser öffnen (ab 0.4.0)
+       description: |
+-        Kein JSON-Endpunkt: Der Server leitet (302) zum Dienst weiter. Am Ende landet der Browser auf
+-        taleward://auth?ticket=…&serverId=… oder taleward://auth?error=<code> (provider_unknown, oidc_failed, cancelled …).
++        Kein JSON-Endpunkt: Der Server leitet (302) zum Dienst weiter – auch bei Fehlern (dann gleich auf den Rückweg).
++        Die Rückleitung vom Dienst kommt als 303 auf taleward://auth?ticket=…&serverId=… oder taleward://auth?error=<code>;
++        die Seite enthält zusätzlich einen Link „Zurück zu Taleward“. Fehlercodes: provider_unknown (Dienst unbekannt oder
++        nicht eingerichtet), oidc_failed, cancelled, link_invalid (linkToken abgelaufen oder schon benutzt).
++        Von der Mindestversion (426) ausgenommen, weil der Systembrowser keinen App-Header schickt; exchange nicht.
+       security: []
+       parameters:
+         - { name: challenge, in: query, required: true, schema: { type: string }, description: "BASE64URL(SHA-256(verifier)), ohne Füllzeichen" }
+@@ -269,7 +296,7 @@ paths:
+           in: query
+           schema: { type: string }
+           description: |
+-            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://taleward.app/app/#/auth`. Der Server
++            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://taleward.org/app/#/auth`. Der Server
+             hängt `?ticket=…&serverId=…` bzw. `?error=…` wörtlich an den Wert an (auch hinter `#/auth`). Erlaubt sind nur
+             fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App; sonst Rückweg mit
+             error=return_to_not_allowed über taleward://auth.
+@@ -285,7 +312,7 @@ paths:
+         Nur die App, die mit challenge gestartet hat, kennt den verifier. Ergebnis je status:
+         ok – angemeldet (bei link: Dienst jetzt verbunden, accessToken dann null);
+         register – noch kein Konto: App zeigt „Konto anlegen“ ohne Benutzername/Passwort, dann POST /auth/register mit
+-        registrationToken (15 min);
++        registrationToken (15 min); user fehlt dann in der Antwort (ebenso bei email_in_use);
+         email_in_use – die vom Dienst bestätigte E-Mail gehört schon zu einem Konto; der Server verbindet nicht selbst
+         (Schutz vor Kontoübernahme). App: „Melde dich mit deinem Benutzernamen an und verbinde {Dienst} dann unter Konten
+         und Server.“
+@@ -437,7 +464,7 @@ paths:
+           application/json:
+             schema:
+               type: object
+-              description: Konten mit Passwort bestätigen mit password (401 wrong_password), Konten ohne Passwort mit confirmUsername.
++              description: Konten mit Passwort bestätigen mit password (401 wrong_password), Konten ohne Passwort mit confirmUsername (400 confirmation_mismatch).
+               properties:
+                 password: { type: string, format: password }
+                 confirmUsername: { type: string }
+@@ -991,7 +1018,7 @@ paths:
+       description: |
+         Löscht Session samt Upload-Teilen, Audio, Transkript, Hörproben, Vorschlägen und Recap-Entwurf; laufende Aufträge
+         werden abgebrochen. Veröffentlichte Kapitel → 409 session_published. Die Kapitelnummer wird wieder frei: spätere
+-        Kapitel rücken um eins auf.
++        Kapitel rücken um eins auf (App lädt die Kapitelliste danach neu).
+       responses:
+         "204": { description: Verworfen }
+         "401": { $ref: "#/components/responses/Unauthorized" }
+@@ -1453,7 +1480,7 @@ paths:
+           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+     post:
+       tags: [Termine]
+-      summary: Terminabstimmung starten (nur SL; 409 `date_poll_open`, wenn schon eine läuft)
++      summary: Terminabstimmung starten (nur SL; 409 `date_poll_open`, wenn schon eine läuft; 409 `campaign_archived`)
+       requestBody:
+         required: false
+         content:
+@@ -1955,12 +1982,24 @@ components:
+         authMethods: { type: array, items: { type: string, enum: [password, oidc, passkey] }, description: "oidc, sobald mindestens ein Dienst eingerichtet ist" }
+         privacyPolicyUrl: { type: [string, "null"] }
+         minAge: { type: integer, example: 16 }
+-        minAppVersion: { type: [string, "null"], example: "0.9.0", description: "Ältere Apps bekommen 426 app_outdated; null = keine Grenze" }
++        minAppVersion: { type: [string, "null"], example: "0.10.0", description: "Ältere Apps bekommen 426 app_outdated; null = keine Grenze" }
+         latestAppVersion: { type: [string, "null"], example: "0.9.1", description: "Neueste App – die App zeigt „Neue Version“" }
+         appDownloadUrl: { type: [string, "null"], description: "APK- oder Store-Link; auch für die Einladungsseite" }
+         releaseNotes: { type: [string, "null"], description: "Kurz, was neu ist (ein paar Zeilen)" }
+         appDownloadSha256: { type: [string, "null"], description: "SHA-256 (hex) der APK unter appDownloadUrl – nur, wenn der Server die Datei selbst anbietet (ab 0.4.1)" }
+         appDownloadSizeBytes: { type: [integer, "null"], description: "Größe der APK in Bytes (ab 0.4.1)" }
++        audioRetention:
++          type: object
++          description: |
++            Wie lange das Session-Audio auf dem Server bleibt (ab 0.4.4, Einstellung in der Verwaltung). until_release =
++            bis die SL den Recap veröffentlicht, höchstens maxDays Tage (Standard für neue Server: 7), danach löscht ein
++            geplanter Job es und setzt audioDeletedAt. immediate = gleich nach der Transkription (maxDays null).
++            Hörproben pro Sprecher und Stimmprofile sind davon unabhängig. Ab 0.4.4 immer vorhanden; fehlt das Feld
++            (ältere Server), geht die App von immediate aus. Wird die Aufbewahrung verlängert (immediate → until_release
++            oder mehr Tage), setzt der Server recordingConsentAt aller Mitglieder zurück.
++          properties:
++            mode: { type: string, enum: [until_release, immediate] }
++            maxDays: { type: [integer, "null"], minimum: 1, maximum: 7, example: 7 }
+         authProviders:
+           type: array
+           description: Eingerichtete Anmeldedienste (ab 0.4.0) – die App zeigt genau diese Knöpfe. Leer = keine.
+@@ -1989,17 +2028,6 @@ components:
+             null = dieser Server transkribiert nur selbst. Sonst Name des externen Anbieters (z. B. "mistral"),
+             den der Betreiber als Ersatz freigegeben hat. Nur dann zeigt die App der SL den Schalter
+             allowExternalTranscription und nennt den Anbieter im Hinweis.
+-        audioRetention:
+-          type: object
+-          description: |
+-            Wie lange Aufnahmen auf dem Server bleiben (ab 0.4.4, in der Verwaltung einstellbar). Die App nennt die Frist
+-            im Einwilligungstext. Fehlt das Feld (ältere Server), gilt `immediate`.
+-            until_release = bis die SL den Recap freigibt, höchstens maxDays Tage (Standard für neue Server);
+-            immediate = gleich nach der Transkription (maxDays null). Wird die Aufbewahrung verlängert
+-            (immediate → until_release oder mehr Tage), setzt der Server `recordingConsentAt` aller Mitglieder zurück.
+-          properties:
+-            mode: { type: string, enum: [until_release, immediate] }
+-            maxDays: { type: [integer, "null"], minimum: 1, maximum: 7, example: 7 }
+ 
+     Organization:
+       type: object
+@@ -2043,7 +2071,10 @@ components:
+ 
+     CoverPreset:
+       type: string
+-      description: Mitgelieferte Titelbilder der App (die Bilder selbst liegen in der App, nicht auf dem Server)
++      description: |
++        Mitgelieferte Titelbilder der App (die Bilder selbst liegen in der App, nicht auf dem Server). Die IDs bleiben
++        für immer gleich; neue kommen nur hinzu. Neue Kampagnen ohne Angabe: zufällig aus dieser Liste. Ab 0.4.3 sind es
++        30 Bilder; ältere Apps kennen nur die ersten elf und zeigen bei unbekannten IDs kein Titelbild.
+       enum: [meadow, forest, desert, city, cyber, mountains, coast, swamp, dungeon, space, castle, dark-fantasy, moonwood, ancient-ruins, tavern, battlefield, frozen-north, arcane-ruins, fairy-wilds, underworld, storm-coast, steampunk, post-apocalypse, western, noir, space-opera, orient, necropolis, manor, riverside-mystery]
+ 
+     GameSystem:
+@@ -2199,7 +2230,8 @@ components:
+               type: boolean
+               default: false
+               description: |
+-                Darf der Server Recap und Vorschläge dieser Kampagne über die Cloud-API aus ServerInfo.cloudSummary erstellen?
++                Darf der Server Recap und Vorschläge dieser Kampagne – und das Auswerten ihrer SL-Unterlagen – über die
++                Cloud-API aus ServerInfo.cloudSummary erledigen?
+                 Dabei geht der Text der Session (Namen, Gespräche – keine Stimmen) an den Anbieter. Nur die SL ändert das
+                 (PATCH). Standard false; in der Betriebsart „Nur Cloud“ setzt der Server neue Kampagnen auf true.
+                 false und kein lokales Modell verfügbar: Session bleibt in summarizing mit passender message.
+@@ -2208,7 +2240,7 @@ components:
+               default: false
+               description: |
+                 Darf der Server für diese Kampagne den externen Anbieter aus ServerInfo.externalTranscription
+-                nutzen (z. B. wenn der eigene Rechenknecht nicht erreichbar ist)? Nur die SL ändert das (PATCH).
++                nutzen (z. B. wenn der eigene Worker nicht erreichbar ist)? Nur die SL ändert das (PATCH).
+                 Standard false. Ist der Server ohne externen Anbieter, bleibt der Wert wirkungslos.
+             worldInfo:
+               type: [string, "null"]
+@@ -2256,7 +2288,7 @@ components:
+             transcriptionEngine:
+               type: [string, "null"]
+               enum: [local, external, null]
+-              description: Womit transkribiert wurde – eigener Rechenknecht (local) oder externer Anbieter; null solange offen
++              description: Womit transkribiert wurde – eigener Worker (local) oder externer Anbieter; null solange offen
+             publishedAt: { type: [string, "null"], format: date-time }
+ 
+     ProcessingState:
+diff --git a/pyproject.toml b/pyproject.toml
+index c98560c..549748f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.21"
++version = "0.4.22"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index fb8b03d..66d836f 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.21"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.22"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 84d25cb..bd67c10 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.21"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.22"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 6b97561..7a946fc 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.21"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.22"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index c9bf58c..3a30379 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.21"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.22"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/tests/test_zwischenspeicher.py b/tests/test_zwischenspeicher.py
+new file mode 100644
+index 0000000..8f7391a
+--- /dev/null
++++ b/tests/test_zwischenspeicher.py
+@@ -0,0 +1,22 @@
++"""Schnittstellen-Antworten ohne Zwischenspeicher (Proxy/Browser ließen sonst frische Kampagnen verschwinden)."""
++
++
++
++def test_schnittstelle_ohne_zwischenspeicher(client, world):
++    """Alle Antworten unter /api/v1 tragen Cache-Control: no-store – außer Endpunkte, die bewusst anderes setzen."""
++    from tests.test_step2a import API
++
++    r = client.get(f"{API}/campaigns", headers=world["gm"])
++    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
++    assert client.get(f"{API}/health").headers["cache-control"] == "no-store"
++    assert client.get(f"{API}/campaigns/gibt-es-nicht", headers=world["gm"]).headers["cache-control"] == "no-store"
++    # Charakterbilder dürfen einen Tag im Speicher bleiben (setzt der Endpunkt selbst)
++    c = client.get(f"{API}/campaigns", headers=world["gm"]).json()[0]
++    me = next(m for m in client.get(f"{API}/campaigns/{c['id']}", headers=world["gm"]).json()["members"]
++              if m["role"] == "gm")
++    r = client.get(f"{API}/campaigns/{c['id']}/members/{me['id']}/portrait", headers=world["gm"])
++    assert r.status_code in (200, 404)
++    if r.status_code == 200:
++        assert r.headers["cache-control"] == "private, max-age=86400"
++    # Außerhalb der Schnittstelle unverändert
++    assert "no-store" not in client.get("/downloads/").headers.get("cache-control", "")
+diff --git a/uv.lock b/uv.lock
+index f8b0def..b9fba53 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.21"
++version = "0.4.22"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
