@@ -45,6 +45,14 @@
           {% if k.u.id != user.id %}
           <form method="post" action="/verwaltung/konten/{{ k.u.id }}/verwalter"><input type="hidden" name="csrf" value="{{ csrf }}">
             <button class="tw-btn tw-btn--quiet tw-btn--klein" type="submit">{{ _("Verwalter-Recht entziehen") if k.verwalter else _("Zum Verwalter machen") }}</button></form>
+          <details><summary>{{ _("Konto löschen") }}</summary>
+            <p class="hilfe">{{ _("Löscht Konto, Anmeldungen, Charakterbilder, Hintergrund und Stimmprofil endgültig. Kommentare bleiben als „gelöschtes Konto“ stehen, Kapitel und Recaps bleiben unverändert. Ist die Person irgendwo die einzige Spielleitung, geht es erst, wenn dort jemand anderes Spielleitung ist.") }}</p>
+            <form class="formular formular--zeile" method="post" action="/verwaltung/konten/{{ k.u.id }}/loeschen">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <label>{{ _("Benutzername zur Bestätigung") }} <input type="text" name="bestaetigung" autocomplete="off" required placeholder="{{ k.u.username }}"></label>
+              <button class="tw-btn tw-btn--danger tw-btn--klein" type="submit">{{ _("Endgültig löschen") }}</button>
+            </form>
+          </details>
           {% endif %}
         </td>
       </tr>
@@ -52,5 +60,5 @@
     </tbody>
   </table>
 </div>
-<p class="hilfe">{{ _("Seine Daten exportieren und das eigene Konto löschen kann jede Person selbst in der App.") }}</p>
+<p class="hilfe">{{ _("Seine Daten exportieren und das eigene Konto löschen kann jede Person selbst in der App.") }} {{ _("Bittet dich jemand um die Löschung, erledigst du das hier unter „Konto löschen“ – vorher ggf. den Export in der App.") }}</p>
 {% endblock %}

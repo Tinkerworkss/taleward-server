@@ -204,15 +204,21 @@ def _kampagne_loeschen(db: Session, c: Campaign) -> None:
 
 def loeschen(db: Session, u: User, passwort: str | None, bestaetigung: str | None = None) -> None:
     """Bestätigung: Passwort; Konten ohne Passwort (nur Anmeldedienste) mit dem Benutzernamen."""
-    from app import stimmprofile
-    from app.bilder import loeschen as bilder_loeschen, portrait_ordner
-
     methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == u.id, AuthMethod.kind == "password"))
     if methode is not None or passwort:
         if not verify_password(passwort or "", methode.secret if methode else None):
             raise errors.ApiError(401, "wrong_password")
     elif (bestaetigung or "").strip().lower() != u.username:
         raise errors.bad_request("confirmation_mismatch")
+    entfernen(db, u)
+
+
+def entfernen(db: Session, u: User) -> None:
+    """Konto und alles Persönliche daran löschen – ohne Bestätigungsprüfung (die App fragt das Passwort ab, die
+    Verwaltung den Benutzernamen). 409 last_gm_campaigns, wenn die Person irgendwo die einzige Spielleitung ist."""
+    from app import stimmprofile
+    from app.bilder import loeschen as bilder_loeschen, portrait_ordner
+
     mitglieder = list(db.scalars(select(Member).where(Member.user_id == u.id)))
     blockiert, allein = [], []
     for m in mitglieder:

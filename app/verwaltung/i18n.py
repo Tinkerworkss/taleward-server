@@ -390,6 +390,18 @@ EN: dict[str, str] = {
     "Neues Passwort": "New password",
     "Setzen und überall abmelden": "Set and sign out everywhere",
     "Verwalter-Recht entziehen": "Remove administrator rights",
+    "Konto löschen": "Delete account",
+    "Löscht Konto, Anmeldungen, Charakterbilder, Hintergrund und Stimmprofil endgültig. Kommentare bleiben als „gelöschtes Konto“ stehen, Kapitel und Recaps bleiben unverändert. Ist die Person irgendwo die einzige Spielleitung, geht es erst, wenn dort jemand anderes Spielleitung ist.":
+        "Permanently deletes the account, sign-ins, character portraits, backstory and voice profile. Comments remain as “deleted account”; chapters and recaps stay unchanged. If the person is the only game master somewhere, this only works once someone else is game master there.",
+    "Benutzername zur Bestätigung": "Username to confirm",
+    "Endgültig löschen": "Delete permanently",
+    "Bittet dich jemand um die Löschung, erledigst du das hier unter „Konto löschen“ – vorher ggf. den Export in der App.":
+        "If someone asks you to delete their account, do it here under “Delete account” – after they export their data in the app, if they want it.",
+    "Konto gelöscht. Kommentare der Person bleiben als „gelöschtes Konto“ stehen.": "Account deleted. The person’s comments remain as “deleted account”.",
+    "Das eigene Konto löschst du in der App – dort mit Passwort.": "Delete your own account in the app – with your password there.",
+    "Zur Bestätigung bitte den Benutzernamen „{name}“ eingeben.": "Please enter the username “{name}” to confirm.",
+    "{name} ist die einzige Spielleitung von {titel}. Zuerst in der App eine andere Person zur Spielleitung machen oder die Kampagne dort löschen.":
+        "{name} is the only game master of {titel}. First make someone else game master in the app, or delete the campaign there.",
     "Zum Verwalter machen": "Make administrator",
     "Seine Daten exportieren und das eigene Konto löschen kann jede Person selbst in der App.": "Everyone can export their data and delete their own account in the app.",
     "Das eigene Verwalter-Recht lässt sich nicht selbst entziehen.": "You cannot remove your own administrator rights.",

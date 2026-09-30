@@ -77,6 +77,7 @@ MELDUNGEN = {
     "konto_angelegt": "Konto angelegt.",
     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
     "verwalter": "Verwalter-Recht geändert.",
+    "konto_geloescht": "Konto gelöscht. Kommentare der Person bleiben als „gelöschtes Konto“ stehen.",
     "gespeichert": "Gespeichert.",
     "worker_einstellungen": "Gespeichert. Der Worker startet nach dem laufenden Auftrag mit den neuen Einstellungen neu.",
     "worker_neustart": "Der Worker startet neu, sobald er keinen Auftrag bearbeitet (spätestens in einer Minute).",
@@ -371,6 +372,33 @@ def verwalter_umschalten(request: Request, user_id: str, user: User = Depends(ve
         db.get(OrgMember, (org.id, ziel.id)).role = "admin"
     db.commit()
     return _zurueck("/konten", "verwalter")
+
+
+@router.post("/konten/{user_id}/loeschen", dependencies=[Depends(csrf_pruefen)])
+def konto_loeschen(request: Request, user_id: str, bestaetigung: str = Form(""), user: User = Depends(verwalter),
+                   db: Session = Depends(get_db)):
+    """Konto einer anderen Person löschen (z. B. auf deren Wunsch nach Art. 17 DSGVO) – dieselbe Löschung wie
+    in der App, bestätigt mit dem Benutzernamen statt dem Passwort."""
+    from app import konto
+
+    ziel = db.get(User, user_id)
+    if ziel is None:
+        raise errors.not_found()
+    t = tr(request)
+    if ziel.id == user.id:
+        return _konten_fehler(request, user, db, t("Das eigene Konto löschst du in der App – dort mit Passwort."))
+    if bestaetigung.strip().lower() != ziel.username:
+        return _konten_fehler(request, user, db,
+                              t("Zur Bestätigung bitte den Benutzernamen „{name}“ eingeben.", name=ziel.username))
+    try:
+        konto.entfernen(db, ziel)
+    except errors.ApiError as e:
+        db.rollback()
+        return _konten_fehler(request, user, db, t(
+            "{name} ist die einzige Spielleitung von {titel}. Zuerst in der App eine andere Person zur Spielleitung "
+            "machen oder die Kampagne dort löschen.", name=ziel.display_name, titel=e.params.get("titel", "")))
+    db.commit()
+    return _zurueck("/konten", "konto_geloescht")
 
 
 # ---------------------------------------------------------------- Transkription (Worker + extern)

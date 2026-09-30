@@ -87,6 +87,45 @@ def test_konten(client, dbs, admin):
     assert r.status_code == 400
 
 
+def test_konto_loeschen_durch_verwalter(client, dbs, admin):
+    from app.models import Campaign, Member, User
+
+    client.post("/verwaltung/konten", data={"csrf": admin, "username": "mara", "display_name": "Mara",
+                                            "password": "geheim123"})
+    mara = dbs.query(User).filter_by(username="mara").one()
+    mara_id = mara.id
+    token = client.post(f"{API}/auth/login", json={"username": "mara", "password": "geheim123"}).json()["accessToken"]
+    # Falscher Bestätigungsname → nichts passiert
+    r = client.post(f"/verwaltung/konten/{mara.id}/loeschen", data={"csrf": admin, "bestaetigung": "marra"})
+    assert r.status_code == 400 and "„mara“" in r.text
+    assert client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    # Einzige Spielleitung mit weiteren Mitgliedern → Hinweis, Konto bleibt
+    chef = dbs.query(User).filter_by(username="chef").one()
+    from app.services import default_organization
+
+    c = Campaign(organization_id=default_organization(dbs).id, title="Nebelpfad", language="de")
+    dbs.add(c)
+    dbs.flush()
+    dbs.add_all([Member(campaign_id=c.id, user_id=mara.id, role="gm"),
+                 Member(campaign_id=c.id, user_id=chef.id, role="player")])
+    dbs.commit()
+    r = client.post(f"/verwaltung/konten/{mara.id}/loeschen", data={"csrf": admin, "bestaetigung": "Mara"})
+    assert r.status_code == 400 and "einzige Spielleitung" in r.text and "Nebelpfad" in r.text
+    dbs.query(Member).filter_by(campaign_id=c.id, user_id=chef.id).one().role = "gm"
+    dbs.commit()
+    # Jetzt klappt es; die App-Anmeldung ist weg, das Mitglied bleibt als „gelöschtes Konto“
+    r = client.post(f"/verwaltung/konten/{mara.id}/loeschen", data={"csrf": admin, "bestaetigung": " MARA "})
+    assert r.status_code == 200 and "Konto gelöscht" in r.text
+    dbs.expire_all()
+    assert dbs.get(User, mara_id) is None
+    assert client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    m = dbs.query(Member).filter_by(campaign_id=c.id, role="gm").filter(Member.user_id.is_(None)).one()
+    assert m.deleted_at is not None
+    # Das eigene Konto nicht hier
+    assert client.post(f"/verwaltung/konten/{chef.id}/loeschen", data={"csrf": admin, "bestaetigung": "chef"}).status_code == 400
+    assert dbs.get(User, chef.id) is not None
+
+
 def test_worker_anlegen_pausieren_sperren(client, dbs, admin):
     from fastapi.testclient import TestClient
 
