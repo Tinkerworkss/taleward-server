@@ -1,0 +1,188 @@
+From 297ed43575949cbd46a5e32ed0b454b0f5ce5886 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 30 Sep 2026 16:33:57 +0200
+Subject: [PATCH] =?UTF-8?q?=C3=9Cbersicht:=20eingebauter=20Worker=20statt?=
+ =?UTF-8?q?=20=E2=80=9ELokaler=20Worker:=20aus=E2=80=9C,=20Aufbewahrung=20?=
+ =?UTF-8?q?wie=20eingestellt=20(Server=200.4.23)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Im Docker-Paket zeigte die Übersicht „Lokaler Worker: aus · Starten“, obwohl der eingebaute Worker als Container
+lief – jetzt eine Karte mit dessen Zustand, Karte und Sprachmodell. Der Speicher-Hinweis nennt die eingestellte
+Aufbewahrung (bis zur Freigabe, höchstens n Tage / sofort) statt eines festen Satzes.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/verwaltung/i18n.py                   |  6 ++++--
+ app/verwaltung/router.py                 |  5 +++--
+ app/verwaltung/templates/uebersicht.html | 15 ++++++++++++++-
+ pyproject.toml                           |  2 +-
+ tests/test_aktualisierung.py             |  2 +-
+ tests/test_assistent.py                  |  2 +-
+ tests/test_modellablage.py               |  2 +-
+ tests/test_worker_app.py                 |  2 +-
+ uv.lock                                  |  2 +-
+ 9 files changed, 27 insertions(+), 11 deletions(-)
+
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 06d31de..fb4c2cb 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -366,8 +366,10 @@ EN: dict[str, str] = {
+     "Speicher": "Storage",
+     "Datenbank {a} · Aufnahmen in Bearbeitung {b} · Hörproben {c}":
+         "Database {a} · recordings in progress {b} · voice samples {c}",
+-    "Aufnahmen werden nach der Transkription gelöscht, spätestens nach 7 Tagen.":
+-        "Recordings are deleted after transcription, at the latest after 7 days.",
++    "Aufnahmen bleiben bis zur Freigabe des Recaps, höchstens {n} Tage.":
++        "Recordings stay until the recap is released, at most {n} days.",
++    "Aufnahmen werden gleich nach der Transkription gelöscht.": "Recordings are deleted right after transcription.",
++    "Ändern": "Change",
+     "Sicherung herunterladen": "Download backup",
+     "Die Sicherung ist eine vollständige Kopie der Datenbank mit allen Inhalten (Konten, Kampagnen, Recaps, Transkripte, Einstellungen). Sicher aufbewahren.":
+         "The backup is a complete copy of the database with all content (accounts, campaigns, recaps, transcripts, settings). Keep it safe.",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 42e8ba1..c6ffa0c 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -272,7 +272,7 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session =
+         "uploads": _ordnergroesse(s.data_dir / "uploads"),
+         "hoerproben": _ordnergroesse(s.data_dir / "samples"),
+     }
+-    from app import einrichtung, kosten, sicherung
++    from app import aufbewahrung, einrichtung, kosten, sicherung
+     from app.einstellungen import meta_lesen
+ 
+     punkte = [] if meta_lesen(db, "assistent.ausgeblendet") else einrichtung.stand(db)
+@@ -280,7 +280,8 @@ def uebersicht(request: Request, user: User = Depends(verwalter), db: Session =
+     speicher["bilder"] = _ordnergroesse(s.data_dir / "bilder") + _ordnergroesse(s.data_dir / "unterlagen")
+     return _seite(request, "uebersicht.html", user, db, zahlen=zahlen, speicher=speicher, api_version=API_VERSION,
+                   db_datei=db_datei, knecht=KNECHT.zustand(), fehler=fehler, sicherungen=sicherung.liste()[:7],
+-                  sicherung_einst=sicherung.einstellungen(db), punkte=punkte, kosten=kosten_info)
++                  sicherung_einst=sicherung.einstellungen(db), punkte=punkte, kosten=kosten_info,
++                  eingebaut=_eingebaut_anzeige(db), aufbewahrung=aufbewahrung.lesen(db))
+ 
+ 
+ # ---------------------------------------------------------------- Konten
+diff --git a/app/verwaltung/templates/uebersicht.html b/app/verwaltung/templates/uebersicht.html
+index f782db1..f2fa0c3 100644
+--- a/app/verwaltung/templates/uebersicht.html
++++ b/app/verwaltung/templates/uebersicht.html
+@@ -27,6 +27,18 @@
+ {% if zahlen.wartend and not zahlen.knechte_online %}
+ <div class="meldung meldung--fehler">{{ _("Sessions warten, aber kein Worker ist bereit.") }} <a href="/verwaltung/transkription">{{ _("Worker starten") }}</a></div>
+ {% endif %}
++{% if eingebaut %}
++<div class="karte">
++  <h2>{{ _("Eingebauter Worker") }}</h2>
++  {% set k = eingebaut.knecht %}
++  <p>{% if k and k.online %}{% if k.w.paused %}<span class="marke-status marke-status--warten">{{ _("pausiert") }}</span>
++    {% elif k.job %}<span class="marke-status marke-status--gut">{{ _("arbeitet") }}</span>
++    {% else %}<span class="marke-status marke-status--gut">{{ _("bereit") }}</span>{% endif %}
++    {% else %}<span class="marke-status marke-status--fehler">{{ _("nicht verbunden") }}</span>{% endif %}
++    {% if k and k.info %} {{ k.info.gpu or _("Prozessor") }}{% if eingebaut.vram_karte %} · {{ (eingebaut.vram_karte / 1024) | round(1) }} GB{% endif %}{% if k.info.llm %} · {{ _("Sprachmodell") }} {{ k.info.llm }}{% endif %}{% endif %}
++    · <a href="/verwaltung/transkription">{{ _("Einstellungen") }}</a></p>
++</div>
++{% else %}
+ <div class="karte">
+   <h2>{{ _("Lokaler Worker") }}</h2>
+   {% if knecht.laeuft %}
+@@ -35,6 +47,7 @@
+   <p><span class="marke-status">{{ _("aus") }}</span> <a href="/verwaltung/transkription">{{ _("Starten") }}</a></p>
+   {% endif %}
+ </div>
++{% endif %}
+ {% if kosten.limit or kosten.monat %}
+ <div class="karte">
+   <h2>{{ _("Kosten für Cloud-Dienste") }}</h2>
+@@ -45,7 +58,7 @@
+ <div class="karte">
+   <h2>{{ _("Speicher") }}</h2>
+   <p>{{ _("Datenbank {a} · Bilder und Unterlagen {d} · Aufnahmen in Bearbeitung {b} · Hörproben {c}", a=groesse(speicher.datenbank), d=groesse(speicher.bilder), b=groesse(speicher.uploads), c=groesse(speicher.hoerproben)) }}</p>
+-  <p class="leise">{{ _("Aufnahmen werden nach der Transkription gelöscht, spätestens nach 7 Tagen.") }}</p>
++  <p class="leise">{% if aufbewahrung.bis_freigabe %}{{ _("Aufnahmen bleiben bis zur Freigabe des Recaps, höchstens {n} Tage.", n=aufbewahrung.tage) }}{% else %}{{ _("Aufnahmen werden gleich nach der Transkription gelöscht.") }}{% endif %} <a href="/verwaltung/einstellungen#aufnahmen">{{ _("Ändern") }}</a></p>
+ </div>
+ <div class="karte" id="sicherung">
+   <h2>{{ _("Sicherung") }}</h2>
+diff --git a/pyproject.toml b/pyproject.toml
+index 549748f..4d75ae2 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.22"
++version = "0.4.23"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 66d836f..023752e 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.22"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.23"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index bd67c10..da43849 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.22"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.23"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 7a946fc..7ada468 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.22"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.23"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 3a30379..30d5b8a 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.22"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.23"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index b9fba53..e545f07 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.22"
++version = "0.4.23"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
