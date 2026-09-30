@@ -146,6 +146,41 @@ def test_taetigkeit_meldet_token_pro_sekunde(monkeypatch):
     z = Zaehler()
     assert z.aufruf(k, "s", "n") == {"a": 1}
     text, daten = gemeldet[-1]
-    assert "15.0 Token/s" in text and "3.800 Token gelesen" in text
+    assert "15,0 Token/s" in text and "3 800 Token gelesen" in text
     assert daten == {"schritt": "sprachmodell", "tokenS": 15.0, "aufruf": 1}
     assert z.token_s_mittel == 15.0
+
+
+def test_recap_text_aus_abweichenden_antworten():
+    from app.sprachmodell import recap_text
+
+    assert recap_text({"title": "K", "text": "Es war einmal."}) == "Es war einmal."
+    assert recap_text({"title": "K", "recap": "Anders benannt."}) == "Anders benannt."
+    assert recap_text({"recap": {"title": "K", "text": "Verschachtelt."}}) == "Verschachtelt."
+    assert recap_text({"title": "K", "text": ["Absatz eins.", "Absatz zwei."]}) == "Absatz eins.\n\nAbsatz zwei."
+    lang = "x" * 250
+    assert recap_text({"title": "K", "irgendwas": lang}) == lang
+    assert recap_text({"title": "K", "a": lang, "b": lang}) == ""  # zweideutig: lieber Fehler
+    assert recap_text({"title": "K"}) == ""
+
+
+def test_fehlender_recap_nennt_nur_die_form():
+    from app.sprachmodell import Ablauf, Antwort, SprachmodellFehler
+
+    class K:
+        modell = "m"
+
+        def chat(self, system, nutzer):
+            return Antwort('{"title": "Kapitel 3", "summary_de": {"a": 1}, "openThreads": []}', 10, 5)
+
+        def kosten_cent(self, a, b):
+            return 0
+
+    ein = {"bibel": [], "session_nummer": 3, "sprache": "de", "kampagne": "K", "system": None, "system_name": None,
+           "welt": None, "personen": [], "transkript": []}
+    try:
+        Ablauf(K()).recap(ein, "Transkript", "…")
+    except SprachmodellFehler as e:
+        assert "title:str[9]" in str(e) and "summary_de:{a}" in str(e) and "Kapitel" not in str(e)
+    else:
+        raise AssertionError("kein Fehler")

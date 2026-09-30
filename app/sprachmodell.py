@@ -389,6 +389,43 @@ def _erwaehnt(name: str, text: str) -> bool:
     return any(re.search(rf"\b{re.escape(w)}", klein) for w in woerter)
 
 
+RECAP_SCHLUESSEL = ("text", "recap", "summary", "zusammenfassung", "body", "content", "story", "inhalt")
+
+
+def _form(v) -> str:
+    if isinstance(v, str):
+        return f"str[{len(v)}]"
+    if isinstance(v, dict):
+        return "{" + ",".join(v.keys()) + "}"
+    if isinstance(v, list):
+        return f"list[{len(v)}]"
+    return type(v).__name__
+
+
+def recap_text(d: dict) -> str:
+    """Den Recap-Text aus der Antwort holen – kleine Modelle halten sich nicht immer an den Feldnamen „text“:
+    sie nennen ihn „recap“ oder „summary“, verschachteln ihn oder liefern Absätze als Liste."""
+    def als_text(v) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        if isinstance(v, list) and v and all(isinstance(a, str) for a in v):
+            return "\n\n".join(a.strip() for a in v if a.strip())
+        return ""
+
+    for k in RECAP_SCHLUESSEL:
+        t = als_text(d.get(k))
+        if t:
+            return t
+    for v in d.values():  # eine Ebene verschachtelt: {"recap": {"title": …, "text": …}}
+        if isinstance(v, dict):
+            for k in RECAP_SCHLUESSEL:
+                t = als_text(v.get(k))
+                if t:
+                    return t
+    lang = [als_text(v) for v in d.values() if len(als_text(v)) >= 200]
+    return lang[0] if len(lang) == 1 else ""
+
+
 def _json(antwort: Antwort) -> dict:
     text = antwort.text.strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
@@ -408,6 +445,10 @@ def _json(antwort: Antwort) -> dict:
 
 
 # ---------------------------------------------------------------- Ablauf
+def _zahl(n: int) -> str:
+    return f"{n:,}".replace(",", " ")  # 3 800 mit schmalem Leerzeichen – kein Punkt, der mit dem Komma streitet
+
+
 @dataclass
 class Zaehler:
     tokens_in: int = 0
@@ -434,8 +475,8 @@ class Zaehler:
             from app.worker_prozess import taetigkeit
 
             self.token_s.append(rate)
-            taetigkeit(f"Sprachmodell: Aufruf {self.aufrufe}, {a.tokens_in:,} Token gelesen, {a.tokens_out:,} "
-                       f"geschrieben, {rate:.1f} Token/s".replace(",", "."),
+            taetigkeit(f"Sprachmodell: Aufruf {self.aufrufe}, {_zahl(a.tokens_in)} Token gelesen, "
+                       f"{_zahl(a.tokens_out)} geschrieben, {rate:.1f} Token/s".replace(".", ","),
                        schritt="sprachmodell", tokenS=round(rate, 1), aufruf=self.aufrufe)
         return a
 
@@ -482,11 +523,15 @@ class Ablauf:
                   f"\n\n{titel}:\n{grundlage}")
         system = SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
         d = self.zaehler.aufruf(self.klient, system, nutzer)
-        text = str(d.get("text") or "").strip()
+        text = recap_text(d)
         if not text:
-            raise SprachmodellFehler("Das Sprachmodell hat keinen Recap geliefert.")
-        faeden = [str(f).strip()[:300] for f in (d.get("openThreads") or []) if str(f).strip()][:10]
-        return {"title": str(d.get("title") or "").strip()[:300], "text": text, "openThreads": faeden}
+            # Nur Schlüssel und Längen ins Protokoll – nie Inhalte
+            form = ", ".join(f"{k}:{_form(v)}" for k, v in d.items()) or "leer"
+            log.warning("Sprachmodell: Recap-Antwort ohne text (%s)", form)
+            raise SprachmodellFehler(f"Das Sprachmodell hat keinen Recap geliefert (Antwort: {form}).")
+        faeden = [str(f).strip()[:300] for f in (d.get("openThreads") or d.get("open_threads") or [])
+                  if str(f).strip()][:10]
+        return {"title": str(d.get("title") or d.get("titel") or "").strip()[:300], "text": text, "openThreads": faeden}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
