@@ -24,7 +24,7 @@ from typing import Callable, Protocol
 
 from app import audio
 from app.audio import AudioFehler
-from app.worker_prozess import Abgebrochen
+from app.worker_prozess import Abgebrochen, taetigkeit
 
 log = logging.getLogger("worker")
 from app.probelauf import VramMesser, cuda_bibliotheken_vorladen, gpu_freigeben, namens_echo_entfernen  # noqa: E402 (nach den Umgebungsvariablen)
@@ -178,15 +178,15 @@ def _tisch(motor, sitzung, dateien, arbeit, fortschritt, sprache, hotwords) -> d
     audio.zusammenfuegen(dateien, wav)
     gesamt = audio.dauer(wav)
     fortschritt(0.15)
-    log.info("Transkription läuft (%.0f min Audio) …", gesamt / 60)
+    taetigkeit(f"Transkription läuft ({gesamt / 60:.0f} min Audio) …", schritt="transkription", audioSekunden=round(gesamt))
     daten = motor.audio_laden(wav)
     segs = motor.transkribieren(daten, sprache, hotwords, _bereich(fortschritt, 0.15, 0.55))
     segs = _bereinigen(segs, hotwords)
-    log.info("Wörter werden zeitlich ausgerichtet …")
+    taetigkeit("Wörter werden zeitlich ausgerichtet …", schritt="ausrichten")
     segs = motor.ausrichten(segs, daten, sprache, _bereich(fortschritt, 0.55, 0.70))
     n = int(sitzung.get("expectedSpeakers") or 0)
     # Anwesende ±1: jemand kann kaum reden, oder eine Stimme wird in zwei Gruppen geteilt
-    log.info("Stimmen werden getrennt …")
+    taetigkeit("Stimmen werden getrennt …", schritt="sprecher")
     segs, embeddings = motor.sprecher_trennen(daten, segs, max(1, n - 1) if n else None, n + 1 if n else None,
                                               _bereich(fortschritt, 0.70, 0.95))
     segs = halluzinationen_entfernen(segs)

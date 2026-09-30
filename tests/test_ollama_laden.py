@@ -132,3 +132,20 @@ def test_entladen_wartet_bis_das_modell_weg_ist(monkeypatch):
     k = OllamaKlient("http://ollama:11434", "m", client=httpx.Client(transport=httpx.MockTransport(antwort)))
     k.entladen()
     assert abfragen["n"] == 3
+
+
+def test_taetigkeit_meldet_token_pro_sekunde(monkeypatch):
+    """Die Worker-App zeigt, was der Worker gerade tut – beim Sprachmodell die Geschwindigkeit."""
+    from app import worker_prozess
+    from app.sprachmodell import Zaehler
+
+    gemeldet = []
+    monkeypatch.setattr(worker_prozess, "_taetigkeit", lambda text, **d: gemeldet.append((text, d)))
+    k, _ = _chat_klient([(200, {"message": {"content": '{"a": 1}'}, "prompt_eval_count": 3800, "eval_count": 900,
+                                "eval_duration": int(60e9)})])
+    z = Zaehler()
+    assert z.aufruf(k, "s", "n") == {"a": 1}
+    text, daten = gemeldet[-1]
+    assert "15.0 Token/s" in text and "3.800 Token gelesen" in text
+    assert daten == {"schritt": "sprachmodell", "tokenS": 15.0, "aufruf": 1}
+    assert z.token_s_mittel == 15.0

@@ -414,19 +414,34 @@ class Zaehler:
     tokens_out: int = 0
     aufrufe: int = 0
 
+    token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
+
     def aufruf(self, klient: Klient, system: str, nutzer: str) -> dict:
+        a = self._chat(klient, system, nutzer)
+        try:
+            return _json(a)
+        except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
+            a = self._chat(klient, system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
+            return _json(a)
+
+    def _chat(self, klient: Klient, system: str, nutzer: str) -> Antwort:
         a = klient.chat(system, nutzer)
         self.tokens_in += a.tokens_in
         self.tokens_out += a.tokens_out
         self.aufrufe += 1
-        try:
-            return _json(a)
-        except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
-            a = klient.chat(system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
-            self.tokens_in += a.tokens_in
-            self.tokens_out += a.tokens_out
-            self.aufrufe += 1
-            return _json(a)
+        rate = getattr(klient, "token_s", None)
+        if rate:
+            from app.worker_prozess import taetigkeit
+
+            self.token_s.append(rate)
+            taetigkeit(f"Sprachmodell: Aufruf {self.aufrufe}, {a.tokens_in:,} Token gelesen, {a.tokens_out:,} "
+                       f"geschrieben, {rate:.1f} Token/s".replace(",", "."),
+                       schritt="sprachmodell", tokenS=round(rate, 1), aufruf=self.aufrufe)
+        return a
+
+    @property
+    def token_s_mittel(self) -> float | None:
+        return round(sum(self.token_s) / len(self.token_s), 1) if self.token_s else None
 
 
 @dataclass

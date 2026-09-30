@@ -39,6 +39,21 @@ HERZ_NACHSCHLAEGE = 4  # Wiederholungen eines fehlgeschlagenen Herzschlags …
 HERZ_PAUSE_S = 5       # … in diesem Abstand
 
 
+_taetigkeit: Callable[..., None] | None = None  # während eines Auftrags gesetzt (ein Auftrag zur Zeit)
+_messung: dict = {}  # Kennzahlen des laufenden Auftrags für das „fertig“-Ereignis (z. B. tokenS)
+
+
+def taetigkeit(text: str, **daten) -> None:
+    """Was der Worker gerade tut – eine Zeile fürs Protokoll und, in der Worker-App, für die Statuskarte
+    („Transkription läuft (47 min Audio)“, „Sprachmodell: 14,8 Token/s“)."""
+    log.info(text)
+    if _taetigkeit is not None:
+        try:
+            _taetigkeit(text, **daten)
+        except Exception:  # noqa: BLE001 – Anzeige ist Beiwerk
+            pass
+
+
 class Abgebrochen(Exception):
     """Lease verloren oder Worker wird beendet."""
 
@@ -151,6 +166,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
             d = ablauf.ausfuehren(z["recap"], z["proposals"], fortschritt)
         finally:
             klient.entladen()
+        _messung["tokenS"] = ablauf.zaehler.token_s_mittel
         d["model"] = f"ollama/{klient.modell}@{kennung}"
         d["computeSeconds"] = round(time.monotonic() - t0, 1)
         return d
@@ -169,6 +185,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
             d = ablauf.ausfuehren(z["input"], fortschritt)
         finally:
             klient.entladen()
+        _messung["tokenS"] = ablauf.zaehler.token_s_mittel
         d["model"] = f"ollama/{klient.modell}@{kennung}"
         d["computeSeconds"] = round(time.monotonic() - t0, 1)
         return d
@@ -325,6 +342,8 @@ class WorkerProzess:
 
         herz = threading.Thread(target=herzschlag, daemon=True)
         herz.start()
+        global _taetigkeit
+        _taetigkeit = lambda text, **d: self.melden("taetigkeit", jobId=job, text=text, **d)  # noqa: E731
         try:
             if auftrag.get("type") in ("summarize", "document"):
                 if self.zusammenfassen is None:
@@ -344,7 +363,8 @@ class WorkerProzess:
                 r.raise_for_status()
                 log.info("Auftrag %s fertig", job)
                 self.melden("fertig", jobId=job, sekunden=round(time.monotonic() - t0, 1),
-                            audioSekunden=ergebnis.get("audioSeconds"), peakVramMb=ergebnis.get("peakVramMb"))
+                            audioSekunden=ergebnis.get("audioSeconds"), peakVramMb=ergebnis.get("peakVramMb"),
+                            tokenS=_messung.get("tokenS"))
         except Abgebrochen:
             if not stand["verloren"]:
                 self._melde_fehler(job, "worker_stopped", "Der Worker wurde beendet.", True)
@@ -361,6 +381,8 @@ class WorkerProzess:
             log.exception("Fehler bei Auftrag %s", job)
             self._melde_fehler(job, "worker_error", f"{type(e).__name__}: {e}"[:500], True)
         finally:
+            _taetigkeit = None
+            _messung.clear()
             herz_stop.set()
             self.aufraeumen()
         return True
