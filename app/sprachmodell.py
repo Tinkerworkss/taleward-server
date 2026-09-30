@@ -169,17 +169,27 @@ class OllamaKlient:
                         gemeldet = prozent - prozent % 10
                         melden(f"Sprachmodell {self.modell}: {gemeldet} % von {gesamt / 2 ** 30:.1f} GB")
 
+    # (Temperatur, Wiederholungsstrafe, JSON-Grammatik) je Versuch. Der dritte läuft ohne die erzwungene
+    # JSON-Grammatik: sie verbietet dem Modell das Aufhören mitten in der Struktur, und genau dort drehen kleine,
+    # quantisierte Modelle ihre Schleifen – frei formuliert liefern sie meist doch noch JSON, das _json() herauslöst.
+    VERSUCHE = ((0.3, 1.1, True), (0.6, 1.2, True), (0.8, 1.3, False))
+
     def chat(self, system: str, nutzer: str) -> Antwort:
         # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
         # reached“ ab). Daher eine leichte Wiederholungsstrafe und eine Obergrenze für die Antwortlänge – und bei einem
-        # Abbruch ein zweiter Versuch mit etwas mehr Streuung.
+        # Abbruch weitere Versuche mit mehr Streuung, der letzte ohne JSON-Grammatik.
         # Streamend, mit Stillstands-Zeitgrenze statt Gesamtzeit: auf einem schwachen Rechner dauert eine Antwort
         # auch mal 20 Minuten – solange Stücke kommen, ist alles gut; kommt drei Minuten nichts, hängt Ollama.
-        for versuch, (temperatur, strafe) in enumerate(((0.3, 1.1), (0.6, 1.2))):
-            body = {"model": self.modell, "stream": True, "format": "json", "keep_alive": "2m",
-                    "options": {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
-                                "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS},
+        status, fehler, d = 0, "", {}
+        for versuch, (temperatur, strafe, grammatik) in enumerate(self.VERSUCHE):
+            optionen = {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
+                        "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS}
+            if versuch:
+                optionen["frequency_penalty"] = 0.2 * versuch
+            body = {"model": self.modell, "stream": True, "keep_alive": "2m", "options": optionen,
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
+            if grammatik:
+                body["format"] = "json"
             try:
                 status, fehler, d = self._streamen(body)
             except httpx.ReadTimeout as e:
@@ -187,10 +197,15 @@ class OllamaKlient:
                                          "Modell hängt oder der Rechner ist überlastet.") from e
             except httpx.HTTPError as e:
                 raise SprachmodellFehler(f"Ollama ist nicht erreichbar ({type(e).__name__}).") from e
-            if (status >= 400 or fehler) and "repeat" in fehler and versuch == 0:
-                log.info("Sprachmodell hat sich wiederholt – zweiter Versuch mit mehr Streuung")
+            if (status >= 400 or fehler) and "repeat" in fehler and versuch + 1 < len(self.VERSUCHE):
+                log.info("Sprachmodell hat sich wiederholt – %s Versuch mit mehr Streuung%s",
+                         ("zweiter", "dritter")[versuch], "" if self.VERSUCHE[versuch + 1][2] else ", ohne JSON-Grammatik")
                 continue
             break
+        if (status >= 400 or fehler) and "repeat" in fehler:
+            raise SprachmodellFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
+                                     f"(Wiederholungsschleife; Ollama: {fehler[:120]}). Ein anderes oder größeres "
+                                     "Modell hilft – Verwaltung → Transkription → Lokales Sprachmodell.")
         if status >= 400 or fehler:
             raise SprachmodellFehler(f"Ollama meldet {status}: {fehler[:200]}")
         tokens_aus, dauer_ns = int(d.get("eval_count") or 0), int(d.get("eval_duration") or 0)
@@ -275,16 +290,55 @@ def zeit_lesen(wert) -> float | None:
     return None
 
 
-def transkript_zeilen(transkript: list[dict]) -> list[str]:
-    """Zeilen „[m:ss] Sprecher: Text“; aufeinanderfolgende Zeilen derselben Person werden zusammengelegt."""
+def _wort(w: str) -> str:
+    return w.casefold().strip('",.!?;:…„“')
+
+
+def entdoppeln(text: str, mindestens: int = 4) -> str:
+    """Eine Wortfolge (1–6 Wörter), die sich vier- oder mehrmals hintereinander wiederholt, bleibt einmal stehen –
+    Spracherkennung halluziniert bei Stille oder Musik gern „Danke. Danke. Danke. …“, und ein kleines Sprachmodell
+    schreibt so etwas gern weiter, bis Ollama abbricht."""
+    woerter = text.split()
     out: list[str] = []
-    letzter, puffer, start = None, [], 0.0
+    i = 0
+    while i < len(woerter):
+        gefunden = 0
+        for n in range(1, 7):
+            if i + n * mindestens > len(woerter):
+                break
+            muster = [_wort(w) for w in woerter[i:i + n]]
+            if not all(muster):
+                continue
+            k = 1
+            while [_wort(w) for w in woerter[i + k * n:i + (k + 1) * n]] == muster:
+                k += 1
+            if k >= mindestens:
+                out += woerter[i:i + n] + ["…"]
+                gefunden = k * n
+                break
+        if gefunden:
+            i += gefunden
+        else:
+            out.append(woerter[i])
+            i += 1
+    return " ".join(out)
+
+
+def transkript_zeilen(transkript: list[dict]) -> list[str]:
+    """Zeilen „[m:ss] Sprecher: Text“; aufeinanderfolgende Zeilen derselben Person werden zusammengelegt.
+    Aufeinanderfolgende gleichlautende Stücke (Halluzination der Spracherkennung) stehen nur einmal."""
+    out: list[str] = []
+    letzter, puffer, start, zuletzt = None, [], 0.0, ""
     for z in transkript:
+        text = entdoppeln(z["text"].strip())
         if z["sprecher"] != letzter or sum(len(p) for p in puffer) > 1500:
             if puffer:
                 out.append(f"[{_zeit(start)}] {letzter}: {' '.join(puffer)}")
-            letzter, puffer, start = z["sprecher"], [], z["start"]
-        puffer.append(z["text"].strip())
+            letzter, puffer, start, zuletzt = z["sprecher"], [], z["start"], ""
+        if text.casefold() == zuletzt and len(text) > 1:
+            continue
+        zuletzt = text.casefold()
+        puffer.append(text)
     if puffer:
         out.append(f"[{_zeit(start)}] {letzter}: {' '.join(puffer)}")
     return out

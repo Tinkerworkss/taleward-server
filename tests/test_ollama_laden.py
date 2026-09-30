@@ -77,14 +77,38 @@ def test_wiederholungsschleife_wird_einmal_neu_versucht():
     assert zweite["temperature"] > erste["temperature"] and zweite["repeat_penalty"] > erste["repeat_penalty"]
 
 
-def test_wiederholungsschleife_zweimal_ist_ein_fehler():
-    k, koerper = _chat_klient([(500, {"error": "token repeat limit reached"})] * 2)
+def test_dritter_versuch_ohne_json_grammatik():
+    k, koerper = _chat_klient([
+        (500, {"error": "token repeat limit reached"}),
+        (500, {"error": "token repeat limit reached"}),
+        (200, {"message": {"content": 'Hier: {"ok": true}'}, "prompt_eval_count": 10, "eval_count": 5}),
+    ])
+    assert k.chat("sys", "nutzer").text == 'Hier: {"ok": true}'
+    assert [b.get("format") for b in koerper] == ["json", "json", None]
+    assert koerper[2]["options"]["frequency_penalty"] > koerper[1]["options"]["frequency_penalty"] > 0
+    assert "frequency_penalty" not in koerper[0]["options"]
+
+
+def test_wiederholungsschleife_dreimal_ist_ein_klarer_fehler():
+    k, koerper = _chat_klient([(500, {"error": "prediction aborted, token repeat limit reached"})] * 3)
     try:
         k.chat("sys", "nutzer")
     except SprachmodellFehler as e:
-        assert "repeat" in str(e) and len(koerper) == 2
+        assert "festgefahren" in str(e) and "repeat" in str(e) and len(koerper) == 3
     else:
         raise AssertionError("kein Fehler")
+
+
+def test_wiederholte_phrasen_im_transkript_werden_zusammengefasst():
+    from app.sprachmodell import entdoppeln, transkript_zeilen
+
+    assert entdoppeln("Danke. Danke. Danke. Danke. Danke. Und dann") == "Danke. … Und dann"
+    assert entdoppeln("Untertitel im Auftrag des ZDF " * 4) == "Untertitel im Auftrag des ZDF …"
+    assert entdoppeln("Nein, nein, nein. Ich meine es ernst.") == "Nein, nein, nein. Ich meine es ernst."
+    # Gleichlautende Stücke hintereinander stehen einmal – aber nicht über einen Sprecherwechsel hinweg
+    zeilen = transkript_zeilen([{"start": 0, "sprecher": "A", "text": "Ja."}, {"start": 1, "sprecher": "B", "text": "Ja."},
+                                {"start": 2, "sprecher": "B", "text": "ja."}, {"start": 3, "sprecher": "B", "text": "Gut."}])
+    assert zeilen == ["[0:00] A: Ja.", "[0:01] B: Ja. Gut."]
 
 
 def test_anderer_fehler_wird_nicht_wiederholt():
