@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import charaktere, errors, schemas
+from app import charaktere, errors, schemas, umzug
 from app.access import aktive_sl_anzahl, current_user, membership, require_gm, require_member
 from app.db import get_db, utcnow
 from app.models import Campaign, Invite, Member, UsageLog, User
 from app.services import (
     campaign_out, campaign_summary, choose_organization, create_invite, ensure_org_member, member_out,
-    normalize_invite_code, random_cover, set_recording_consent,
+    normalize_invite_code, random_cover, set_move_consent, set_recording_consent,
 )
 
 router = APIRouter(tags=["Kampagnen"])
@@ -67,9 +67,28 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
     if body.character is not None:  # 0.4.7: Charakter aus der Sammlung gewinnt gegen den freien Namen
         char = body.character.name.strip() or char
     neu = me is None
+    platz = None
     if me is None:
         frueher = db.scalar(select(Member).where(Member.campaign_id == c.id, Member.user_id == user.id))
-        if frueher is not None:  # verlassen oder entfernt: mit neuer Einladung wieder aktiv (0.4.5), als Spieler
+        # 0.4.8: offener Platz aus einem Umzug – per Platz-Einladung oder über die Kennung des Charakters
+        if inv.member_id:
+            platz = db.get(Member, inv.member_id)
+            if platz is None or platz.campaign_id != c.id or not platz.open_seat:
+                raise errors.conflict("seat_not_open")
+        elif body.character is not None:
+            platz = umzug.offener_platz_zu(db, c.id, body.character.id)
+        if platz is not None:
+            umzug.platz_einnehmen(db, platz, user, "player", frueher)
+            me, neu = platz, False  # Verborgen-Listen hat der Platz schon
+            if body.character is not None and me.character_id not in (None, body.character.id.lower()):
+                me.character_id = me.character_version = None  # Platz-Einladung: der mitgebrachte Charakter gilt
+            if char is not None:
+                me.character_name = char
+            if inv.member_id:
+                db.delete(inv)  # gilt einmal
+            else:
+                umzug.eingenommen_melden(db, me)
+        elif frueher is not None:  # verlassen oder entfernt: mit neuer Einladung wieder aktiv (0.4.5), als Spieler
             me = frueher
             me.left_at, me.role, me.joined_at = None, "player", utcnow()
             me.chronicle_seen_at = me.bible_seen_at = None
@@ -223,6 +242,7 @@ def remove_member(campaignId: str, memberId: str, user: User = Depends(current_u
     if target.role == "gm" and aktive_sl_anzahl(db, campaignId) <= 1:
         raise errors.conflict("last_gm")
     set_recording_consent(db, target, False)  # Widerruf bleibt als Nachweis im Protokoll
+    set_move_consent(db, target, False)  # 0.4.8
     target.character_backstory = None
     target.left_at = utcnow()
     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))

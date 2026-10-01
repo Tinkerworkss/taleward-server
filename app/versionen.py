@@ -38,6 +38,8 @@ async def pruefen(request: Request, call_next):
 
 async def _pruefen(request: Request, call_next, pfad: str):
     browser = pfad.startswith("/api/v1/auth/oidc/") and pfad.endswith("/start")  # Systembrowser, ohne App-Header
+    # 0.4.8: Umzugsdatei mit Download-Schlüssel – Browser bzw. Android-Downloadmanager schicken keinen App-Header
+    browser = browser or ("/exports/" in pfad and pfad.endswith("/file") and "t" in request.query_params)
     if request.method != "OPTIONS" and pfad.startswith("/api/v1/") and pfad not in FREI and not browser:
         from app.db import session_factory
 

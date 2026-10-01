@@ -112,6 +112,33 @@ def cover_speichern(campaign_id: str, daten: bytes, content_type: str | None) ->
     _speichern(cover_ordner(campaign_id), "cover", _verkleinern(g.bild, COVER_KANTE), g.alpha)
 
 
+def typ_aus_endung(name: str) -> str | None:
+    """Medientyp für Bilder aus einer Umzugsdatei (0.4.8) – geprüft wird danach trotzdem der Inhalt."""
+    return {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(
+        Path(name).suffix.lower().lstrip("."))
+
+
+def portrait_uebernehmen(member_id: str, voll: bytes, vorschau: bytes | None, voll_name: str,
+                         vorschau_name: str | None) -> None:
+    """Porträt aus einer Umzugsdatei: beide Bilder neu kodieren (Ausschnitt der Vorschau bleibt erhalten). Ohne
+    Vorschau wird sie wie beim Hochladen aus der Mitte geschnitten."""
+    from PIL import Image
+
+    g = laden(voll, typ_aus_endung(voll_name), PORTRAIT_MAX_BYTES)
+    if vorschau is None:
+        b = g.bild
+        kante = min(b.size)
+        x, y = (b.size[0] - kante) // 2, (b.size[1] - kante) // 2
+        t, t_alpha = b.crop((x, y, x + kante, y + kante)), g.alpha
+    else:
+        v = laden(vorschau, typ_aus_endung(vorschau_name or ""), PORTRAIT_MAX_BYTES)
+        t, t_alpha = v.bild, v.alpha
+    t = t.resize((THUMB, THUMB), Image.Resampling.LANCZOS) if t.size != (THUMB, THUMB) else t
+    ordner = portrait_ordner(member_id)
+    _speichern(ordner, "full", _verkleinern(g.bild, PORTRAIT_KANTE), g.alpha)
+    _speichern(ordner, "thumb", t, t_alpha)
+
+
 def portrait_speichern(member_id: str, daten: bytes, content_type: str | None,
                        x: int | None, y: int | None, groesse: int | None) -> None:
     """full = ganzes Bild (≤ 1024 px), thumb = 256×256 aus dem Ausschnitt (in Pixeln des hochgeladenen Bildes)."""

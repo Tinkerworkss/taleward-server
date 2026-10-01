@@ -208,6 +208,17 @@ Neue Fassungen der Wortlisten kommen mit einem Server-Update: Ändert sich die e
 Listen einmal neu und benutzt bis dahin die alten weiter. Der Server lädt nie ungeprüft „das Neueste“ von GitHub –
 jede Fassung ist mit Prüfsumme im Code festgelegt.
 
+## Kampagnen umziehen
+
+Ab Server 0.4.8 kann die Spielleitung eine Kampagne als Datei mitnehmen und auf einem anderen Taleward-Server wieder
+anlegen (in der App unter „Kampagne verwalten“ bzw. „Kampagne aus Datei übernehmen“). Für den Betrieb wichtig:
+
+- Gepackte Dateien liegen unter `data/umzug/exporte/` und werden nach 24 Stunden gelöscht, hochgeladene Importe unter
+  `data/umzug/importe/` nach dem Anlegen bzw. spätestens nach 7 Tagen. Die nächtliche Sicherung enthält sie nicht.
+- Die größte Datei, die jemand hochladen darf, steht auf 1 GB. Ändern mit `IMPORT_MAX_BYTES` (in Byte) in der `.env`.
+- Die Datei enthält SL-Wissen und SL-Notizen, aber nie Konten, Namen von Personen, Einwilligungen, Stimmprofile,
+  Transkripte oder Audio. Aufbau: [UMZUG.md](UMZUG.md).
+
 ## Datenschutz und Verträge
 
 - Die **Vorlage für den Datenschutzhinweis** füllt sich aus den Einstellungen (Betreiber, Cloud-Dienste,

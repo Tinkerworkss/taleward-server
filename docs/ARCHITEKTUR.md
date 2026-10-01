@@ -84,6 +84,19 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
   - Charakterbögen werden nur gespeichert, nie ausgewertet. Sichtbar sind sie für die SL und die Person, die sie
     hochgeladen hat.
   - Die Chronik enthält nur, was die Person ohnehin sehen darf, und keine Namen anderer Personen.
+  - Ab 0.4.8 sehen `characterId` und `characterVersion` nur die Person selbst und die SL – die Kennung ist der
+    Schlüssel zu einem offenen Platz.
+- **Kampagnen-Umzug (ab 0.4.8, `app/umzug.py`, Dateiformat in [UMZUG.md](UMZUG.md)):**
+  - Server sprechen nie miteinander. Die SL packt die Kampagne als Datei und legt sie auf einem anderen Server wieder
+    an. Packen und Anlegen laufen im Server selbst, ohne Worker und ohne Sprachmodell.
+  - Nie in der Datei: Konten, Namen von Personen, Einwilligungen, Stimmprofile, Transkripte, Hörproben, Audio, der
+    Prüfteil des Recaps, Vorschläge, Terminabstimmungen, Lesemarker, Nutzung, Hinweise an die SL, unveröffentlichte
+    Kapitel.
+  - Persönliches eines Mitglieds nur mit seiner Zustimmung (`moveConsentAt`), private Kommentare nur, wenn beide
+    zugestimmt haben. Die Datei enthält SL-Wissen und ist nur für die SL abrufbar.
+  - Beim Import werden alle Plätze offene Plätze; Einwilligungen beginnen bei null. Wer mit passendem Charakter
+    beitritt, setzt sich auf seinen Platz (immer als Spieler), die SL bekommt einen Hinweis und kann den Platz wieder
+    freigeben.
 
 ## Einwilligung und Aufbewahrung
 

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Upload und Warteschlange
     chunk_size_bytes: int = 5 * 1024 * 1024
     max_file_bytes: int = 2 * 1024 * 1024 * 1024  # je Datei; 5 h Opus/AAC liegen weit darunter
+    import_max_bytes: int = 1024 * 1024 * 1024  # 0.4.8: größte Umzugsdatei (Kampagne aus Datei übernehmen)
     audio_retention_days: int = 7  # Audio fehlgeschlagener Sessions wird spätestens danach gelöscht
     upload_abandon_days: int = 7  # nie abgeschlossene Uploads werden danach verworfen
     lease_seconds: int = 180  # so lange gilt ein Auftrag ohne Lebenszeichen als vergeben

@@ -26,6 +26,8 @@ OPTIONAL_FIELDS = {"characterBackstory", "gmNotes", "hiddenFromMemberIds", "memb
                    "review", "hotwords",  # 0.4.6: nur für die SL, für Spieler weggelassen
                    "gmNotices", "originCharacterId", "originEntryId", "originVersion",  # 0.4.7: nur SL (und Urheberin)
                    "details",  # 0.4.7: Error.details nur bei manchen Fehlercodes
+                   "characterId", "characterVersion",  # 0.4.8: nur für die Person selbst und die SL
+                   "missingChunks",  # 0.4.8: ImportStatus nur bei uploading
                    "user"}
 
 # Statuscodes, die in der YAML fehlen, aber fachlich nötig sind – für den nächsten Änderungswunsch notiert.

@@ -280,6 +280,18 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "validation_error.pc": ("Einträge für Spielercharaktere legt der Server selbst an.",
                             "Entries for player characters are created by the server."),
     "not_found.notice": ("Der Hinweis wurde nicht gefunden.", "Notice not found."),
+    # Umzug (0.4.8)
+    "export_running": ("Für diese Kampagne wird gerade schon eine Umzugsdatei gepackt.",
+                       "A move file for this campaign is already being packed."),
+    "export_expired": ("Die Umzugsdatei ist nicht mehr da (sie bleibt 24 Stunden). Bitte neu packen.",
+                       "The move file is gone (it is kept for 24 hours). Please pack it again."),
+    "import_too_large": ("Die Datei ist zu groß für diesen Server (höchstens {mb} MB).",
+                         "The file is too large for this server (at most {mb} MB)."),
+    "seat_not_open": ("Dieser Platz ist nicht (mehr) frei.", "This seat is not open (any more)."),
+    "not_importer": ("Das kann nur die Person, die die Kampagne aus der Datei übernommen hat.",
+                     "Only the person who imported the campaign from the file can do this."),
+    "not_found.export": ("Die Umzugsdatei wurde nicht gefunden.", "Move file not found."),
+    "not_found.import": ("Der Import wurde nicht gefunden.", "Import not found."),
     "internal_error": ("Auf dem Server ist ein unerwarteter Fehler aufgetreten.", "An unexpected server error occurred."),
     "error": ("Es ist ein Fehler aufgetreten.", "An error occurred."),
 }

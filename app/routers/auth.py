@@ -13,7 +13,7 @@ from app.models import AuthMethod, Organization, OrgMember, User
 from app.security import create_token, verify_password
 from app.services import user_out
 
-API_VERSION = "0.4.7"
+API_VERSION = "0.4.8"
 
 router = APIRouter(tags=["Auth"])
 
@@ -119,4 +119,3 @@ def organizations(user: User = Depends(current_user), db: Session = Depends(get_
         .where(OrgMember.user_id == user.id).order_by(Organization.name)
     ).all()
     return [schemas.OrganizationOut(id=o.id, name=o.name, my_role=role) for o, role in rows]
-

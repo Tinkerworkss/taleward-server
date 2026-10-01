@@ -194,6 +194,8 @@ class MemberOut(ApiModel):
     character_version: int | None = None
     character_status: CharacterStatus | None = None
     character_nickname: str | None = None
+    move_consent_at: datetime | None = None  # 0.4.8
+    open_seat: bool = False
 
 
 class UnreadOut(ApiModel):
@@ -236,7 +238,7 @@ class CampaignOut(CampaignSummaryOut):
 
 class GmNoticeOut(ApiModel):
     id: str
-    code: Literal["hidden_entries_for_newcomer"]
+    code: Literal["hidden_entries_for_newcomer", "seat_claimed"]
     member_id: str | None
     entry_ids: list[str]
     created_at: datetime
@@ -312,6 +314,48 @@ class JoinRequest(ApiModel):
 class InviteOut(ApiModel):
     code: str
     expires_at: datetime
+
+
+class SeatInviteOut(InviteOut):
+    member_id: str  # 0.4.8: Einladung für genau diesen offenen Platz
+
+
+# ---------- Umzug (0.4.8) ----------
+class MoveConsentIn(ApiModel):
+    granted: bool
+
+
+class CampaignExportOut(ApiModel):
+    id: str
+    state: Literal["queued", "processing", "ready", "failed"]
+    progress: float | None
+    size_bytes: int | None
+    expires_at: datetime | None
+    download_url: str | None
+    consented_member_ids: list[str]
+    message: str | None
+    created_at: datetime
+
+
+class ImportStartIn(ApiModel):
+    file_name: str = Field(min_length=1, max_length=300)
+    size_bytes: int = Field(ge=1)
+
+
+class ImportStartOut(ApiModel):
+    import_id: str
+    chunk_size_bytes: int
+    chunk_count: int
+
+
+class ImportStatusOut(ApiModel):
+    id: str
+    state: Literal["uploading", "processing", "done", "failed"]
+    progress: float | None
+    missing_chunks: list[int] | None = None  # nur bei uploading, sonst weggelassen
+    campaign_id: str | None
+    open_seats: int | None
+    message: str | None
 
 
 class MemberPatch(ApiModel):

@@ -86,16 +86,36 @@ def member_out(m: Member, viewer: Member | None) -> schemas.MemberOut:
         id=m.id, user_id=m.user_id or "", display_name=m.anzeigename, character_name=m.character_name,
         role=m.role, recording_consent_at=m.recording_consent_at, character_summary=m.character_summary,
         portrait_updated_at=m.portrait_updated_at, deleted_at=m.deleted_at, left_at=m.left_at,
-        character_id=m.character_id, character_version=m.character_version, character_status=m.character_status,
-        character_nickname=m.character_nickname,
+        character_status=m.character_status, character_nickname=m.character_nickname,
+        move_consent_at=m.move_consent_at, open_seat=m.open_seat,
     )
     if viewer is not None and may_see_backstory(viewer, m):
         daten["character_backstory"] = m.character_backstory
+        # 0.4.8: die Kennung ist der Schlüssel zu einem offenen Platz – nur die Person selbst und die SL
+        daten.update(character_id=m.character_id, character_version=m.character_version)
     return schemas.MemberOut(**daten)
 
 
 def member_label(m: Member) -> str:
     return m.anzeigename + (f" ({m.character_name})" if m.character_name else "")
+
+
+def set_move_consent(db: Session, me: Member, granted: bool) -> None:
+    """0.4.8: Zustimmung, dass die eigenen Charakterdaten bei einem Umzug mitgehen – protokolliert wie die
+    Aufnahme-Einwilligung (move_granted / move_revoked)."""
+    now = utcnow()
+    if granted:
+        if me.move_consent_at is not None:
+            return
+        me.move_consent_at = now
+        action = "move_granted"
+    else:
+        if me.move_consent_at is None:
+            return
+        me.move_consent_at = None
+        action = "move_revoked"
+    db.add(ConsentLog(campaign_id=me.campaign_id, member_id=me.id, user_id=me.user_id, action=action,
+                      recorded_by_user_id=me.user_id, at=now))
 
 
 def set_recording_consent(db: Session, me: Member, granted: bool) -> None:

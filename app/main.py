@@ -73,6 +73,13 @@ def _wartung_starten() -> threading.Event | None:
             except Exception:
                 log.exception("Benachrichtigungen fehlgeschlagen")
             try:
+                from app import umzug
+
+                with session_factory()() as db:
+                    umzug.aufraeumen(db)  # 0.4.8: Umzugsdateien nach 24 h, liegen gebliebene Aufträge
+            except Exception:
+                log.exception("Umzug: Aufräumen fehlgeschlagen")
+            try:
                 from app import woerterbuch
 
                 woerterbuch.automatisch()  # einmal laden; danach nichts mehr zu tun
@@ -158,7 +165,8 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Chunk-SHA256", "Accept-Language", "X-Taleward-App"],
+        allow_headers=["Authorization", "Content-Type", "X-Chunk-SHA256", "Accept-Language", "X-Taleward-App", "Range"],
+        expose_headers=["Content-Disposition", "Content-Range", "Accept-Ranges"],
         max_age=600,
     )
     install_error_handlers(app)
@@ -173,7 +181,9 @@ def create_app() -> FastAPI:
 
     from app.routers import charaktere
 
-    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
+    from app.routers import umzug as umzug_router
+
+    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, umzug_router.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
         api.include_router(r)
     app.include_router(api)
     app.include_router(worker.router)

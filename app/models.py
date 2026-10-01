@@ -99,6 +99,9 @@ class Campaign(Base):
     allow_cloud_summary: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # 0.4.6: Namenshilfe der SL als JSON {"extra": [], "entfernt": [], "ignoriert": []} (app/namenshilfe.py)
     namenshilfe: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 0.4.8: aus einer Umzugsdatei angelegt – Platzhalter-Mitglied der importierenden SL bis „Das bin ich“
+    imported_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    imported_by_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     members: Mapped[list["Member"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
@@ -132,6 +135,9 @@ class Member(Base):
     character_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # active | retired | deceased
     character_nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
     character_system: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 0.4.8: „Meine Charakterdaten dürfen bei einem Umzug mit“ und offener Platz aus einem Umzug (user_id None)
+    move_consent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    open_seat: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     campaign: Mapped[Campaign] = relationship(back_populates="members")
     user: Mapped[User | None] = relationship()
@@ -142,10 +148,16 @@ class Member(Base):
 
     @property
     def anzeigename(self) -> str:
-        """Anzeigename des Kontos; nach Kontolöschung „Gelöschtes Konto“ in der Sprache der Kampagne."""
+        """Anzeigename des Kontos; nach Kontolöschung „Gelöschtes Konto“ in der Sprache der Kampagne, für Plätze aus
+        einem Umzug „Offener Platz“ bzw. „Ehemaliges Mitglied“ (0.4.8)."""
         if self.user is not None:
             return self.user.display_name
-        return "Deleted account" if self.campaign.language == "en" else "Gelöschtes Konto"
+        en = self.campaign.language == "en"
+        if self.open_seat:
+            return "Open seat" if en else "Offener Platz"
+        if self.deleted_at is None:
+            return "Former member" if en else "Ehemaliges Mitglied"
+        return "Deleted account" if en else "Gelöschtes Konto"
 
 
 class ConsentLog(Base):
@@ -171,6 +183,8 @@ class Invite(Base):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # 0.4.8: Einladung für genau einen offenen Platz (gilt einmal)
+    member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 # ---------------------------------------------------------------- Sessions
@@ -496,6 +510,43 @@ class GmNotice(Base):
     member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     entry_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------- Umzug (0.4.8)
+class CampaignExport(Base):
+    """Kampagne als Datei taleward-kampagne/1 (app/umzug.py). Die Datei liegt unter data/umzug/exporte/<id>.zip."""
+
+    __tablename__ = "campaign_exports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
+    requested_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    state: Mapped[str] = mapped_column(String(16), default="queued")  # queued | processing | ready | failed
+    progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    consented_member_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste, Stand beim Start
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class CampaignImport(Base):
+    """Import einer Datei taleward-kampagne/1. Teile liegen unter data/umzug/importe/<id>/."""
+
+    __tablename__ = "campaign_imports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    file_name: Mapped[str] = mapped_column(String(300))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    chunk_size: Mapped[int] = mapped_column(Integer)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(16), default="uploading")  # uploading | processing | done | failed
+    progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    campaign_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    open_seats: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
 # ---------------------------------------------------------------- SL-Unterlagen

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.7
+  version: 0.4.8
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -137,6 +137,14 @@ info:
     (GET …/members/me/chronicle), Eintragsart pc, Proposal.source, DocumentKind character_sheet, Hinweise an die SL
     (Campaign.gmNotices, z. B. Neuzugang bei teilweise verborgenen Einträgen), Stimmen von Gästen benennen
     (guestName bei PUT …/speakers, Speaker.assignedGuestName), Error.details. Kein Kampagnen-Umzug (kommt in 0.4.8).
+    Änderungen in 0.4.8 (Kampagnen-Umzug): Die SL nimmt eine Kampagne als Datei `taleward-kampagne/1` (ZIP) mit und
+    legt sie auf einem anderen Server wieder an; Server sprechen nie miteinander. Zustimmung zum Mitnehmen der eigenen
+    Charakterdaten (Member.moveConsentAt, PUT …/members/me/move-consent); Export als Auftrag (POST/GET
+    /campaigns/{id}/exports, Datei über downloadUrl); Import stückweise wie Aufnahmen (POST /imports, Teile,
+    complete); offene Plätze (Member.openSeat) einnehmen per Beitritt mit passendem Charakter, Platz-Einladung
+    (POST …/members/{id}/invite), „Das bin ich“ für die SL (…/take), Platz freigeben (…/release); Hinweis an die SL
+    `seat_claimed`. characterId/characterVersion sehen nur noch die Person selbst und die SL. Transkripte,
+    Hörproben, Stimmprofile, Einwilligungen, Vorschläge und der Prüfteil des Recaps verlassen den Server nie.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -160,6 +168,8 @@ tags:
   - name: Termine
   - name: Kommentare
   - name: Unterlagen
+  - name: Charaktere
+  - name: Umzug
 
 paths:
   /auth/login:
@@ -632,6 +642,10 @@ paths:
                     Ab 0.4.7: Charakter aus der Sammlung der App. Setzt Member.character* und legt den pc-Eintrag an
                     (öffentlich, holderMemberId = das neue Mitglied). Mit characterName zusammen gewinnt character.name.
                     Gleiche characterId schon bei einem aktiven Mitglied dieser Kampagne → 409 character_in_campaign.
+                    Ab 0.4.8: Passt die characterId zu einem offenen Platz (openSeat), setzt sich die Person auf diesen
+                    Platz (immer als player; übernimmt Anwesenheit, Erwähnungen, Kommentare, Verborgen-Listen), die SL
+                    bekommt gmNotices seat_claimed. Ein Platz-Code (POST …/members/{id}/invite) setzt die Person immer
+                    auf genau diesen Platz, mit oder ohne Charakter.
                   oneOf:
                     - { $ref: "#/components/schemas/Character" }
                     - { type: "null" }
@@ -938,6 +952,278 @@ paths:
         "204": { description: Erledigt }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/members/me/move-consent:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    put:
+      tags: [Umzug]
+      summary: Zustimmung, dass die eigenen Charakterdaten bei einem Umzug mitgehen (ab 0.4.8)
+      description: |
+        Nur für sich selbst. Zustimmung und Widerruf werden protokolliert. Ohne Zustimmung geht nur der Platz mit
+        (Rolle, characterId, Charaktername). Mit Zustimmung zusätzlich Kurzbeschreibung, Hintergrund, Spitzname,
+        Status und Fassung des Charakters, Porträt, eigene öffentliche Kommentare, Charakterbögen; private Kommentare
+        nur, wenn beide Beteiligten zugestimmt haben.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [granted]
+              properties:
+                granted: { type: boolean }
+      responses:
+        "200":
+          description: Eigenes Mitglied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/exports:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    post:
+      tags: [Umzug]
+      summary: Kampagne als Datei taleward-kampagne/1 packen (nur SL, ab 0.4.8)
+      description: |
+        Läuft als Auftrag auf dem Server (ohne Worker). Die Datei enthält gm_only-Inhalte und geht nur an die SL.
+        Nie in der Datei: Anzeige- und Benutzernamen, E-Mail-Adressen, Konten, Einwilligungen, Stimmprofile,
+        Transkripte, Hörproben, Audio, Recap.review, Vorschläge, Terminabstimmungen, Lesemarker, Nutzung, gmNotices.
+        Unveröffentlichte Kapitel gehen nicht mit. Der Export ändert nichts an der Kampagne. Spieler 404.
+      responses:
+        "202":
+          description: Gestartet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignExport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Es läuft schon ein Export (`export_running`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /campaigns/{campaignId}/exports/{exportId}:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { name: exportId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Umzug]
+      summary: Stand des Exports (nur SL, ab 0.4.8; die App fragt alle paar Sekunden)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CampaignExport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/exports/{exportId}/file:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { name: exportId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Umzug]
+      summary: Datei herunterladen (nur SL, ab 0.4.8)
+      description: |
+        application/zip, Content-Disposition mit Dateiname `taleward-kampagne-<titel>-<datum>.zip`, Unterstützung für
+        Range-Anfragen. Mit Bearer-Token oder mit dem Parameter `t` aus CampaignExport.downloadUrl (ohne Token, damit
+        Browser und Android-Downloadmanager große Dateien direkt auf die Platte laden können).
+      parameters:
+        - name: t
+          in: query
+          required: false
+          description: Download-Schlüssel aus CampaignExport.downloadUrl; gilt bis expiresAt, nur für diese Datei
+          schema: { type: string }
+      responses:
+        "200":
+          description: Die Datei
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        "206": { description: Teil der Datei (Range) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: Datei schon gelöscht (`export_expired`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /imports:
+    post:
+      tags: [Umzug]
+      summary: Import einer Datei taleward-kampagne/1 beginnen (jede angemeldete Person, ab 0.4.8)
+      description: |
+        Stückweiser Upload wie bei Aufnahmen. Größte Datei stellt der Betreiber ein (Standard 1 GB). Nicht
+        abgeschlossene Importe löscht der Server nach 7 Tagen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, sizeBytes]
+              properties:
+                fileName: { type: string }
+                sizeBytes: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [importId, chunkSizeBytes, chunkCount]
+                properties:
+                  importId: { type: string }
+                  chunkSizeBytes: { type: integer, example: 5242880 }
+                  chunkCount: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413":
+          description: Datei zu groß (`import_too_large`, details.maxBytes)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /imports/{importId}:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Umzug]
+      summary: Stand des Imports (nur die importierende Person, ab 0.4.8)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /imports/{importId}/chunks/{index}:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string } }
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    put:
+      tags: [Umzug]
+      summary: Einen Teil hochladen (idempotent, ab 0.4.8)
+      parameters:
+        - name: X-Chunk-SHA256
+          in: header
+          required: false
+          description: Optional – SHA-256 des Teils (hex); falsch → 400 `chunk_checksum_mismatch`
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "204": { description: Teil gespeichert }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+
+  /imports/{importId}/complete:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Umzug]
+      summary: Upload abschließen – Server prüft und legt die Kampagne an (ab 0.4.8)
+      description: |
+        Prüft die ZIP (Pfade, entpackte Gesamtgröße, Format), kodiert Bilder neu, prüft Unterlagen wie beim normalen
+        Hochladen und legt eine neue, aktive Kampagne mit neuen IDs an. Die importierende Person wird einzige SL; alle
+        Plätze der Datei werden offene Plätze (openSeat), Ehemalige kommen mit leftAt. Kapitelnummern bleiben.
+      responses:
+        "202":
+          description: Prüfung läuft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Es fehlen noch Teile (details.missingChunks)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /campaigns/{campaignId}/members/{memberId}/invite:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { $ref: "#/components/parameters/memberId" }
+    post:
+      tags: [Umzug]
+      summary: Einladung für genau diesen offenen Platz (nur SL, ab 0.4.8)
+      description: |
+        Für Plätze, die keine passende characterId abholt (Altbestand ohne Sammlung). Der Code gilt einmal und nur für
+        diesen Platz; wer damit beitritt (POST /campaigns/join), sitzt auf dem Platz, mit oder ohne Charakter.
+        Kein offener Platz → 409 seat_not_open.
+      responses:
+        "201":
+          description: Code erzeugt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  memberId: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/members/{memberId}/take:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { $ref: "#/components/parameters/memberId" }
+    post:
+      tags: [Umzug]
+      summary: „Das bin ich“ – die importierende SL setzt sich auf ihren alten Platz (ab 0.4.8)
+      description: |
+        Nur die Person, die importiert hat (sonst 403 not_importer), nur offene Plätze (sonst 409 seat_not_open). Das
+        beim Import angelegte Mitglied geht im Platz auf; der Platz hat danach die Rolle gm.
+      responses:
+        "200":
+          description: Die Kampagne mit aktualisierter Mitgliederliste
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Campaign" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/members/{memberId}/release:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { $ref: "#/components/parameters/memberId" }
+    post:
+      tags: [Umzug]
+      summary: Eingenommenen Platz wieder freigeben (nur SL, ab 0.4.8)
+      description: |
+        Macht einen Platz wieder offen, z. B. wenn sich jemand auf den falschen gesetzt hat. Die Person verliert den
+        Zugriff und kann mit einer neuen Einladung neu beitreten. Die letzte aktive SL kann nicht freigegeben werden
+        (409 last_gm).
+      responses:
+        "200":
+          description: Der Platz (openSeat true)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /organizations:
     get:
@@ -2431,13 +2717,29 @@ components:
           type: [string, "null"]
           format: date-time
           description: Gesetzt, wenn ein Charakterbild existiert; die App nutzt es als Cache-Schlüssel
-        characterId: { type: [string, "null"], description: "Ab 0.4.7: UUID aus der Sammlung der App; null bei Altbestand und Gästen" }
-        characterVersion: { type: [integer, "null"], description: "Ab 0.4.7: Stand der Serverkopie" }
+        characterId:
+          type: [string, "null"]
+          description: |
+            Ab 0.4.7: UUID aus der Sammlung der App; null bei Altbestand und Gästen. Ab 0.4.8 nur für die Person selbst
+            und die SL – für andere Spieler lässt der Server das Feld weg (die Kennung ist der Schlüssel zu einem
+            offenen Platz).
+        characterVersion: { type: [integer, "null"], description: "Ab 0.4.7: Stand der Serverkopie; ab 0.4.8 sichtbar wie characterId" }
         characterStatus:
           type: [string, "null"]
           enum: [active, retired, deceased, null]
           description: Ab 0.4.7
         characterNickname: { type: [string, "null"], description: "Ab 0.4.7" }
+        moveConsentAt:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Ab 0.4.8: „Meine Charakterdaten dürfen bei einem Umzug mit“ – für alle Mitglieder sichtbar (wie
+            recordingConsentAt), damit die SL vor dem Export sieht, wer zugestimmt hat. null = nein (Standard).
+        openSeat:
+          type: boolean
+          description: |
+            Ab 0.4.8: Platz aus einem Umzug, noch nicht besetzt. userId ist dann "", deletedAt und leftAt null. Nicht als
+            Anwesende, Empfänger oder Auswahl anbieten (wie gelöschte Konten). Ehemalige aus der Datei kommen mit leftAt.
 
     CampaignSummary:
       type: object
@@ -2973,11 +3275,60 @@ components:
               createdAt: { type: string, format: date-time }
         takenAt: { type: string, format: date-time }
 
+    CampaignExport:
+      type: object
+      description: Export einer Kampagne als taleward-kampagne/1 (ab 0.4.8)
+      required: [id, state, consentedMemberIds, createdAt]
+      properties:
+        id: { type: string }
+        state: { type: string, enum: [queued, processing, ready, failed] }
+        progress: { type: [number, "null"], minimum: 0, maximum: 1 }
+        sizeBytes: { type: [integer, "null"], description: "bei ready" }
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: bei ready + 24 h; danach löscht der Server die Datei (410 export_expired)
+        downloadUrl:
+          type: [string, "null"]
+          description: |
+            Bei ready: Adresse der Datei mit Download-Schlüssel (Parameter t), relativ zur API-Basis (z. B.
+            /campaigns/c1/exports/x1/file?t=…). Gilt bis expiresAt, ohne Bearer-Token nutzbar.
+        consentedMemberIds:
+          type: array
+          items: { type: string }
+          description: Wessen Charakterdaten mitgehen (Stand beim Start)
+        message: { type: [string, "null"], description: "z. B. Fehlertext bei failed" }
+        createdAt: { type: string, format: date-time }
+
+    ImportStatus:
+      type: object
+      description: Import einer Datei taleward-kampagne/1 (ab 0.4.8)
+      required: [id, state]
+      properties:
+        id: { type: string }
+        state: { type: string, enum: [uploading, processing, done, failed] }
+        progress: { type: [number, "null"], minimum: 0, maximum: 1 }
+        missingChunks: { type: array, items: { type: integer }, description: "nur bei uploading" }
+        campaignId: { type: [string, "null"], description: "bei done" }
+        openSeats: { type: [integer, "null"], description: "bei done: Zahl der offenen Plätze" }
+        message:
+          type: [string, "null"]
+          description: |
+            Bei failed ein fester Schlüssel: import_format (unbekanntes oder beschädigtes Format), import_too_large,
+            import_unsafe (unzulässige Pfade oder zu große entpackte Größe), import_version (Datei von einer neueren
+            Schnittstelle als der Server kann); sonst Klartext.
+
     GmNotice:
       type: object
       properties:
         id: { type: string }
-        code: { type: string, enum: [hidden_entries_for_newcomer] }
+        code:
+          type: string
+          enum: [hidden_entries_for_newcomer, seat_claimed]
+          description: |
+            hidden_entries_for_newcomer (ab 0.4.7): Neuzugang wurde in teilweise verborgene Einträge aufgenommen.
+            seat_claimed (ab 0.4.8): Jemand hat per Beitritt mit Charakter einen offenen Platz eingenommen (memberId);
+            erledigen per DELETE …/gm-notices/{id} oder Platz wieder freigeben (POST …/members/{id}/release).
         memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
         entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
         createdAt: { type: string, format: date-time }

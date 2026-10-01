@@ -98,7 +98,7 @@ def test_info_mit_pruefsumme(client, dbs):
     aktualisierung.pruefen(dbs, gh)
     info = client.get(f"{API}/info").json()
     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
-    assert info["apiVersion"] == "0.4.7"
+    assert info["apiVersion"] == "0.4.8"
 
 
 def _web_zip(dateien: dict) -> bytes:
