@@ -8,6 +8,9 @@ Drei Quellen sagen, ob ein Wort „bekannt“ ist und deshalb nicht als unsicher
    Die Listen sind zu groß fürs Repo: Die Wartung lädt sie einmal von einer festen Fassung (Prüfsumme), behält Wörter,
    die mindestens MIN_ANZAHL-mal vorkommen, und legt sie verkleinert unter <data>/woerterbuch/ ab. Ohne Netz bleibt
    die Prüfung ohne diese Quelle – nichts bricht.
+   Neue Fassung der Listen: Mit einem Server-Update ändern sich FASSUNG und Prüfsummen; die Wartung merkt am
+   Stand-Vermerk (<sprache>.stand), dass die abgelegte Liste nicht mehr passt, und lädt neu. Bis dahin bleibt die
+   alte Liste in Gebrauch. Ungeprüft „das Neueste“ von GitHub zu laden, ist bewusst nicht vorgesehen.
    Zusammengesetzte deutsche Wörter („Plattenpanzer“, „Fahndungsplakat“) gelten als bekannt, wenn beide Teile
    bekannt sind (mit Fugen-s/-n/-en/-es/-e/-er).
 2. **Texte der Kampagne:** Welt-Info, Bibel (auch geheime Einträge und gmNotes), Charakterbeschreibungen und
@@ -81,7 +84,34 @@ def liste(sprache: str) -> frozenset[str]:
 
 
 def bereit(sprache: str) -> bool:
+    """Liste liegt vor und ist benutzbar (vielleicht noch in einer älteren Fassung)."""
     return pfad(sprache).is_file()
+
+
+def _soll(sprache: str) -> str:
+    return f"{FASSUNG} {QUELLEN[sprache][1]} {MIN_ANZAHL}"
+
+
+def _stand_pfad(sprache: str) -> Path:
+    return ordner() / f"{sprache}.stand"
+
+
+def aktuell(sprache: str) -> bool:
+    """Liste liegt in genau der Fassung vor, die dieser Server erwartet."""
+    if not bereit(sprache):
+        return False
+    try:
+        return _stand_pfad(sprache).read_text(encoding="utf-8").strip() == _soll(sprache)
+    except OSError:
+        pass
+    # Listen aus Server 0.4.30 haben noch keinen Stand-Vermerk – gleiche Fassung laut QUELLE.txt: nachtragen
+    try:
+        if FASSUNG in (ordner() / "QUELLE.txt").read_text(encoding="utf-8"):
+            _stand_pfad(sprache).write_text(_soll(sprache), encoding="utf-8")
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def herunterladen(sprache: str, klient=None) -> bool:
@@ -113,6 +143,7 @@ def herunterladen(sprache: str, klient=None) -> bool:
     with gzip.open(neu, "wt", encoding="utf-8") as f:
         f.write("\n".join(sorted(set(behalten))))
     neu.replace(pfad(sprache))
+    _stand_pfad(sprache).write_text(_soll(sprache), encoding="utf-8")
     (ordner() / "QUELLE.txt").write_text(
         "Wortlisten: FrequencyWords von Hermit Dave (https://github.com/hermitdave/FrequencyWords), Fassung "
         f"{FASSUNG}, aus OpenSubtitles 2018. Lizenz: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). "
@@ -122,13 +153,14 @@ def herunterladen(sprache: str, klient=None) -> bool:
 
 
 def automatisch(sprachen=("de", "en")) -> None:
-    """Wartung: fehlende Wortlisten laden – nach einem Fehlschlag frühestens nach einer Stunde wieder."""
+    """Wartung: fehlende oder veraltete Wortlisten laden – nach einem Fehlschlag frühestens nach einer Stunde wieder."""
     for sprache in sprachen:
-        if bereit(sprache) or time.monotonic() - _letzter_versuch.get(sprache, -1e9) < NEUER_VERSUCH_S:
+        if aktuell(sprache) or time.monotonic() - _letzter_versuch.get(sprache, -1e9) < NEUER_VERSUCH_S:
             continue
         _letzter_versuch[sprache] = time.monotonic()
         try:
             herunterladen(sprache)
+            _letzter_versuch.pop(sprache, None)  # Wartezeit gilt nur nach Fehlschlägen
         except Exception as e:  # noqa: BLE001 – ohne Liste geht es auch, nur ungenauer
             log.warning("Wortliste %s nicht geladen: %s", sprache, e)
 

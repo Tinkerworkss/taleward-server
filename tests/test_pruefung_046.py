@@ -304,3 +304,33 @@ def test_wortliste_laden(client, monkeypatch):  # client: eigener Datenordner
         assert "Prüfsumme" in str(e)
     else:
         raise AssertionError("keine Prüfung")
+
+
+def test_wortliste_neue_fassung_per_update(client, monkeypatch):  # client: eigener Datenordner
+    import hashlib
+
+    import httpx
+
+    from app import woerterbuch
+
+    roh = "ich 900\nschwert 50\n".encode()
+    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", hashlib.sha256(roh).hexdigest()))
+    abrufe = []
+    klient = httpx.Client(transport=httpx.MockTransport(lambda r: abrufe.append(r) or httpx.Response(200, content=roh)))
+    monkeypatch.setattr(woerterbuch, "_letzter_versuch", {})
+    real = woerterbuch.herunterladen
+    monkeypatch.setattr(woerterbuch, "herunterladen", lambda sp: real(sp, klient))
+    woerterbuch.automatisch(("de",))
+    assert len(abrufe) == 1 and woerterbuch.aktuell("de")
+    woerterbuch.automatisch(("de",))
+    assert len(abrufe) == 1  # aktuell: nichts zu tun
+    # Ein Server-Update bringt eine neue Fassung: die Wartung lädt neu, die alte Liste bleibt bis dahin nutzbar
+    neu = "ich 900\nschwert 50\ntaverne 20\n".encode()
+    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", hashlib.sha256(neu).hexdigest()))
+    assert woerterbuch.bereit("de") and not woerterbuch.aktuell("de")
+    klient = httpx.Client(transport=httpx.MockTransport(lambda r: abrufe.append(r) or httpx.Response(200, content=neu)))
+    woerterbuch.automatisch(("de",))
+    assert len(abrufe) == 2 and "taverne" in woerterbuch.liste("de") and woerterbuch.aktuell("de")
+    # Listen aus 0.4.30 ohne Stand-Vermerk gelten als aktuell, wenn QUELLE.txt die Fassung nennt
+    (woerterbuch.ordner() / "de.stand").unlink()
+    assert woerterbuch.aktuell("de") and (woerterbuch.ordner() / "de.stand").is_file()

@@ -204,6 +204,10 @@ aufbereitet von Hermit Dave ([FrequencyWords](https://github.com/hermitdave/Freq
 Prüfung nutzt dann die Texte der Kampagne und frühere Kapitel und meldet etwas mehr. Der Stand steht unter
 Verwaltung → Zusammenfassung → Prüfung.
 
+Neue Fassungen der Wortlisten kommen mit einem Server-Update: Ändert sich die erwartete Fassung, lädt der Server die
+Listen einmal neu und benutzt bis dahin die alten weiter. Der Server lädt nie ungeprüft „das Neueste“ von GitHub –
+jede Fassung ist mit Prüfsumme im Code festgelegt.
+
 ## Datenschutz und Verträge
 
 - Die **Vorlage für den Datenschutzhinweis** füllt sich aus den Einstellungen (Betreiber, Cloud-Dienste,
