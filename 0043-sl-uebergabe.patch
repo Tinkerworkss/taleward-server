@@ -1,0 +1,141 @@
+From ea2c6c151900d5e96e8f03221d0d3fe90fa60834 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 15:53:00 +0200
+Subject: [PATCH] SL-Uebergabe: Gelesen-Marker beim Wechsel SL -> Spieler
+ (Server 0.4.34)
+
+Wird eine SL zum Spieler, setzt der Server ihre Gelesen-Marker fuer Chronik und Bibel auf jetzt, damit nach
+einer Uebergabe nicht alle Recaps und Eintraege als ungelesen erscheinen. Test fuer den ganzen Ablauf.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/routers/campaigns.py          |  2 ++
+ pyproject.toml                    |  2 +-
+ tests/test_aktualisierung.py      |  2 +-
+ tests/test_assistent.py           |  2 +-
+ tests/test_kampagnen_verwalten.py | 18 ++++++++++++++++++
+ tests/test_modellablage.py        |  2 +-
+ tests/test_worker_app.py          |  2 +-
+ uv.lock                           |  2 +-
+ 8 files changed, 26 insertions(+), 6 deletions(-)
+
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index 5c61121..f4944b8 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -207,6 +207,8 @@ def patch_member(
+         if target.role == "gm":
+             if aktive_sl_anzahl(db, campaignId) <= 1:
+                 raise errors.conflict("last_gm")
++            # SL-Übergabe: Als SL hat sie alles gesehen – nicht alle Recaps und Einträge als ungelesen zeigen
++            target.chronicle_seen_at = target.bible_seen_at = utcnow()
+         target.role = body.role
+     db.commit()
+     db.refresh(me)
+diff --git a/pyproject.toml b/pyproject.toml
+index c4f7453..e57f718 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.33"
++version = "0.4.34"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index e531932..3f5f76b 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.33"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.34"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 655143a..52e39d8 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.33"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.34"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_kampagnen_verwalten.py b/tests/test_kampagnen_verwalten.py
+index 125f712..71c6e1d 100644
+--- a/tests/test_kampagnen_verwalten.py
++++ b/tests/test_kampagnen_verwalten.py
+@@ -138,3 +138,21 @@ def test_kapitel_verwerfen(client, world, dbs, tmp_path):
+     r = client.delete(f"{API}/sessions/{s1['id']}", headers=w["gm"])
+     assert r.status_code == 409 and r.json()["code"] == "session_published"
+     assert client.delete(f"{API}/sessions/{s1['id']}", headers=w["pl"]).status_code == 403
++
++
++def test_sl_uebergabe_an_spielerin(client, world):
++    """Übergabe: Ben wird SL, Anna gibt ab und spielt weiter – ohne Berg an Ungelesenem, ohne SL-Wissen."""
++    w = world
++    url = f"/api/v1/campaigns/{w['cid']}"
++    client.post(f"{url}/entries", headers=w["gm"], json={"type": "npc", "name": "Geheim", "visibility": "gm_only"})
++    client.post(f"{url}/entries", headers=w["gm"], json={"type": "location", "name": "Markt", "summary": "Laut.",
++                                                        "visibility": "public"})
++    r = client.patch(f"{url}/members/{w['gm_member']}", headers=w["gm"], json={"role": "player"})
++    assert r.status_code == 409 and r.json()["code"] == "last_gm"
++    assert client.patch(f"{url}/members/{w['pl_member']}", headers=w["gm"], json={"role": "gm"}).status_code == 200
++    assert client.patch(f"{url}/members/{w['gm_member']}", headers=w["gm"], json={"role": "player"}).status_code == 200
++    anna = client.get(url, headers=w["gm"]).json()
++    assert anna["myRole"] == "player" and anna["unread"]["bible"] == 0 and "gmNotices" not in anna
++    namen = {e["name"] for e in client.get(f"{url}/entries", headers=w["gm"]).json()}
++    assert namen == {"Markt"}
++    assert client.get(url, headers=w["pl"]).json()["myRole"] == "gm"
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 905177e..185f44d 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.33"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.34"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 480ee7b..2f56e53 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.33"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.34"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index 851d60f..2622c0d 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.33"
++version = "0.4.34"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
