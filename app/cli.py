@@ -726,6 +726,39 @@ def recap_probe(
                f"etwa {kosten} Cent · {dauer:.0f} s")
 
 
+@app.command("modellvergleich")
+def modellvergleich(
+    server: str = typer.Option(..., "--server", help="Adresse des Taleward-Servers, z. B. https://taleward.example.org"),
+    benutzer: str = typer.Option(..., "--benutzer", help="Benutzername einer SL der Kampagne"),
+    passwort: str = typer.Option(..., "--passwort", prompt=True, hide_input=True),
+    session: str = typer.Option(None, "--session", help="Session-ID (ohne Angabe: Liste der Sessions mit Transkript)"),
+    modelle: str = typer.Option("ministral-3:8b,qwen3:8b,qwen3.5:9b,gemma4:e4b,gemma4:12b", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@8192"),
+    kontext: int = typer.Option(12288, "--kontext", help="Kontextgröße (Tokens), wie im Worker"),
+    richter: str = typer.Option("qwen3:8b", "--richter", help="Modell, das alle Recaps bewertet; leer = ohne"),
+    ollama: str = typer.Option(None, "--ollama", help="Adresse von Ollama (Standard: 11434, sonst 11435 der Worker-App)"),
+    ziel: Path = typer.Option(Path("."), "--ziel", help="Ordner für die Ergebnisse"),
+):
+    """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
+    Vergleichen am eigenen PC. Liest nur über die Schnittstelle, ändert nichts auf dem Server."""
+    from app import modellvergleich as mv
+
+    try:
+        s = mv.Server(server)
+        s.anmelden(benutzer, passwort)
+        if not session:
+            for x in s.sessions_mit_transkript():
+                typer.echo(f"{x['id']}  {x['kampagne']} · Kapitel {x['number']} · {x.get('title') or ''} · {x['state']}")
+            typer.echo("\nNoch einmal mit --session <ID> aufrufen.")
+            return
+        url = mv.ollama_finden(ollama)
+        typer.echo(f"Ollama unter {url}")
+        ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel)
+    except mv.VergleichFehler as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"\nFertig. Bericht: {(ordner / 'bericht.html').resolve()}")
+
+
 @app.command("unterlage-probe")
 def unterlage_probe(
     datei: Path = typer.Argument(..., help="PDF, .docx, .txt oder .md"),

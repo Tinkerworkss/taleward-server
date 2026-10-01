@@ -112,6 +112,18 @@ class OllamaKlient:
         self.url, self.modell, self.kontext = url.rstrip("/"), modell, kontext
         self.client = client or httpx.Client(timeout=httpx.Timeout(self.STILLSTAND_S, connect=10.0))
         self.token_s: float | None = None  # gemessene Geschwindigkeit des letzten Aufrufs
+        self._denkt: bool | None = None  # Modell mit Denkmodus (Qwen3 u. a.)? Einmal bei Ollama nachgefragt
+
+    def denkmodus(self) -> bool:
+        """Kann das Modell „laut denken“? Dann schalten wir es ab: Für Recaps bringt es nichts außer langer Laufzeit
+        und vielen Tokens. Ältere Ollama-Fassungen kennen „capabilities“ nicht – dann bleibt alles wie bisher."""
+        if self._denkt is None:
+            try:
+                r = self.client.post(f"{self.url}/api/show", json={"model": self.modell}, timeout=15.0)
+                self._denkt = r.status_code == 200 and "thinking" in (r.json().get("capabilities") or [])
+            except Exception:  # noqa: BLE001 – die Nachfrage darf nie einen Aufruf kosten
+                self._denkt = False
+        return self._denkt
 
     def version(self) -> str | None:
         try:
@@ -190,6 +202,8 @@ class OllamaKlient:
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
             if grammatik:
                 body["format"] = "json"
+            if self.denkmodus():
+                body["think"] = False
             try:
                 status, fehler, d = self._streamen(body)
             except httpx.ReadTimeout as e:

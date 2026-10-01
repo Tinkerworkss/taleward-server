@@ -10,6 +10,8 @@ def _klient(pull_zeilen, tags_danach=True):
     zustand = {"geladen": False}
 
     def antwort(req: httpx.Request):
+        if req.url.path == "/api/show":  # Nachfrage nach dem Denkmodus
+            return httpx.Response(404, json={})
         if req.url.path == "/api/tags":
             modelle = [{"name": "ministral-3:8b", "digest": "abcdef1234567890"}] if zustand["geladen"] else []
             return httpx.Response(200, json={"models": modelle})
@@ -47,6 +49,8 @@ def _chat_klient(antworten):
     koerper = []
 
     def antwort(req: httpx.Request):
+        if req.url.path == "/api/show":  # Nachfrage nach dem Denkmodus
+            return httpx.Response(404, json={})
         if req.url.path == "/api/ps":
             return httpx.Response(200, json={"models": []})
         koerper.append(json.loads(req.content))
@@ -123,6 +127,8 @@ def test_anderer_fehler_wird_nicht_wiederholt():
 
 def test_stillstand_ist_ein_klarer_fehler():
     def antwort(req: httpx.Request):
+        if req.url.path == "/api/show":  # Nachfrage nach dem Denkmodus
+            return httpx.Response(404, json={})
         raise httpx.ReadTimeout("nichts kommt")
 
     k = OllamaKlient("http://ollama:11434", "m", client=httpx.Client(transport=httpx.MockTransport(antwort)))
@@ -147,6 +153,8 @@ def test_entladen_wartet_bis_das_modell_weg_ist(monkeypatch):
     abfragen = {"n": 0}
 
     def antwort(req: httpx.Request):
+        if req.url.path == "/api/show":  # Nachfrage nach dem Denkmodus
+            return httpx.Response(404, json={})
         if req.url.path == "/api/generate":
             return httpx.Response(200, json={})
         abfragen["n"] += 1
