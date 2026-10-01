@@ -28,8 +28,8 @@ from typing import Callable
 
 import httpx
 
-STANDARD_MODELLE = ("ministral-3:8b", "qwen3:8b", "qwen3.5:9b", "gemma4:e4b", "gemma4:12b")
-STANDARD_RICHTER = "qwen3:8b"
+STANDARD_MODELLE = ("gemma4:e4b", "gemma4:12b")
+STANDARD_RICHTER = "gemma4:12b"
 OLLAMA_ADRESSEN = ("http://127.0.0.1:11434", "http://127.0.0.1:11435")  # eigenes Ollama, sonst das der Worker-App
 APP_KENNUNG = "1.0.0"  # X-Taleward-App, falls der Server eine Mindestversion verlangt und /info nichts nennt
 

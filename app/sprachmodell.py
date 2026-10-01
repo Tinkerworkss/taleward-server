@@ -782,7 +782,8 @@ class Ablauf:
         self._schritt("proposals")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
-                       charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")])
+                       charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
+                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]})
 
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
                    fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
@@ -821,9 +822,36 @@ def ist_spielercharakter(titel: str, charaktere) -> bool:
     return False
 
 
-def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=()) -> list[dict]:
-    """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg – auch neue
-    Einträge für die Charaktere der Spieler, die das Modell trotz Anweisung gern anlegt."""
+# Sätze über den Spieltisch statt über die Spielwelt („In dieser Session etabliert“, „Die SL hat angedeutet“, „Dies
+# bezieht sich auf …“) – kleine Modelle schreiben sie trotz Anweisung. Sie fliegen aus Detail und gmNotes. Wörter, die
+# auch in der Spielwelt vorkommen („angedeutet“, „dient als“), bleiben erlaubt.
+_META = re.compile(
+    r"\b(?:Session|Sitzung|Spielrunde|Spielabend|Spieltisch|Spielleit\w*|SL|GM|Spieler(?:in|innen)?|Nebenmission"
+    r"|bezieht sich auf|in this session|game ?master|players?|the table|refers to)\b", re.IGNORECASE)
+
+
+def ohne_meta(text: str) -> str:
+    """Sätze über Session, Spielleitung und Spieler entfernen; der Rest bleibt, wie er war."""
+    if not text or not _META.search(text):
+        return text
+    behalten = []
+    for zeile in text.split("\n"):
+        saetze = re.split(r"(?<=[.!?])\s+", zeile)
+        rest = " ".join(t for t in saetze if not _META.search(t)).strip()
+        if rest:
+            behalten.append(rest)
+    return "\n".join(behalten).strip()
+
+
+def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
+            namen: dict[str, str] | None = None) -> list[dict]:
+    """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg:
+    - neue Einträge für die Charaktere der Spieler und Änderungen an Einträgen, die einen Spielercharakter meinen
+      (namen: Eintrags-ID → Name), die das Modell trotz Anweisung gern anlegt
+    - Sätze über den Spieltisch statt über die Spielwelt (ohne_meta); bleibt vom Detail nichts übrig, fällt der
+      Vorschlag weg
+    """
+    namen = namen or {}
     out = []
     for v in roh if isinstance(roh, list) else []:
         if not isinstance(v, dict):
@@ -836,6 +864,13 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=())
         if art == "create" and ist_spielercharakter(titel, charaktere):
             log.info("Vorschlag „%s“ verworfen – Spielercharakter", titel)
             continue
+        if art != "create" and (ist_spielercharakter(titel, charaktere)
+                                or ist_spielercharakter(namen.get(ziel or "", ""), charaktere)):
+            log.info("Vorschlag „%s“ verworfen – Änderung an einem Spielercharakter", titel)
+            continue
+        if detail and not ohne_meta(detail):
+            continue  # nur Sätze über den Spieltisch
+        detail = ohne_meta(detail)
         if art == "update" and ziel not in bibel_ids | geheim_ids:
             continue
         if art == "reveal" and ziel not in geheim_ids:
@@ -862,7 +897,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=())
             flags.append("low_confidence")
         out.append({
             "entryType": typ, "action": art, "targetEntryId": ziel, "title": titel[:300], "detail": detail[:4000],
-            "gmNotes": (klartext(v.get("gmNotes"))[:4000] or None) if art == "create" else None,
+            "gmNotes": (ohne_meta(klartext(v.get("gmNotes")))[:4000] or None) if art == "create" else None,
             "suggestedVisibility": sicht, "visibilityReason": klartext(v.get("visibilityReason"))[:500] or None,
             "confidence": sicherheit, "flags": flags, "evidence": belege[:3],
         })

@@ -309,7 +309,7 @@ def test_ollama_im_worker_starten(client, world, dbs, tmp_path):
     assert [v["action"] for v in vs] == ["reveal"] and vs[0]["gmNotes"].startswith("MARKER-GEHEIMER-TEXT")
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
     assert log.engine == "local" and log.worker_id == token.split(".")[1] and log.cost_cents == 0
-    assert log.model == "ollama/ministral-3:8b@abcdef123456"
+    assert log.model == "ollama/ministral-3:8b@abcdef123456/ctx8192"
 
 
 def test_ohne_ollama_nur_transkription():

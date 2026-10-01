@@ -11,7 +11,7 @@
     {% else %}<p><span class="marke-status marke-status--fehler">{{ _("nicht aktiv") }}</span> {{ _("Es fehlt der API-Schlüssel.") }}</p>{% endif %}
     {% if llm.je_session is not none %}<p>{{ _("Kosten etwa {cent} Cent pro 4-Stunden-Session.", cent="%.0f"|format(llm.je_session) if llm.je_session >= 1 else "%.1f"|format(llm.je_session)) }}</p>{% endif %}
   {% elif k.art == "lokal" %}
-    {% if llm.worker_online %}<p><span class="marke-status marke-status--gut">{{ _("Lokales Modell") }}</span> {{ k.lokal_modell }}</p>
+    {% if llm.worker_online %}<p><span class="marke-status marke-status--gut">{{ _("Lokales Modell") }}</span> {{ _("nach Grafikkarte") if k.lokal_modell == "auto" else k.lokal_modell }}</p>
     {% else %}<p><span class="marke-status marke-status--warten">{{ _("Lokales Modell") }}</span> {{ _("Zurzeit ist kein Worker mit Sprachmodell verbunden – Sessions warten.") }}</p>{% endif %}
   {% elif k.art == "attrappe" %}
     <p><span class="marke-status marke-status--warten">{{ _("Testmodus") }}</span> {{ _("Platzhaltertext statt echter Zusammenfassung (zum Testen).") }}</p>
@@ -56,8 +56,9 @@
     <fieldset>
       <legend>{{ _("Lokales Modell") }}</legend>
       <label>{{ _("Modell in Ollama") }} <input type="text" name="lokal_modell" value="{{ k.lokal_modell }}" maxlength="100" required>
-        <span class="hilfe">{{ _("Für 8 GB Grafikspeicher: ministral-3:8b. Der Worker lädt es beim ersten Auftrag selbst herunter.") }}</span></label>
-      <label>{{ _("Kontextgröße (Tokens)") }} <input type="number" name="lokal_kontext" value="{{ k.lokal_kontext }}" min="4096" max="262144" step="1024"></label>
+        <span class="hilfe">{{ _("Empfohlen: auto – jeder Worker wählt nach seiner Grafikkarte (unter 12 GB gemma4:e4b, ab 12 GB gemma4:12b) und lädt das Modell beim ersten Auftrag selbst herunter.") }}</span></label>
+      <label>{{ _("Höchste Kontextgröße (Tokens)") }} <input type="number" name="lokal_kontext" value="{{ k.lokal_kontext }}" min="4096" max="262144" step="1024">
+        <span class="hilfe">{{ _("Nur für ein fest eingetragenes Modell. Der Kontext richtet sich nach der Länge der Session, höchstens dieser Wert.") }}</span></label>
     </fieldset>
 
     <fieldset>

@@ -241,4 +241,5 @@ def test_keine_vorschlaege_fuer_spielercharaktere():
            {"entryType": "location", "action": "create", "title": "Tubos Versteck", "detail": "x"},
            {"entryType": "npc", "action": "update", "targetEntryId": "e1", "title": "Tubo", "detail": "x"}]
     v = pruefen(roh, {"e1"}, set(), charaktere=chars)
-    assert [x["title"] for x in v] == ["Tubos Versteck", "Tubo"]
+    # 0.4.36: auch keine Änderungen mehr an Einträgen für Spielercharaktere – die pflegen die Spieler selbst (Charaktere)
+    assert [x["title"] for x in v] == ["Tubos Versteck"]

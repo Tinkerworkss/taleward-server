@@ -196,7 +196,7 @@ Cloud.
 - `install.sh` fragt danach, sobald der Worker gewählt ist. Von Hand: `COMPOSE_PROFILES=worker,ollama`
   (bzw. `worker-cpu,ollama-cpu`) in die `.env`, dann `sudo docker compose up -d`.
 - In der Verwaltung unter **Zusammenfassung** „Lokales Modell“ wählen.
-- Das Sprachmodell (`ministral-3:8b`, etwa 5 GB) lädt der Worker beim ersten Recap.
+- Das Sprachmodell lädt der Worker beim ersten Recap, passend zur Grafikkarte: unter 12 GB `gemma4:e4b`, ab 12 GB `gemma4:12b` (einige GB, siehe [docs/RECAP-MODELLE.md](docs/RECAP-MODELLE.md)). Nötig ist Ollama ab 0.35.0.
 - Transkription und Recap wechseln sich auf der Grafikkarte ab. Reicht der Grafikspeicher nicht für beides, rechnet
   Ollama teilweise mit dem Prozessor – langsamer, aber es geht. Nur mit dem Prozessor dauert ein Recap grob eine Stunde
   oder mehr.

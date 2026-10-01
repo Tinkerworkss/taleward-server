@@ -157,9 +157,19 @@ def _stimme_attrappe(datei: Path, arbeit: Path, t0: float) -> dict:
 
 
 # ---------------------------------------------------------------- Sprachmodell (Ollama)
+def _ollama_passt(modell: str, version: str | None) -> None:
+    from app.recapmodell import ollama_zu_alt
+
+    mindestens = ollama_zu_alt(modell, version)
+    if mindestens:
+        raise SprachmodellFehler(f"Ollama {version} ist zu alt für {modell} – nötig ist mindestens {mindestens}. "
+                                 "Worker-App aktualisieren oder das eigene Ollama auf diesem PC.")
+
+
 def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
     """Läuft Ollama auf diesem Worker? Dann (Funktion für Zusammenfassungs-Aufträge, Angabe für die Zentrale).
     Sonst (None, None) – der Worker übernimmt dann nur Transkriptionen."""
+    from app import recapmodell
     from app.sprachmodell import Ablauf, OllamaKlient
 
     probe = OllamaKlient(url, "", client=client)
@@ -172,7 +182,11 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
             return unterlage(auftrag, fortschritt)
         z = auftrag["summarize"]
         t0 = time.monotonic()
-        klient = OllamaKlient(url, z["model"], int(z.get("context") or 12288), client=client)
+        modell, hoechstens = recapmodell.aufloesen(z["model"], int(z.get("context") or 12288), bool(z.get("auto")))
+        kontext = recapmodell.kontext_fuer(recapmodell.bedarf(z["recap"]), hoechstens)
+        _ollama_passt(modell, version)
+        klient = OllamaKlient(url, modell, kontext, client=client)
+        taetigkeit(f"Sprachmodell {modell}, Kontext {kontext}")
         kennung = klient.bereitstellen(lambda text: log.info(text))
         fortschritt(0.05)
         # Stückgröße so, dass Anweisung, Stück und Antwort in den Kontext passen
@@ -183,7 +197,7 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
         finally:
             klient.entladen()
         _messung["tokenS"] = ablauf.zaehler.token_s_mittel
-        d["model"] = f"ollama/{klient.modell}@{kennung}"
+        d["model"] = f"ollama/{klient.modell}@{kennung}/ctx{klient.kontext}"
         d["computeSeconds"] = round(time.monotonic() - t0, 1)
         return d
 
@@ -192,7 +206,9 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
 
         z = auftrag["document"]
         t0 = time.monotonic()
-        klient = OllamaKlient(url, z["model"], int(z.get("context") or 12288), client=client)
+        modell, kontext = recapmodell.aufloesen(z["model"], int(z.get("context") or 12288), bool(z.get("auto")))
+        _ollama_passt(modell, version)
+        klient = OllamaKlient(url, modell, kontext, client=client)
         kennung = klient.bereitstellen(lambda text: log.info(text))
         fortschritt(0.05)
         # Anweisung, Bibel (Namen) und Antwort brauchen Platz – das Stück bekommt etwa die Hälfte des Kontexts

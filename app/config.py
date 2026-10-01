@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     llm_api_url: str = "https://api.mistral.ai/v1"  # OpenAI-kompatibel
     llm_api_model: str = "mistral-large-latest"
     llm_api_key: str | None = None  # leer + Mistral: Schlüssel der externen Transkription
-    llm_local_model: str = "ministral-3:8b"
-    llm_local_context: int = 12288
+    llm_local_model: str = "auto"      # nach Grafikkarte des Workers (app/recapmodell.py)
+    llm_local_context: int = 32768     # höchstens – bei festem Modell; „auto“ wählt selbst
     worker_llm_url: str = "http://localhost:11434"  # Ollama auf dem Worker
     summarizer_interval_seconds: float = 2.0  # 0 = kein eigener Arbeitsprozess (Tests)
     create_setup_account: bool = True  # bei leerer Datenbank Einrichtungskonto admin/admin anlegen

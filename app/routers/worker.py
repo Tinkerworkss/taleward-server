@@ -126,6 +126,16 @@ def _stimm_auftrag(job: Job) -> dict:
     }
 
 
+def _modell_angabe(k) -> dict:
+    """„auto“: Der Worker wählt Modell und Kontext nach seiner Grafikkarte (app/recapmodell.py). Ein Modellname
+    steht trotzdem dabei – für Worker, die „auto“ noch nicht kennen."""
+    from app import recapmodell
+
+    if k.lokal_modell == recapmodell.AUTO:
+        return {"model": recapmodell.KLEIN, "context": k.lokal_kontext, "auto": True}
+    return {"model": k.lokal_modell, "context": k.lokal_kontext}
+
+
 def _zusammenfassungs_auftrag(db: Session, job: Job) -> dict:
     """Zusammenfassung auf einem Worker mit Sprachmodell: die beiden getrennten Eingaben, kein Audio."""
     from app.einstellungen import llm_konfig
@@ -138,7 +148,7 @@ def _zusammenfassungs_auftrag(db: Session, job: Job) -> dict:
         "jobId": job.id, "type": job.type, "leaseSeconds": get_settings().lease_seconds, "attempt": job.attempts,
         "files": [],
         "summarize": {"recap": recap_eingabe(basis), "proposals": vorschlag_eingabe(db, s, basis),
-                      "model": k.lokal_modell, "context": k.lokal_kontext, "review": gegenpruefen_an(db)},
+                      **_modell_angabe(k), "review": gegenpruefen_an(db)},
     }
 
 
@@ -156,7 +166,7 @@ def _auftrag(db: Session, job: Job) -> dict:
         return {"jobId": job.id, "type": job.type, "leaseSeconds": get_settings().lease_seconds,
                 "attempt": job.attempts, "files": [],
                 "document": {"input": eingabe(db, db.get(CampaignDocument, job.document_id)),
-                             "model": k.lokal_modell, "context": k.lokal_kontext}}
+                             **_modell_angabe(k)}}
     s = db.get(GameSession, job.session_id)
     c = db.get(Campaign, s.campaign_id)
     up = db.get(Upload, job.upload_id)
@@ -458,7 +468,8 @@ def summary_result(jobId: str, body: SummaryResultIn, worker: Worker = Depends(c
     d = {"title": body.title, "text": body.text, "openThreads": body.open_threads, "model": body.model,
          "tokensIn": body.tokens_in, "tokensOut": body.tokens_out, "review": body.review,
          "proposals": pruefen(roh, {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
-                              charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")])}
+                              charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
+                              namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]})}
     speichern(db, s, ergebnis_aus(d), body.compute_seconds, engine="local", worker_id=worker.id)
     job.state, job.finished_at, job.progress, job.lease_expires_at = "done", utcnow(), 1.0, None
     db.commit()

@@ -688,7 +688,11 @@ def recap_probe(
         recap_ein, vorschlag_ein = recap_eingabe(basis), vorschlag_eingabe(db, s, basis)
         k = llm_konfig(db)
     if lokal:
-        klient = OllamaKlient(get_settings().worker_llm_url, modell or k.lokal_modell, k.lokal_kontext)
+        from app import recapmodell
+
+        name, hoechstens = recapmodell.aufloesen(modell or k.lokal_modell, k.lokal_kontext)
+        klient = OllamaKlient(get_settings().worker_llm_url, name,
+                              recapmodell.kontext_fuer(recapmodell.bedarf(recap_ein), hoechstens))
         if klient.version() is None:
             typer.echo(f"Ollama ist unter {klient.url} nicht erreichbar (docs/ENTWICKLUNG.md, „Einen Worker von Hand betreiben“).", err=True)
             raise typer.Exit(1)
@@ -732,9 +736,9 @@ def modellvergleich(
     benutzer: str = typer.Option(..., "--benutzer", help="Benutzername einer SL der Kampagne"),
     passwort: str = typer.Option(..., "--passwort", prompt=True, hide_input=True),
     session: str = typer.Option(None, "--session", help="Session-ID (ohne Angabe: Liste der Sessions mit Transkript)"),
-    modelle: str = typer.Option("ministral-3:8b,qwen3:8b,qwen3.5:9b,gemma4:e4b,gemma4:12b", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@8192"),
-    kontext: int = typer.Option(12288, "--kontext", help="Kontextgröße (Tokens), wie im Worker"),
-    richter: str = typer.Option("qwen3:8b", "--richter", help="Modell, das alle Recaps bewertet; leer = ohne"),
+    modelle: str = typer.Option("gemma4:e4b@20480,gemma4:12b@32768", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@32768"),
+    kontext: int = typer.Option(20480, "--kontext", help="Kontextgröße (Tokens) für Modelle ohne @-Angabe und den Richter"),
+    richter: str = typer.Option("", "--richter", help="Modell, das alle Recaps bewertet, z. B. gemma4:12b (ab 16 GB Grafikspeicher); leer = ohne"),
     ollama: str = typer.Option(None, "--ollama", help="Adresse von Ollama (Standard: 11434, sonst 11435 der Worker-App)"),
     ziel: Path = typer.Option(Path("."), "--ziel", help="Ordner für die Ergebnisse"),
 ):
@@ -797,7 +801,10 @@ def unterlage_probe(
            "system_name": None, "welt": c.world_info if c else None, "art": art, "titel": datei.stem,
            "abschnitte": x.abschnitte, "bibel": bibel}
     if lokal:
-        klient = OllamaKlient(get_settings().worker_llm_url, modell or k.lokal_modell, k.lokal_kontext)
+        from app import recapmodell
+
+        klient = OllamaKlient(get_settings().worker_llm_url,
+                              *recapmodell.aufloesen(modell or k.lokal_modell, k.lokal_kontext))
         if klient.version() is None:
             typer.echo(f"Ollama ist unter {klient.url} nicht erreichbar.", err=True)
             raise typer.Exit(1)
