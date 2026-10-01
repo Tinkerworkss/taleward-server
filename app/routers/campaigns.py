@@ -207,6 +207,8 @@ def patch_member(
         if target.role == "gm":
             if aktive_sl_anzahl(db, campaignId) <= 1:
                 raise errors.conflict("last_gm")
+            # SL-Übergabe: Als SL hat sie alles gesehen – nicht alle Recaps und Einträge als ungelesen zeigen
+            target.chronicle_seen_at = target.bible_seen_at = utcnow()
         target.role = body.role
     db.commit()
     db.refresh(me)

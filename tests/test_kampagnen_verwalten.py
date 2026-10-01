@@ -138,3 +138,21 @@ def test_kapitel_verwerfen(client, world, dbs, tmp_path):
     r = client.delete(f"{API}/sessions/{s1['id']}", headers=w["gm"])
     assert r.status_code == 409 and r.json()["code"] == "session_published"
     assert client.delete(f"{API}/sessions/{s1['id']}", headers=w["pl"]).status_code == 403
+
+
+def test_sl_uebergabe_an_spielerin(client, world):
+    """Übergabe: Ben wird SL, Anna gibt ab und spielt weiter – ohne Berg an Ungelesenem, ohne SL-Wissen."""
+    w = world
+    url = f"/api/v1/campaigns/{w['cid']}"
+    client.post(f"{url}/entries", headers=w["gm"], json={"type": "npc", "name": "Geheim", "visibility": "gm_only"})
+    client.post(f"{url}/entries", headers=w["gm"], json={"type": "location", "name": "Markt", "summary": "Laut.",
+                                                        "visibility": "public"})
+    r = client.patch(f"{url}/members/{w['gm_member']}", headers=w["gm"], json={"role": "player"})
+    assert r.status_code == 409 and r.json()["code"] == "last_gm"
+    assert client.patch(f"{url}/members/{w['pl_member']}", headers=w["gm"], json={"role": "gm"}).status_code == 200
+    assert client.patch(f"{url}/members/{w['gm_member']}", headers=w["gm"], json={"role": "player"}).status_code == 200
+    anna = client.get(url, headers=w["gm"]).json()
+    assert anna["myRole"] == "player" and anna["unread"]["bible"] == 0 and "gmNotices" not in anna
+    namen = {e["name"] for e in client.get(f"{url}/entries", headers=w["gm"]).json()}
+    assert namen == {"Markt"}
+    assert client.get(url, headers=w["pl"]).json()["myRole"] == "gm"
