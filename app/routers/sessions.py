@@ -142,7 +142,8 @@ def list_speakers(sessionId: str, user: User = Depends(current_user), db: Sessio
     s = load_session_gm(db, sessionId, user).session
     return [
         schemas.SpeakerOut(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
-                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source)
+                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
+                           assigned_guest_name=sp.assigned_guest_name)
         for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position))
     ]
 

@@ -86,6 +86,8 @@ def member_out(m: Member, viewer: Member | None) -> schemas.MemberOut:
         id=m.id, user_id=m.user_id or "", display_name=m.anzeigename, character_name=m.character_name,
         role=m.role, recording_consent_at=m.recording_consent_at, character_summary=m.character_summary,
         portrait_updated_at=m.portrait_updated_at, deleted_at=m.deleted_at, left_at=m.left_at,
+        character_id=m.character_id, character_version=m.character_version, character_status=m.character_status,
+        character_nickname=m.character_nickname,
     )
     if viewer is not None and may_see_backstory(viewer, m):
         daten["character_backstory"] = m.character_backstory
@@ -145,8 +147,11 @@ def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
             GameSession.campaign_id == c.id, GameSession.state == "published"
         )
     ).one()
-    pending = 0
+    pending = mitgebracht = 0
     if me.role == "gm":
+        from app.charaktere import offene_anzahl
+
+        mitgebracht = offene_anzahl(db, c.id)
         pending = db.scalar(
             select(func.count()).select_from(GameSession).where(
                 GameSession.campaign_id == c.id, GameSession.state.in_(GM_ACTION_STATES)
@@ -157,6 +162,7 @@ def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
         organization=schemas.OrgRef(id=c.organization.id, name=c.organization.name) if c.organization else None,
         my_role=me.role, my_character_name=me.character_name,
         member_count=member_count, archived_at=c.archived_at, published_session_count=published[0], pending_review_count=pending,
+        open_character_proposals=mitgebracht,
         last_published_at=_utc(published[1]), cover_preset=c.cover_preset, unread=_unread(db, c, me),
         cover_image_updated_at=c.cover_image_updated_at, next_session_at=c.next_session_at,
         date_poll_needs_my_vote=braucht_meine_stimme(db, me),
@@ -179,6 +185,9 @@ def campaign_out(db: Session, c: Campaign, me: Member) -> schemas.CampaignOut:
         from app import namenshilfe
 
         out.hotwords = namenshilfe.anzeige(db, c)
+        from app.charaktere import hinweise
+
+        out.gm_notices = hinweise(db, c)  # 0.4.7
     return out
 
 
@@ -399,7 +408,8 @@ def set_state(s: GameSession, state: str, progress: float | None = None, message
 
 
 # ---------- Bibel ----------
-def entry_out(e: Entry, is_gm: bool) -> schemas.EntryOut:
+def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.EntryOut:
+    """viewer_id: Mitglied, das abfragt – die Herkunft mitgebrachter Einträge (0.4.7) sehen nur SL und Urheberin."""
     mentions = [mn for mn in e.mentions if is_gm or mn.session.state == "published"]
     mentions.sort(key=lambda mn: mn.session.number)
     numbers = [mn.session.number for mn in mentions]
@@ -414,6 +424,9 @@ def entry_out(e: Entry, is_gm: bool) -> schemas.EntryOut:
     if is_gm:
         daten["gm_notes"] = e.gm_notes
         daten["hidden_from_member_ids"] = sorted(e.hidden_member_ids)
+    if is_gm or (viewer_id is not None and viewer_id == e.origin_member_id):
+        daten.update(origin_character_id=e.origin_character_id, origin_entry_id=e.origin_entry_id,
+                     origin_version=e.origin_version)
     return schemas.EntryOut(**daten)
 
 
@@ -431,6 +444,8 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
     if "type" in fields:
         if data.type is None:
             raise errors.bad_request("validation_error", "validation_error.type")
+        if (data.type == "pc") != (e.type == "pc") and e.type:
+            raise errors.bad_request("validation_error", "validation_error.pc")  # pc legt nur der Server an
         e.type = data.type
     if "name" in fields:
         name = (data.name or "").strip()
@@ -466,7 +481,7 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
         e.status = None
     elif e.status is None:
         e.status = "active"
-    if e.type != "item":
+    if e.type not in ("item", "pc"):  # pc: Halter = Mitglied mit dem Charakter (0.4.7)
         e.holder_member_id = None
     now = utcnow()
     e.updated_at = now

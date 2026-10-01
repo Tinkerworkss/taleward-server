@@ -171,7 +171,9 @@ def create_app() -> FastAPI:
 
     from app.routers import anmeldung
 
-    for r in (auth.router, anmeldung.router, voice_profile.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
+    from app.routers import charaktere
+
+    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
         api.include_router(r)
     app.include_router(api)
     app.include_router(worker.router)

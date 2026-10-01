@@ -24,6 +24,8 @@ URN = "urn:session-chronik"
 # user beim Tausch (0.4.0) nur bei status ok – sonst fehlt es (die YAML erlaubt dort kein null).
 OPTIONAL_FIELDS = {"characterBackstory", "gmNotes", "hiddenFromMemberIds", "memberId", "guestName", "start", "page",
                    "review", "hotwords",  # 0.4.6: nur für die SL, für Spieler weggelassen
+                   "gmNotices", "originCharacterId", "originEntryId", "originVersion",  # 0.4.7: nur SL (und Urheberin)
+                   "details",  # 0.4.7: Error.details nur bei manchen Fehlercodes
                    "user"}
 
 # Statuscodes, die in der YAML fehlen, aber fachlich nötig sind – für den nächsten Änderungswunsch notiert.

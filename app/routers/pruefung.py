@@ -63,9 +63,22 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
     mitglieder = _kampagnen_mitglieder(db, s.campaign_id)
     if any(z.member_id is not None and z.member_id not in mitglieder for z in body):
         raise errors.bad_request("member_unknown")
+    # 0.4.7: Stimmen von Gästen benennen – nur mit einem guestName der Anwesenden, nie zusammen mit memberId
+    gaeste = {" ".join(a.guest_name.split()).casefold(): a.guest_name for a in s.attendees if a.guest_name}
+    gast = {}
+    for z in body:
+        name = " ".join((z.guest_name or "").split())
+        if not name:
+            continue
+        if z.member_id is not None:
+            raise errors.bad_request("speaker_member_and_guest")
+        if name.casefold() not in gaeste:
+            raise errors.bad_request("guest_unknown")
+        gast[z.speaker_id] = gaeste[name.casefold()]
     angegeben = {z.speaker_id: z.member_id for z in body}
     for sp in stimmen.values():
         sp.assigned_member_id = angegeben[sp.id] if sp.id in angegeben else sp.suggested_member_id
+        sp.assigned_guest_name = gast.get(sp.id)
     db.flush()
     stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
     queue.stimmen_vergessen(db, s)
@@ -77,8 +90,11 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
 # ---------- Vorschläge ----------
 def proposal_out(p: Proposal) -> schemas.ProposalOut:
     public = p.suggested_visibility == "public"
+    quelle = p.source or ("session" if p.session_id else "document")
     return schemas.ProposalOut(
-        id=p.id, session_id=p.session_id, document_id=p.document_id, entry_type=p.entry_type, action=p.action,
+        id=p.id, session_id=p.session_id, document_id=p.document_id, source=quelle,
+        origin_character_id=p.origin_character_id, origin_entry_id=p.origin_entry_id,
+        submitted_by_member_id=p.submitted_by_member_id, entry_type=p.entry_type, action=p.action,
         target_entry_id=p.target_entry_id, title=p.title, detail=p.detail, gm_notes=p.gm_notes,
         suggested_visibility=p.suggested_visibility,
         hidden_from_member_ids=json.loads(p.hidden_member_ids_json) if public else [],
@@ -103,7 +119,17 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
     p = db.get(Proposal, proposalId)
     if p is None:
         raise errors.not_found()
-    if p.session_id is not None:
+    vorher = p.decision
+    if p.source == "character":  # mitgebrachte Welt (0.4.7): nur die SL, Entscheidung wirkt sofort
+        from app.access import membership
+
+        me = membership(db, p.campaign_id, user)
+        if me is None or me.role != "gm":
+            raise errors.not_found()
+        if p.decision != "open":
+            raise errors.conflict("invalid_state", "invalid_state.proposal_decided")
+        campaign_id = p.campaign_id
+    elif p.session_id is not None:
         try:
             s = _nur_sl(db, p.session_id, user).session
         except errors.ApiError:
@@ -142,6 +168,10 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
         p.decision = body.decision
     if p.decision == "accepted" and p.suggested_visibility == "public" and p.action != "update" and not p.detail:
         raise errors.bad_request("validation_error", "public_text_required")
+    if p.source == "character" and p.decision != vorher:
+        from app import charaktere
+
+        charaktere.entscheiden(db, p, _kampagnen_mitglieder(db, campaign_id))
     db.commit()
     return proposal_out(p)
 

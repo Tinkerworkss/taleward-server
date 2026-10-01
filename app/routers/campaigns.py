@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import errors, schemas
+from app import charaktere, errors, schemas
 from app.access import aktive_sl_anzahl, current_user, membership, require_gm, require_member
 from app.db import get_db, utcnow
 from app.models import Campaign, Invite, Member, UsageLog, User
@@ -64,19 +64,29 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
     c = db.get(Campaign, inv.campaign_id)
     me = membership(db, c.id, user)
     char = (body.character_name or "").strip() or None
+    if body.character is not None:  # 0.4.7: Charakter aus der Sammlung gewinnt gegen den freien Namen
+        char = body.character.name.strip() or char
+    neu = me is None
     if me is None:
         frueher = db.scalar(select(Member).where(Member.campaign_id == c.id, Member.user_id == user.id))
         if frueher is not None:  # verlassen oder entfernt: mit neuer Einladung wieder aktiv (0.4.5), als Spieler
             me = frueher
             me.left_at, me.role, me.joined_at = None, "player", utcnow()
             me.chronicle_seen_at = me.bible_seen_at = None
+            if body.character is not None and me.character_id not in (None, body.character.id.lower()):
+                charaktere.loesen(db, me)  # mit einem anderen Charakter zurück
             if char is not None:
                 me.character_name = char
         else:
             me = Member(campaign_id=c.id, user_id=user.id, role="player", character_name=char)
             db.add(me)
-    elif char is not None:
+        db.flush()
+    elif char is not None and body.character is None:
         me.character_name = char
+    if body.character is not None:
+        charaktere.setzen(db, me, body.character, beitritt=True)
+    if neu:
+        charaktere.neuzugang(db, me)
     if c.organization_id:
         ensure_org_member(db, c.organization_id, user)
     db.commit()

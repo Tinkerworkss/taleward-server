@@ -191,11 +191,21 @@ def hochladen(db: Session, campaign_id: str, member_id: str, dateiname: str, dat
               titel: str | None) -> CampaignDocument:
     from app.queue import status_message
 
-    if kind not in ("handout", "gm", "mixed"):
+    if kind not in ("handout", "gm", "mixed", "character_sheet"):
         raise errors.bad_request("validation_error", "validation_error.value", field="kind")
     if len(daten) > MAX_BYTES:
         raise errors.ApiError(413, "document_too_large")
     art = art_der_datei(dateiname, daten)
+    if kind == "character_sheet":
+        # 0.4.7: Charakterbogen – nur gespeichert, nie ausgelesen oder ausgewertet, fließt nie in Recaps/Vorschläge
+        name = Path(dateiname).name[:300] or "charakterbogen"
+        doc = CampaignDocument(campaign_id=campaign_id, title=(titel or "").strip()[:300] or Path(name).stem[:300],
+                               file_name=name, kind=kind, size_bytes=len(daten), page_count=None,
+                               uploaded_by_member_id=member_id, state="done")
+        db.add(doc)
+        db.flush()
+        storage.write_atomic(ordner(doc.id) / f"datei{Path(name).suffix.lower()}", daten)
+        return doc
     x = auslesen(art, daten)
     name = Path(dateiname).name[:300] or "unterlage"
     doc = CampaignDocument(campaign_id=campaign_id, title=(titel or "").strip()[:300] or Path(name).stem[:300],
@@ -277,7 +287,11 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
     from app.zusammenfassung import _geheimes_im_detail
 
     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == doc.campaign_id))}
-    vorschlaege = dokument_pruefen(d.get("proposals") or [], {i: e.name for i, e in eintraege.items()})
+    # pc-Einträge (0.4.7) pflegt die App – keine Vorschläge dafür, auch nicht als neuer Eintrag gleichen Namens
+    spieler = {e.name.casefold() for e in eintraege.values() if e.type == "pc"}
+    vorschlaege = [v for v in dokument_pruefen(d.get("proposals") or [],
+                                               {i: e.name for i, e in eintraege.items() if e.type != "pc"})
+                   if v["title"].casefold() not in spieler]
     markiert = geheime_abschnitte(text_laden(doc.id))
     db.execute(delete(Proposal).where(Proposal.document_id == doc.id))
     for pos, v in enumerate(vorschlaege):

@@ -22,7 +22,7 @@ def test_info_ist_oeffentlich(client):
     r = client.get(f"{API}/info")
     assert r.status_code == 200
     i = r.json()
-    assert i["apiVersion"] == "0.4.6" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+    assert i["apiVersion"] == "0.4.7" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
 
 
 def test_registrierung_geschlossen(client, dbs):
@@ -238,7 +238,7 @@ def test_spaetere_funktionen_antworten_verstaendlich(client, world, dbs):
     r = client.get(f"{API}/campaigns/{w['cid']}/date-poll", headers=w["pl"])
     assert r.status_code == 404 and r.json()["code"] == "no_date_poll"
     assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["gm"]).json() == []
-    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).status_code == 403
+    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).json() == []  # 0.4.7: Spieler sehen nur eigene Charakterbögen
     assert client.put(f"{API}/uploads/x/files/y/chunks/0", content=b"x", headers=w["gm"]).status_code == 404
     # Spoilerschutz auch hier: Kommentare unveröffentlichter Kapitel für Spieler unsichtbar
     assert client.get(f"{API}/sessions/{s['id']}/comments", headers=w["pl"]).status_code == 404

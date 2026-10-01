@@ -37,7 +37,7 @@ def test_hochladen_pruefungen(client, world, monkeypatch):
     w = world
     assert hochladen(client, w, "a.pdf", pdf(["Text"]), h=w["pl"]).status_code == 403
     assert hochladen(client, w, "a.pdf", pdf(["Text"]), h=w["out"]).status_code == 404
-    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).status_code == 403
+    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).json() == []  # 0.4.7: nur eigene Charakterbögen
     r = hochladen(client, w, "a.exe", b"MZ....")
     assert r.status_code == 400 and r.json()["code"] == "unsupported_document"
     assert hochladen(client, w, "falsch.pdf", b"kein pdf").json()["code"] == "unsupported_document"

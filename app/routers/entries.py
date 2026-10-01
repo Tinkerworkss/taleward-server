@@ -36,7 +36,7 @@ def list_entries(
     if q and q.strip():
         entries = [e for e in entries if search_matches(e, q, is_gm)]
     entries.sort(key=lambda e: e.name.casefold())
-    return [entry_out(e, is_gm) for e in entries]
+    return [entry_out(e, is_gm, me.id) for e in entries]
 
 
 @router.post("/campaigns/{campaignId}/entries", status_code=201, response_model=schemas.EntryOut, response_model_exclude_unset=True)
@@ -47,8 +47,10 @@ def create_entry(
     require_gm(me)
     if body.type is None or not (body.name or "").strip():
         raise errors.bad_request("validation_error", "validation_error.type_name")
+    if body.type == "pc":
+        raise errors.bad_request("validation_error", "validation_error.pc")
     # Ohne Angabe ist ein Eintrag geheim – lieber versehentlich zu wenig verraten als zu viel.
-    e = Entry(campaign_id=campaignId, type=body.type, name="", summary="", visibility="gm_only")
+    e = Entry(campaign_id=campaignId, type="", name="", summary="", visibility="gm_only")
     db.add(e)
     db.flush()  # ID für die Verborgen-Liste
     apply_entry_input(db, e, body)
@@ -60,7 +62,7 @@ def create_entry(
 @router.get("/entries/{entryId}", response_model=schemas.EntryOut, response_model_exclude_unset=True)
 def get_entry(entryId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     acc = load_entry(db, entryId, user)
-    return entry_out(acc.entry, acc.is_gm)
+    return entry_out(acc.entry, acc.is_gm, acc.member.id)
 
 
 @router.patch("/entries/{entryId}", response_model=schemas.EntryOut, response_model_exclude_unset=True)

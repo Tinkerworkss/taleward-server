@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.6
+  version: 0.4.7
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -130,6 +130,13 @@ info:
     korrigieren, optional erneut transkribieren); Campaign.hotwords (Namenshilfe, nur SL); feste Schlüssel für
     ProcessingStatus.message während summarizing. Kein neuer ProcessingState. Alles Neue ist nur für die SL und wird
     Spielern gar nicht ausgeliefert (nicht null, sondern weggelassen); ältere Apps ignorieren die Felder.
+    Änderungen in 0.4.7 (Charaktere): Die App ist Ort der Wahrheit für Charaktere (eigene Sammlung, auf mehreren
+    Servern nutzbar); der Server hält eine Kopie mit characterId/characterVersion und bearbeitet sie nie. Beitritt mit
+    Charakter (POST /campaigns/join, character), PUT/DELETE …/members/me/character, mitgebrachte Welt als Vorschläge
+    für die SL (POST/GET …/members/me/world, GET /campaigns/{id}/character-proposals), Chronik als Abschrift
+    (GET …/members/me/chronicle), Eintragsart pc, Proposal.source, DocumentKind character_sheet, Hinweise an die SL
+    (Campaign.gmNotices, z. B. Neuzugang bei teilweise verborgenen Einträgen), Stimmen von Gästen benennen
+    (guestName bei PUT …/speakers, Speaker.assignedGuestName), Error.details. Kein Kampagnen-Umzug (kommt in 0.4.8).
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -445,7 +452,11 @@ paths:
     get:
       tags: [Auth]
       summary: Alle eigenen Daten auf diesem Server als JSON (Recht auf Datenübertragbarkeit)
-      description: Konto (ab 0.4.0 mit email und den Namen verbundener Dienste, keine Kennungen), Mitgliedschaften mit Charakterangaben, eigene Kommentare, Zustimmungen mit Zeitpunkten, Stimmprofil-Status (ohne Stimmabdruck), Charakterbilder als Verweise.
+      description: |
+        Konto (ab 0.4.0 mit email und den Namen verbundener Dienste, keine Kennungen), Mitgliedschaften mit
+        Charakterangaben, eigene Kommentare, Zustimmungen mit Zeitpunkten, Stimmprofil-Status (ohne Stimmabdruck),
+        Charakterbilder als Verweise. Ab 0.4.7 zusätzlich characters[]: { characterId, campaigns: [{ serverCampaignId,
+        title, memberId, joinedAt, leftAt }] }.
       responses:
         "200":
           description: JSON-Datei
@@ -615,7 +626,15 @@ paths:
               required: [code]
               properties:
                 code: { type: string, example: "RABE-4821" }
-                characterName: { type: string }
+                characterName: { type: string, description: "Freier Name ohne Sammlung (Gäste, ältere Apps)" }
+                character:
+                  description: |
+                    Ab 0.4.7: Charakter aus der Sammlung der App. Setzt Member.character* und legt den pc-Eintrag an
+                    (öffentlich, holderMemberId = das neue Mitglied). Mit characterName zusammen gewinnt character.name.
+                    Gleiche characterId schon bei einem aktiven Mitglied dieser Kampagne → 409 character_in_campaign.
+                  oneOf:
+                    - { $ref: "#/components/schemas/Character" }
+                    - { type: "null" }
       responses:
         "200":
           description: Beigetreten
@@ -625,6 +644,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /campaigns/{campaignId}:
     parameters: [{ $ref: "#/components/parameters/campaignId" }]
@@ -780,6 +800,144 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/members/me/character:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    put:
+      tags: [Charaktere]
+      summary: Eigenen Charakter setzen oder aktualisieren (ab 0.4.7)
+      description: |
+        Nur das Mitglied selbst. Ohne bisherigen Charakter (Altbestand, nach DELETE): übernimmt den Charakter und legt
+        bzw. verknüpft den pc-Eintrag („in die Sammlung übernehmen“: neue UUID, version 1). Mit bisherigem Charakter:
+        nur dieselbe id (sonst 409 character_mismatch) und nur eine höhere version (sonst 409 character_version_stale,
+        details.serverVersion). Aktualisiert Member.character* und den pc-Eintrag. Die SL kann das nicht.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Character" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [Charaktere]
+      summary: Charakter lösen, z. B. für einen Charakterwechsel nach Tod oder Ruhestand (ab 0.4.7)
+      description: |
+        characterId wird gelöst; der pc-Eintrag bleibt mit holderMemberId null und dem letzten Status. Danach PUT mit
+        dem neuen Charakter.
+      responses:
+        "204": { description: Gelöst }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/members/me/world:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Charaktere]
+      summary: Stand aller je eingereichten mitgebrachten Einträge dieses Mitglieds (ab 0.4.7)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, items: { $ref: "#/components/schemas/WorldEntryStatus" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Charaktere]
+      summary: Mitgebrachte Welt einreichen – wird zu Vorschlägen für die SL (ab 0.4.7)
+      description: |
+        Nur Mitglieder mit characterId (sonst 409 no_character); 1–100 Einträge (sonst 400 world_too_many). Je Eintrag:
+        - unbekannte id → Vorschlag create, source character, suggestedVisibility public; bei secret
+          hiddenFromMemberIds = alle anderen aktiven Mitglieder (die SL sieht es ohnehin)
+        - bekannt, höhere version → Vorschlag update mit targetEntryId, detail = neue summary
+        - bekannt, gleiche oder ältere version → unchanged
+        - offener Vorschlag zu derselben id → wird durch den neuen ersetzt
+        Nie direkt zu Einträgen; die SL entscheidet (GET /campaigns/{id}/character-proposals). Die Antwort nennt nur
+        eigene Vorschläge und Zustände – Inhalte der Vorschläge bekommt die Person nicht.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries: { type: array, minItems: 1, maxItems: 100, items: { $ref: "#/components/schemas/WorldEntryIn" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, items: { $ref: "#/components/schemas/WorldEntryStatus" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /campaigns/{campaignId}/members/me/chronicle:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Charaktere]
+      summary: Chronik des eigenen Charakters als Abschrift (ab 0.4.7)
+      description: |
+        Nur das Mitglied selbst, auch nach dem Verlassen (solange das Konto besteht). Die SL sieht keine Chroniken
+        anderer (404). Nie enthalten: Transkripte, Hörproben, SL-Notizen, gm_only, Vorschläge, Namen anderer Personen
+        (Charaktere anderer nur, soweit sie im Recap-Text stehen). Die App speichert die Abschrift in ihrer Sammlung;
+        das Dateiformat ist Sache der App.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chronicle" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/character-proposals:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Vorschläge]
+      summary: Vorschläge aus mitgebrachter Welt (nur SL, ab 0.4.7; Spieler 404)
+      description: |
+        Offene zuerst, danach die letzten 50 entschiedenen. Entscheiden per PATCH /proposals/{id}: bei source character
+        wirkt accepted sofort (Eintrag wird angelegt bzw. ergänzt, mit originCharacterId/originEntryId/originVersion),
+        rejected ebenso – es gibt kein Veröffentlichen wie bei Sessions. CampaignSummary.openCharacterProposals zählt
+        die offenen.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Proposal" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/gm-notices/{noticeId}:
+    parameters:
+      - { $ref: "#/components/parameters/campaignId" }
+      - { name: noticeId, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [Kampagnen]
+      summary: Hinweis an die SL erledigt (nur SL, ab 0.4.7)
+      responses:
+        "204": { description: Erledigt }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /organizations:
     get:
@@ -1274,7 +1432,13 @@ paths:
                   speakerId: { type: string }
                   memberId:
                     type: [string, "null"]
-                    description: null = Gast / ignorieren
+                    description: null = Gast (mit guestName) oder ignorieren (ohne)
+                  guestName:
+                    type: [string, "null"]
+                    description: |
+                      Ab 0.4.7: einer der guestName-Werte der Anwesenden. Der Server schreibt ihn als Sprecher ins
+                      Transkript („Mira (Gast)“) und in die Eingabe der Zusammenfassung. Schließt memberId aus (400);
+                      beide null = ignorieren. Kein Stimmprofil für Gäste.
       responses:
         "202":
           description: Zusammenfassung eingereiht
@@ -1330,6 +1494,9 @@ paths:
     patch:
       tags: [Vorschläge]
       summary: Vorschlag übernehmen, verwerfen oder vor dem Übernehmen bearbeiten (nur SL)
+      description: |
+        Bei Session-Vorschlägen wirkt die Entscheidung beim Veröffentlichen, bei Unterlagen mit …/apply. Bei source
+        character (ab 0.4.7) wirkt accepted bzw. rejected sofort.
       requestBody:
         required: true
         content:
@@ -1796,7 +1963,7 @@ paths:
     parameters: [{ $ref: "#/components/parameters/campaignId" }]
     get:
       tags: [Unterlagen]
-      summary: Hochgeladene SL-Unterlagen (nur SL; Spieler 403)
+      summary: Hochgeladene Unterlagen (SL alle; Spieler ab 0.4.7 nur eigene Charakterbögen, vorher 403)
       responses:
         "200":
           description: OK, neueste zuerst
@@ -1810,8 +1977,12 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [Unterlagen]
-      summary: Unterlage hochladen und Auswertung einreihen (nur SL)
+      summary: Unterlage hochladen und Auswertung einreihen (nur SL; character_sheet jedes aktive Mitglied)
       description: |
+        Ab 0.4.7 darf jedes aktive Mitglied kind character_sheet hochladen (Charakterbogen). Sichtbar nur für die SL und
+        die hochladende Person (GET-Liste für Spieler: nur eigene character_sheet; alle anderen 404). Wird nie
+        ausgewertet und fließt nie in Recaps oder Vorschläge.
+
         PDF, Word (.docx), .txt oder .md bis 50 MB (sonst 400 `unsupported_document` bzw. 413 `document_too_large`).
         Der Server extrahiert den Text (Seitenzahlen merken), zerlegt ihn in Abschnitte und lässt das Sprachmodell
         Bibel-Vorschläge erstellen – mit der vorhandenen Bibel (inkl. gmNotes) als Kontext, damit es ergänzt statt
@@ -2054,6 +2225,10 @@ components:
       properties:
         code: { type: string, example: "consent_missing" }
         message: { type: string, description: "Für Nutzer lesbar, in der Sprache aus Accept-Language (Standard: Deutsch)" }
+        details:
+          type: object
+          additionalProperties: true
+          description: Zusätzliche Angaben je Fehlercode (ab 0.4.7), z. B. character_version_stale → { serverVersion }
 
     ServerInfo:
       type: object
@@ -2132,8 +2307,11 @@ components:
 
     DocumentKind:
       type: string
-      enum: [handout, gm, mixed]
-      description: handout = Spielerhandout (öffentlich), gm = SL-Unterlage (alles geheim), mixed = gemischt (geheim mit Freigabe-Vorschlägen)
+      enum: [handout, gm, mixed, character_sheet]
+      description: |
+        handout = Spielerhandout (öffentlich), gm = SL-Unterlage (alles geheim), mixed = gemischt (geheim mit
+        Freigabe-Vorschlägen), character_sheet = Charakterbogen eines Mitglieds (ab 0.4.7; nur SL und Urheberin, keine
+        Auswertung)
 
     CampaignDocument:
       type: object
@@ -2151,6 +2329,7 @@ components:
         proposalCount: { type: integer }
         openProposalCount: { type: integer }
         worldInfoSuggestion: { type: [string, "null"] }
+        uploadedByMemberId: { type: [string, "null"], description: "Ab 0.4.7; bei character_sheet die Urheberin" }
         createdAt: { type: string, format: date-time }
 
     CoverPreset:
@@ -2187,7 +2366,11 @@ components:
 
     EntryType:
       type: string
-      enum: [npc, location, quest, item, faction, other]
+      enum: [npc, location, quest, item, faction, other, pc]
+      description: |
+        pc (ab 0.4.7) = Spielercharakter. Legt nur der Server an (beim Beitritt mit Charakter oder PUT …/character),
+        hält name/summary synchron mit der Serverkopie; holderMemberId = das Mitglied (null nach Charakterwechsel).
+        Nicht per POST /entries anlegbar (400); keine Vorschläge dafür. Ältere Apps zeigen ihn wie other.
 
     User:
       type: object
@@ -2248,6 +2431,13 @@ components:
           type: [string, "null"]
           format: date-time
           description: Gesetzt, wenn ein Charakterbild existiert; die App nutzt es als Cache-Schlüssel
+        characterId: { type: [string, "null"], description: "Ab 0.4.7: UUID aus der Sammlung der App; null bei Altbestand und Gästen" }
+        characterVersion: { type: [integer, "null"], description: "Ab 0.4.7: Stand der Serverkopie" }
+        characterStatus:
+          type: [string, "null"]
+          enum: [active, retired, deceased, null]
+          description: Ab 0.4.7
+        characterNickname: { type: [string, "null"], description: "Ab 0.4.7" }
 
     CampaignSummary:
       type: object
@@ -2270,6 +2460,9 @@ components:
         pendingReviewCount:
           type: integer
           description: Nur für SL befüllt, für Spieler immer 0
+        openCharacterProposals:
+          type: integer
+          description: Ab 0.4.7; offene Vorschläge aus mitgebrachter Welt, nur für SL befüllt, für Spieler 0
         lastPublishedAt: { type: [string, "null"], format: date-time }
         coverPreset:
           oneOf:
@@ -2337,6 +2530,13 @@ components:
                 Namenshilfe für die Transkription (nur SL, ab 0.4.6; für Spieler weggelassen). Der Server leitet sie
                 anfangs aus Charakternamen, Bibel und worldInfo ab; Korrekturen aus POST …/corrections mit addToHotwords
                 kommen dazu. Per PATCH /campaigns/{id} ganz ersetzbar.
+            gmNotices:
+              type: array
+              description: |
+                Hinweise an die SL (ab 0.4.7; für Spieler weggelassen). hidden_entries_for_newcomer: Ein neues Mitglied
+                wurde beim Beitritt in alle nicht-leeren hiddenFromMemberIds-Listen aufgenommen; die SL gibt einzeln
+                frei (PATCH /entries/{id}) und erledigt den Hinweis mit DELETE /campaigns/{id}/gm-notices/{noticeId}.
+              items: { $ref: "#/components/schemas/GmNotice" }
             members:
               type: array
               items: { $ref: "#/components/schemas/Member" }
@@ -2426,6 +2626,7 @@ components:
         suggestedMemberId: { type: [string, "null"] }
         confidence: { type: number, minimum: 0, maximum: 1 }
         source: { type: string, enum: [intro_round, voice_match, discord_track, none] }
+        assignedGuestName: { type: [string, "null"], description: "Ab 0.4.7: als Gast benannt (nach PUT)" }
 
     Proposal:
       type: object
@@ -2433,6 +2634,13 @@ components:
         id: { type: string }
         sessionId: { type: [string, "null"], description: "null bei Vorschlägen aus Unterlagen" }
         documentId: { type: [string, "null"] }
+        source:
+          type: string
+          enum: [session, document, character]
+          description: Ab 0.4.7; ältere Server lassen es weg (dann aus sessionId/documentId ableiten)
+        originCharacterId: { type: [string, "null"], description: "Ab 0.4.7, nur bei source character" }
+        originEntryId: { type: [string, "null"], description: "Ab 0.4.7, nur bei source character" }
+        submittedByMemberId: { type: [string, "null"], description: "Ab 0.4.7, bei source character die Urheberin" }
         entryType: { $ref: "#/components/schemas/EntryType" }
         action:
           type: string
@@ -2641,3 +2849,135 @@ components:
                   sessionNumber: { type: integer }
                   note: { type: string }
             updatedAt: { type: string, format: date-time }
+            originCharacterId: { type: [string, "null"], description: "Ab 0.4.7: mitgebrachter Eintrag – nur für SL und Urheberin, sonst weggelassen" }
+            originEntryId: { type: [string, "null"] }
+            originVersion: { type: [integer, "null"] }
+
+    Character:
+      type: object
+      description: |
+        Serverkopie der Stammdaten eines Charakters aus der Sammlung der App (ab 0.4.7). Die App vergibt id und zählt
+        version bei jeder Änderung hoch; der Server bearbeitet sie nie. Nicht auf dem Server: private Notizen, Galerie
+        (nur das eine Porträt über …/portrait), eigene Unterlagen (nur auf Wunsch als character_sheet).
+      required: [id, version, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 128, description: "wird zu Member.characterName" }
+        nickname: { type: [string, "null"], maxLength: 64 }
+        summary: { type: [string, "null"], maxLength: 2000, description: "wird zu Member.characterSummary (alle Mitglieder; darf in Recap/Vorschläge)" }
+        backstory: { type: [string, "null"], maxLength: 20000, description: "wird zu Member.characterBackstory (nur Person und SL; nie in Recap/Vorschläge)" }
+        system: { type: [string, "null"], maxLength: 64, description: "Regelsystem als freier Text, nur Anzeige" }
+        status: { type: string, enum: [active, retired, deceased] }
+        statusChangedAt: { type: [string, "null"], format: date-time }
+
+    WorldEntryIn:
+      type: object
+      required: [id, version, type, name, summary, secret]
+      properties:
+        id: { type: string, format: uuid, description: "Kennung der App" }
+        version: { type: integer, minimum: 1 }
+        type: { type: string, enum: [npc, location, faction, item, quest, other] }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        summary: { type: string, minLength: 1, maxLength: 4000 }
+        secret: { type: boolean, description: "Nur SL und Urheberin sollen es wissen" }
+
+    WorldEntryStatus:
+      type: object
+      properties:
+        id: { type: string, description: "wie eingereicht" }
+        proposalId: { type: [string, "null"] }
+        entryId: { type: [string, "null"], description: "Übernommener Eintrag auf dem Server" }
+        state: { type: string, enum: [pending, accepted, rejected, unchanged] }
+        serverVersion: { type: [integer, "null"], description: "Zuletzt übernommene Version" }
+
+    Chronicle:
+      type: object
+      description: Abschrift aus Sicht der Urheberin (ab 0.4.7)
+      properties:
+        server:
+          type: object
+          properties:
+            name: { type: string }
+            url: { type: string }
+            version: { type: string }
+        campaign:
+          type: object
+          properties:
+            id: { type: string }
+            title: { type: string }
+            system: { type: [string, "null"] }
+            language: { $ref: "#/components/schemas/ContentLanguage" }
+            createdAt: { type: string, format: date-time }
+            archivedAt: { type: [string, "null"], format: date-time }
+        member:
+          type: object
+          properties:
+            id: { type: string }
+            role: { $ref: "#/components/schemas/Role" }
+            joinedAt: { type: string, format: date-time }
+            leftAt: { type: [string, "null"], format: date-time }
+            characterId: { type: [string, "null"] }
+            characterVersion: { type: [integer, "null"] }
+        sessions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              number: { type: integer }
+              title: { type: [string, "null"] }
+              playedAt: { type: string, format: date-time }
+              attended: { type: boolean }
+              recap:
+                description: Nur bei veröffentlichten Kapiteln mit Anwesenheit
+                oneOf:
+                  - type: object
+                    properties:
+                      title: { type: string }
+                      text: { type: string }
+                      openThreads: { type: array, items: { type: string } }
+                      publishedAt: { type: string, format: date-time }
+                  - { type: "null" }
+        mentions:
+          type: array
+          description: Öffentliche, für die Person sichtbare Einträge, die den Charakter erwähnen
+          items:
+            type: object
+            properties:
+              entryId: { type: string }
+              entryType: { $ref: "#/components/schemas/EntryType" }
+              name: { type: string }
+              summary: { type: string }
+              updatedAt: { type: string, format: date-time }
+        broughtEntries:
+          type: array
+          description: Mitgebrachte Einträge in ihrer öffentlichen Serverfassung
+          items:
+            type: object
+            properties:
+              originEntryId: { type: string }
+              entryId: { type: string }
+              entryType: { $ref: "#/components/schemas/EntryType" }
+              name: { type: string }
+              summary: { type: string }
+              hidden: { type: boolean }
+              updatedAt: { type: string, format: date-time }
+        comments:
+          type: array
+          items:
+            type: object
+            properties:
+              sessionId: { type: string }
+              text: { type: string }
+              createdAt: { type: string, format: date-time }
+        takenAt: { type: string, format: date-time }
+
+    GmNotice:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string, enum: [hidden_entries_for_newcomer] }
+        memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
+        entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
+        createdAt: { type: string, format: date-time }

@@ -113,6 +113,8 @@ def eingabe_bauen(db: Session, s: GameSession) -> Eingabe:
         if sp is None:
             return "Unbekannt", None
         m = mitglieder.get(sp.assigned_member_id or "")
+        if m is None and sp.assigned_guest_name:  # 0.4.7: als Gast benannt
+            return f"{sp.assigned_guest_name} ({'guest' if c.language == 'en' else 'Gast'})", None
         if m is None:
             return sp.label, None
         if m.role == "gm":
@@ -352,6 +354,8 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
         ziel = eintraege.get(v.target_entry_id or "")
         if v.action in ("update", "reveal") and ziel is None:
             continue  # Bezug auf einen Eintrag, den es nicht (mehr) gibt
+        if ziel is not None and ziel.type == "pc":
+            continue  # Spielercharaktere pflegt die App (0.4.7) – keine Vorschläge dafür
         if v.action == "reveal" and ziel.visibility != "gm_only":
             continue  # schon öffentlich – nichts aufzudecken
         gm_notes = v.gm_notes

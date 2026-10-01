@@ -1,5 +1,5 @@
-"""SL-Unterlagen (nur SL). Spieler bekommen für die Liste 403 (die Kampagne kennen sie), für einzelne Unterlagen
-404 – schon deren Existenz ist SL-Wissen. Logik in app/unterlagen.py."""
+"""SL-Unterlagen (nur SL). Spieler sehen in der Liste nur ihre eigenen Charakterbögen (0.4.7, vorher 403), fremde
+Unterlagen bekommen sie nie (404) – schon deren Existenz ist SL-Wissen. Logik in app/unterlagen.py."""
 from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -44,15 +44,19 @@ def dokument_out(db: Session, doc: CampaignDocument, lang: str) -> schemas.Campa
         id=doc.id, campaign_id=doc.campaign_id, title=doc.title, file_name=doc.file_name, kind=doc.kind,
         size_bytes=doc.size_bytes, page_count=doc.page_count, state=doc.state, progress=doc.progress,
         message=meldung, proposal_count=sum(zaehlen.values()), open_proposal_count=zaehlen.get("open", 0),
-        world_info_suggestion=doc.world_info_suggestion, created_at=doc.created_at,
+        world_info_suggestion=doc.world_info_suggestion, uploaded_by_member_id=doc.uploaded_by_member_id,
+        created_at=doc.created_at,
     )
 
 
-def _dokument(db: Session, document_id: str, user: User) -> CampaignDocument:
-    """Nur für die SL der Kampagne – alle anderen bekommen 404."""
+def _dokument(db: Session, document_id: str, user: User, eigener_bogen: bool = False) -> CampaignDocument:
+    """Nur für die SL der Kampagne – alle anderen bekommen 404. eigener_bogen: auch die Person, die den Charakterbogen
+    hochgeladen hat (0.4.7)."""
     doc = db.get(CampaignDocument, document_id)
     me = membership(db, doc.campaign_id, user) if doc else None
-    if doc is None or me is None or me.role != "gm":
+    if doc is None or me is None:
+        raise errors.not_found("document")
+    if me.role != "gm" and not (eigener_bogen and doc.kind == "character_sheet" and doc.uploaded_by_member_id == me.id):
         raise errors.not_found("document")
     return doc
 
@@ -60,9 +64,11 @@ def _dokument(db: Session, document_id: str, user: User) -> CampaignDocument:
 @router.get("/campaigns/{campaignId}/documents", response_model=list[schemas.CampaignDocumentOut])
 def documents_list(campaignId: str, request: Request, user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
-    require_gm(require_member(db, campaignId, user))
-    docs = db.scalars(select(CampaignDocument).where(CampaignDocument.campaign_id == campaignId)
-                      .order_by(CampaignDocument.created_at.desc()))
+    me = require_member(db, campaignId, user)
+    stmt = select(CampaignDocument).where(CampaignDocument.campaign_id == campaignId)
+    if me.role != "gm":  # Spieler: nur die eigenen Charakterbögen
+        stmt = stmt.where(CampaignDocument.kind == "character_sheet", CampaignDocument.uploaded_by_member_id == me.id)
+    docs = db.scalars(stmt.order_by(CampaignDocument.created_at.desc()))
     return [dokument_out(db, d, sprache(request)) for d in docs]
 
 
@@ -71,7 +77,8 @@ def documents_upload(campaignId: str, request: Request, file: UploadFile = File(
                      title: str | None = Form(None), user: User = Depends(current_user),
                      db: Session = Depends(get_db)):
     me = require_member(db, campaignId, user)
-    require_gm(me)
+    if kind != "character_sheet":  # Charakterbögen darf jedes aktive Mitglied hochladen (0.4.7)
+        require_gm(me)
     daten = file.file.read(unterlagen.MAX_BYTES + 1)
     doc = unterlagen.hochladen(db, campaignId, me.id, file.filename or "", daten, kind, title)
     db.commit()
@@ -82,12 +89,12 @@ def documents_upload(campaignId: str, request: Request, file: UploadFile = File(
 @router.get("/documents/{documentId}", response_model=schemas.CampaignDocumentOut)
 def document_get(documentId: str, request: Request, user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
-    return dokument_out(db, _dokument(db, documentId, user), sprache(request))
+    return dokument_out(db, _dokument(db, documentId, user, eigener_bogen=True), sprache(request))
 
 
 @router.delete("/documents/{documentId}", status_code=204)
 def document_delete(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    unterlagen.loeschen(db, _dokument(db, documentId, user))
+    unterlagen.loeschen(db, _dokument(db, documentId, user, eigener_bogen=True))
     db.commit()
     return Response(status_code=204)
 

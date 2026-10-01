@@ -126,6 +126,12 @@ class Member(Base):
     chronicle_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     bible_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # 0.4.7: Serverkopie des Charakters aus der Sammlung der App – nur die Person selbst ändert sie
+    character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    character_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    character_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # active | retired | deceased
+    character_nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    character_system: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     campaign: Mapped[Campaign] = relationship(back_populates="members")
     user: Mapped[User | None] = relationship()
@@ -250,6 +256,13 @@ class Entry(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     # Zeitpunkt, ab dem Spieler den Eintrag „neu“ sehen (öffentlich geworden oder öffentlich geändert)
     public_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # 0.4.7: pc-Eintrag – zu welchem Charakter er gehört (bleibt nach einem Charakterwechsel stehen)
+    pc_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # 0.4.7: mitgebrachter Eintrag – nur die SL und die Urheberin sehen die Herkunft
+    origin_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    origin_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    origin_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     mentions: Mapped[list["EntryMention"]] = relationship(cascade="all, delete-orphan")
     hidden_from: Mapped[list["EntryHidden"]] = relationship(cascade="all, delete-orphan")
@@ -388,6 +401,7 @@ class Speaker(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0)
     source: Mapped[str] = mapped_column(String(16), default="none")
     assigned_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    assigned_guest_name: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 0.4.7: Gast benannt
 
 
 class TranscriptSegment(Base):
@@ -463,6 +477,25 @@ class Proposal(Base):
     evidence: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste {start|page, quote}
     decision: Mapped[str] = mapped_column(String(16), default="open")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # 0.4.7: mitgebrachte Welt (source character) – wirkt beim Entscheiden sofort
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # None = aus session_id/document_id
+    origin_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    origin_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    submitted_by_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class GmNotice(Base):
+    """Hinweis an die SL (0.4.7), z. B. Neuzugang bei teilweise verborgenen Einträgen. Spieler sehen ihn nie."""
+
+    __tablename__ = "gm_notices"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(48))
+    member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    entry_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 # ---------------------------------------------------------------- SL-Unterlagen
@@ -475,7 +508,7 @@ class CampaignDocument(Base):
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(300))
     file_name: Mapped[str] = mapped_column(String(300))
-    kind: Mapped[str] = mapped_column(String(16))  # handout | gm | mixed
+    kind: Mapped[str] = mapped_column(String(16))  # handout | gm | mixed | character_sheet
     size_bytes: Mapped[int] = mapped_column(Integer)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state: Mapped[str] = mapped_column(String(24), default="queued")  # queued|processing|awaiting_review|done|failed

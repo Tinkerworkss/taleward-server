@@ -13,7 +13,9 @@ from pydantic.alias_generators import to_camel
 
 Role = Literal["gm", "player"]
 Visibility = Literal["public", "gm_only"]
-EntryType = Literal["npc", "location", "quest", "item", "faction", "other"]
+EntryType = Literal["npc", "location", "quest", "item", "faction", "other", "pc"]  # pc ab 0.4.7, nur vom Server
+UUID_MUSTER = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+CharacterStatus = Literal["active", "retired", "deceased"]
 ContentLanguage = Literal["de", "en"]
 GameSystem = Literal["dsa", "dnd", "pathfinder", "cthulhu", "shadowrun", "splittermond", "other"]
 CoverPreset = Literal["meadow", "forest", "desert", "city", "cyber", "mountains", "coast", "swamp",
@@ -188,6 +190,10 @@ class MemberOut(ApiModel):
     portrait_updated_at: datetime | None
     deleted_at: datetime | None = None
     left_at: datetime | None = None
+    character_id: str | None = None  # 0.4.7
+    character_version: int | None = None
+    character_status: CharacterStatus | None = None
+    character_nickname: str | None = None
 
 
 class UnreadOut(ApiModel):
@@ -206,6 +212,7 @@ class CampaignSummaryOut(ApiModel):
     archived_at: datetime | None = None
     published_session_count: int
     pending_review_count: int
+    open_character_proposals: int = 0  # 0.4.7, nur für die SL befüllt
     last_published_at: datetime | None
     cover_preset: CoverPreset | None
     unread: UnreadOut
@@ -223,7 +230,54 @@ class CampaignOut(CampaignSummaryOut):
     allow_external_transcription: bool
     allow_cloud_summary: bool = False
     hotwords: list[str] | None = None  # 0.4.6: nur für die SL, für Spieler weggelassen
+    gm_notices: list["GmNoticeOut"] | None = None  # 0.4.7: nur für die SL, für Spieler weggelassen
     members: list[MemberOut]
+
+
+class GmNoticeOut(ApiModel):
+    id: str
+    code: Literal["hidden_entries_for_newcomer"]
+    member_id: str | None
+    entry_ids: list[str]
+    created_at: datetime
+
+
+class CharacterIn(ApiModel):
+    """Serverkopie eines Charakters aus der Sammlung der App (0.4.7)."""
+    id: str = Field(pattern=UUID_MUSTER)
+    version: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=128)
+    nickname: str | None = Field(default=None, max_length=64)
+    summary: str | None = Field(default=None, max_length=2000)
+    backstory: str | None = Field(default=None, max_length=20000)
+    system: str | None = Field(default=None, max_length=64)
+    status: CharacterStatus
+    status_changed_at: datetime | None = None
+
+
+class WorldEntryIn(ApiModel):
+    id: str = Field(pattern=UUID_MUSTER)
+    version: int = Field(ge=1)
+    type: Literal["npc", "location", "faction", "item", "quest", "other"]
+    name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=4000)
+    secret: bool
+
+
+class WorldIn(ApiModel):
+    entries: list[WorldEntryIn]  # 1–100, geprüft im Endpunkt (400 world_too_many)
+
+
+class WorldEntryStatusOut(ApiModel):
+    id: str
+    proposal_id: str | None
+    entry_id: str | None
+    state: Literal["pending", "accepted", "rejected", "unchanged"]
+    server_version: int | None
+
+
+class WorldOut(ApiModel):
+    entries: list[WorldEntryStatusOut]
 
 
 class CampaignCreate(ApiModel):
@@ -252,6 +306,7 @@ class CampaignPatch(ApiModel):
 class JoinRequest(ApiModel):
     code: str = Field(min_length=1, max_length=32)
     character_name: str | None = Field(default=None, max_length=200)
+    character: CharacterIn | None = None  # 0.4.7
 
 
 class InviteOut(ApiModel):
@@ -360,11 +415,13 @@ class SpeakerOut(ApiModel):
     suggested_member_id: str | None
     confidence: float
     source: Literal["intro_round", "voice_match", "discord_track", "none"]
+    assigned_guest_name: str | None = None  # 0.4.7
 
 
 class SpeakerAssignIn(ApiModel):
     speaker_id: str
-    member_id: str | None = None  # null = Gast / ignorieren
+    member_id: str | None = None  # null = Gast (mit guestName) / ignorieren
+    guest_name: str | None = Field(default=None, max_length=200)  # 0.4.7
 
 
 class RecapOut(ApiModel):
@@ -393,6 +450,10 @@ class ProposalOut(ApiModel):
     id: str
     session_id: str | None
     document_id: str | None
+    source: Literal["session", "document", "character"]  # 0.4.7
+    origin_character_id: str | None = None
+    origin_entry_id: str | None = None
+    submitted_by_member_id: str | None = None
     entry_type: EntryType
     action: Literal["create", "update", "reveal"]
     target_entry_id: str | None
@@ -458,6 +519,9 @@ class EntryOut(ApiModel):
     last_session_number: int | None
     mentions: list[MentionOut]
     updated_at: datetime
+    origin_character_id: str | None = None  # 0.4.7: nur für SL und Urheberin, sonst weggelassen
+    origin_entry_id: str | None = None
+    origin_version: int | None = None
 
 
 # ---------- Kommentare ----------
@@ -528,7 +592,7 @@ class DatePollClose(ApiModel):
 
 
 # ---------- SL-Unterlagen ----------
-DocumentKind = Literal["handout", "gm", "mixed"]
+DocumentKind = Literal["handout", "gm", "mixed", "character_sheet"]
 
 
 class CampaignDocumentOut(ApiModel):
@@ -545,6 +609,7 @@ class CampaignDocumentOut(ApiModel):
     proposal_count: int
     open_proposal_count: int
     world_info_suggestion: str | None
+    uploaded_by_member_id: str | None = None  # 0.4.7
     created_at: datetime
 
 
@@ -562,3 +627,6 @@ class CorrectionIn(ApiModel):
 class CorrectionsIn(ApiModel):
     corrections: list[CorrectionIn] = Field(min_length=1, max_length=100)
     retranscribe: bool = False
+
+
+CampaignOut.model_rebuild()

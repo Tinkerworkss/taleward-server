@@ -262,6 +262,24 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "validation_error.month": ("Der Monat muss im Format JJJJ-MM angegeben werden.", "The month must be given as YYYY-MM."),
     "method_not_allowed": ("Diese Aktion wird hier nicht unterstützt.", "This action is not supported here."),
     "payload_too_large": ("Die Datei ist zu groß.", "The file is too large."),
+    # Charaktere (0.4.7)
+    "character_in_campaign": ("Dieser Charakter spielt in dieser Kampagne schon mit.",
+                              "This character is already part of this campaign."),
+    "character_version_stale": ("Auf dem Server liegt schon ein neuerer Stand dieses Charakters.",
+                                "The server already has a newer version of this character."),
+    "character_mismatch": ("Du spielst in dieser Kampagne einen anderen Charakter. Löse ihn zuerst.",
+                           "You play a different character in this campaign. Release it first."),
+    "no_character": ("Du hast in dieser Kampagne keinen Charakter aus deiner Sammlung.",
+                     "You have no character from your collection in this campaign."),
+    "world_too_many": ("Bitte 1 bis 100 Einträge auf einmal einreichen.", "Please submit 1 to 100 entries at once."),
+    "guest_unknown": ("Dieser Gast war bei diesem Kapitel nicht dabei.", "This guest was not present in this chapter."),
+    "speaker_member_and_guest": ("Eine Stimme gehört entweder einem Mitglied oder einem Gast, nicht beiden.",
+                                 "A voice belongs either to a member or to a guest, not both."),
+    "invalid_state.proposal_decided": ("Über diesen Vorschlag ist schon entschieden.",
+                                       "This proposal has already been decided."),
+    "validation_error.pc": ("Einträge für Spielercharaktere legt der Server selbst an.",
+                            "Entries for player characters are created by the server."),
+    "not_found.notice": ("Der Hinweis wurde nicht gefunden.", "Notice not found."),
     "internal_error": ("Auf dem Server ist ein unerwarteter Fehler aufgetreten.", "An unexpected server error occurred."),
     "error": ("Es ist ein Fehler aufgetreten.", "An error occurred."),
 }
@@ -273,10 +291,11 @@ class ApiError(Exception):
     `key` wählt den Meldungstext (Standard: code), `params` füllt Platzhalter.
     """
 
-    def __init__(self, status: int, code: str, key: str | None = None, **params):
+    def __init__(self, status: int, code: str, key: str | None = None, details: dict | None = None, **params):
         self.status = status
         self.code = code
         self.key = key or code
+        self.details = details  # 0.4.7: Error.details, z. B. {"serverVersion": 3}
         self.params = params
 
     def message(self, lang: str) -> str:
@@ -327,7 +346,10 @@ BAD_CREDENTIALS = ApiError(401, "invalid_credentials")
 
 
 def _body(err: ApiError, lang: str) -> dict:
-    return {"code": err.code, "message": err.message(lang)}
+    body = {"code": err.code, "message": err.message(lang)}
+    if err.details:
+        body["details"] = err.details
+    return body
 
 
 def _field_name(loc: tuple) -> str:

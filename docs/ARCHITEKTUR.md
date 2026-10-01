@@ -73,6 +73,17 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
   geheimen Teil füllt der Server aus dem bisherigen Eintrag, nie das Modell.
 - **SL-Unterlagen:** Handouts werden öffentlich, SL-Unterlagen bleiben geheim, gemischte Unterlagen bleiben geheim mit
   Freigabe-Vorschlag. Markierte Abschnitte (`[SL]`, `Geheim:` …) wandern immer in `gmNotes`.
+- **Charaktere (ab 0.4.7, `app/charaktere.py`):**
+  - Die App ist Ort der Wahrheit. Der Server hält am Mitglied nur eine Kopie und nimmt Änderungen nur von der Person
+    selbst und nur mit höherer Fassung an.
+  - Der Bibel-Eintrag der Art `pc` entsteht und ändert sich nur durch den Server; dafür gibt es keine Vorschläge.
+  - Mitgebrachte Welt wird nie direkt zum Eintrag, sondern zum Vorschlag für die SL. Geheimes ist vor allen anderen
+    Spielern verborgen. Die Einreichende sieht nur den Stand, nie den Vorschlag selbst.
+  - Wer neu dazukommt, wird in alle nicht-leeren Verborgen-Listen aufgenommen. Die SL bekommt dazu einen Hinweis
+    (`gmNotices`).
+  - Charakterbögen werden nur gespeichert, nie ausgewertet. Sichtbar sind sie für die SL und die Person, die sie
+    hochgeladen hat.
+  - Die Chronik enthält nur, was die Person ohnehin sehen darf, und keine Namen anderer Personen.
 
 ## Einwilligung und Aufbewahrung
 

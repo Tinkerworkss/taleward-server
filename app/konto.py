@@ -110,6 +110,17 @@ def _z(dt) -> str | None:
     return dt.isoformat().replace("+00:00", "Z") if dt else None
 
 
+def _charaktere(mitglieder: list[Member], kampagnen: dict) -> list[dict]:
+    """Je Charakter aus der Sammlung der App die Kampagnen auf diesem Server (0.4.7)."""
+    aus: dict[str, list] = {}
+    for m in mitglieder:
+        if m.character_id:
+            aus.setdefault(m.character_id, []).append({
+                "serverCampaignId": m.campaign_id, "title": kampagnen[m.campaign_id].title, "memberId": m.id,
+                "joinedAt": _z(m.joined_at), "leftAt": _z(m.left_at)})
+    return [{"characterId": k, "campaigns": v} for k, v in aus.items()]
+
+
 def exportieren(db: Session, u: User, basis_url: str) -> dict:
     from app.einstellungen import angaben
 
@@ -163,8 +174,11 @@ def exportieren(db: Session, u: User, basis_url: str) -> dict:
             "campaignId": m.campaign_id, "campaignTitle": kampagnen[m.campaign_id].title, "memberId": m.id,
             "role": m.role, "joinedAt": _z(m.joined_at), "characterName": m.character_name,
             "characterSummary": m.character_summary, "characterBackstory": m.character_backstory,
+            "characterId": m.character_id, "characterVersion": m.character_version,
+            "characterNickname": m.character_nickname, "characterStatus": m.character_status,
             "recordingConsentAt": _z(m.recording_consent_at), "portrait": bilder(m),
         } for m in mitglieder],
+        "characters": _charaktere(mitglieder, kampagnen),  # 0.4.7
         "sessionsAttended": [{"campaignId": s.campaign_id, "sessionId": s.id, "number": s.number, "title": s.title,
                               "playedAt": _z(s.played_at), "consent": a_.consent, "consentSource": a_.consent_source,
                               "consentAt": _z(a_.consent_at)} for a_, s in anwesend],
