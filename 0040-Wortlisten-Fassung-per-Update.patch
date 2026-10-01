@@ -1,0 +1,237 @@
+From b4b79bf8e85569a9cdacaa37ef6ec0028664cbc7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 09:13:10 +0200
+Subject: [PATCH] Wortlisten: neue Fassung kommt mit Server-Updates (Server
+ 0.4.32)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bisher lud die Wartung eine Wortliste nur, wenn sie fehlte – eine neue Fassung im Code wäre auf bestehenden Servern
+nie angekommen. Jetzt liegt neben jeder Liste ein Stand-Vermerk (Fassung, Prüfsumme, Mindestanzahl). Passt er nicht
+mehr zum Code, lädt die Wartung neu; bis dahin bleibt die alte Liste in Gebrauch. Listen aus 0.4.30 bekommen den
+Vermerk ohne neuen Download nachgetragen. Die Wartezeit von einer Stunde gilt nur noch nach Fehlschlägen.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/woerterbuch.py           | 36 ++++++++++++++++++++++++++++++++++--
+ docs/BETRIEB.md              |  4 ++++
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_pruefung_046.py   | 30 ++++++++++++++++++++++++++++++
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 9 files changed, 74 insertions(+), 8 deletions(-)
+
+diff --git a/app/woerterbuch.py b/app/woerterbuch.py
+index 857d22c..3d25a6c 100644
+--- a/app/woerterbuch.py
++++ b/app/woerterbuch.py
+@@ -8,6 +8,9 @@ Drei Quellen sagen, ob ein Wort „bekannt“ ist und deshalb nicht als unsicher
+    Die Listen sind zu groß fürs Repo: Die Wartung lädt sie einmal von einer festen Fassung (Prüfsumme), behält Wörter,
+    die mindestens MIN_ANZAHL-mal vorkommen, und legt sie verkleinert unter <data>/woerterbuch/ ab. Ohne Netz bleibt
+    die Prüfung ohne diese Quelle – nichts bricht.
++   Neue Fassung der Listen: Mit einem Server-Update ändern sich FASSUNG und Prüfsummen; die Wartung merkt am
++   Stand-Vermerk (<sprache>.stand), dass die abgelegte Liste nicht mehr passt, und lädt neu. Bis dahin bleibt die
++   alte Liste in Gebrauch. Ungeprüft „das Neueste“ von GitHub zu laden, ist bewusst nicht vorgesehen.
+    Zusammengesetzte deutsche Wörter („Plattenpanzer“, „Fahndungsplakat“) gelten als bekannt, wenn beide Teile
+    bekannt sind (mit Fugen-s/-n/-en/-es/-e/-er).
+ 2. **Texte der Kampagne:** Welt-Info, Bibel (auch geheime Einträge und gmNotes), Charakterbeschreibungen und
+@@ -81,9 +84,36 @@ def liste(sprache: str) -> frozenset[str]:
+ 
+ 
+ def bereit(sprache: str) -> bool:
++    """Liste liegt vor und ist benutzbar (vielleicht noch in einer älteren Fassung)."""
+     return pfad(sprache).is_file()
+ 
+ 
++def _soll(sprache: str) -> str:
++    return f"{FASSUNG} {QUELLEN[sprache][1]} {MIN_ANZAHL}"
++
++
++def _stand_pfad(sprache: str) -> Path:
++    return ordner() / f"{sprache}.stand"
++
++
++def aktuell(sprache: str) -> bool:
++    """Liste liegt in genau der Fassung vor, die dieser Server erwartet."""
++    if not bereit(sprache):
++        return False
++    try:
++        return _stand_pfad(sprache).read_text(encoding="utf-8").strip() == _soll(sprache)
++    except OSError:
++        pass
++    # Listen aus Server 0.4.30 haben noch keinen Stand-Vermerk – gleiche Fassung laut QUELLE.txt: nachtragen
++    try:
++        if FASSUNG in (ordner() / "QUELLE.txt").read_text(encoding="utf-8"):
++            _stand_pfad(sprache).write_text(_soll(sprache), encoding="utf-8")
++            return True
++    except OSError:
++        pass
++    return False
++
++
+ def herunterladen(sprache: str, klient=None) -> bool:
+     """Liste laden, Prüfsumme prüfen, auf häufige Wörter kürzen und verkleinert ablegen."""
+     import httpx
+@@ -113,6 +143,7 @@ def herunterladen(sprache: str, klient=None) -> bool:
+     with gzip.open(neu, "wt", encoding="utf-8") as f:
+         f.write("\n".join(sorted(set(behalten))))
+     neu.replace(pfad(sprache))
++    _stand_pfad(sprache).write_text(_soll(sprache), encoding="utf-8")
+     (ordner() / "QUELLE.txt").write_text(
+         "Wortlisten: FrequencyWords von Hermit Dave (https://github.com/hermitdave/FrequencyWords), Fassung "
+         f"{FASSUNG}, aus OpenSubtitles 2018. Lizenz: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). "
+@@ -122,13 +153,14 @@ def herunterladen(sprache: str, klient=None) -> bool:
+ 
+ 
+ def automatisch(sprachen=("de", "en")) -> None:
+-    """Wartung: fehlende Wortlisten laden – nach einem Fehlschlag frühestens nach einer Stunde wieder."""
++    """Wartung: fehlende oder veraltete Wortlisten laden – nach einem Fehlschlag frühestens nach einer Stunde wieder."""
+     for sprache in sprachen:
+-        if bereit(sprache) or time.monotonic() - _letzter_versuch.get(sprache, -1e9) < NEUER_VERSUCH_S:
++        if aktuell(sprache) or time.monotonic() - _letzter_versuch.get(sprache, -1e9) < NEUER_VERSUCH_S:
+             continue
+         _letzter_versuch[sprache] = time.monotonic()
+         try:
+             herunterladen(sprache)
++            _letzter_versuch.pop(sprache, None)  # Wartezeit gilt nur nach Fehlschlägen
+         except Exception as e:  # noqa: BLE001 – ohne Liste geht es auch, nur ungenauer
+             log.warning("Wortliste %s nicht geladen: %s", sprache, e)
+ 
+diff --git a/docs/BETRIEB.md b/docs/BETRIEB.md
+index a4e5e66..154c31a 100644
+--- a/docs/BETRIEB.md
++++ b/docs/BETRIEB.md
+@@ -204,6 +204,10 @@ aufbereitet von Hermit Dave ([FrequencyWords](https://github.com/hermitdave/Freq
+ Prüfung nutzt dann die Texte der Kampagne und frühere Kapitel und meldet etwas mehr. Der Stand steht unter
+ Verwaltung → Zusammenfassung → Prüfung.
+ 
++Neue Fassungen der Wortlisten kommen mit einem Server-Update: Ändert sich die erwartete Fassung, lädt der Server die
++Listen einmal neu und benutzt bis dahin die alten weiter. Der Server lädt nie ungeprüft „das Neueste“ von GitHub –
++jede Fassung ist mit Prüfsumme im Code festgelegt.
++
+ ## Datenschutz und Verträge
+ 
+ - Die **Vorlage für den Datenschutzhinweis** füllt sich aus den Einstellungen (Betreiber, Cloud-Dienste,
+diff --git a/pyproject.toml b/pyproject.toml
+index 752b363..9a3f906 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.31"
++version = "0.4.32"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index c6a6040..aceae87 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.31"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.32"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index f78372c..9e0344a 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.31"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.32"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 53e1b76..71fdaa9 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.31"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.32"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_pruefung_046.py b/tests/test_pruefung_046.py
+index 8b9e728..0eb7764 100644
+--- a/tests/test_pruefung_046.py
++++ b/tests/test_pruefung_046.py
+@@ -304,3 +304,33 @@ def test_wortliste_laden(client, monkeypatch):  # client: eigener Datenordner
+         assert "Prüfsumme" in str(e)
+     else:
+         raise AssertionError("keine Prüfung")
++
++
++def test_wortliste_neue_fassung_per_update(client, monkeypatch):  # client: eigener Datenordner
++    import hashlib
++
++    import httpx
++
++    from app import woerterbuch
++
++    roh = "ich 900\nschwert 50\n".encode()
++    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", hashlib.sha256(roh).hexdigest()))
++    abrufe = []
++    klient = httpx.Client(transport=httpx.MockTransport(lambda r: abrufe.append(r) or httpx.Response(200, content=roh)))
++    monkeypatch.setattr(woerterbuch, "_letzter_versuch", {})
++    real = woerterbuch.herunterladen
++    monkeypatch.setattr(woerterbuch, "herunterladen", lambda sp: real(sp, klient))
++    woerterbuch.automatisch(("de",))
++    assert len(abrufe) == 1 and woerterbuch.aktuell("de")
++    woerterbuch.automatisch(("de",))
++    assert len(abrufe) == 1  # aktuell: nichts zu tun
++    # Ein Server-Update bringt eine neue Fassung: die Wartung lädt neu, die alte Liste bleibt bis dahin nutzbar
++    neu = "ich 900\nschwert 50\ntaverne 20\n".encode()
++    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", hashlib.sha256(neu).hexdigest()))
++    assert woerterbuch.bereit("de") and not woerterbuch.aktuell("de")
++    klient = httpx.Client(transport=httpx.MockTransport(lambda r: abrufe.append(r) or httpx.Response(200, content=neu)))
++    woerterbuch.automatisch(("de",))
++    assert len(abrufe) == 2 and "taverne" in woerterbuch.liste("de") and woerterbuch.aktuell("de")
++    # Listen aus 0.4.30 ohne Stand-Vermerk gelten als aktuell, wenn QUELLE.txt die Fassung nennt
++    (woerterbuch.ordner() / "de.stand").unlink()
++    assert woerterbuch.aktuell("de") and (woerterbuch.ordner() / "de.stand").is_file()
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 45e3f10..d2796dd 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.31"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.32"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index b218467..e07e761 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.31"
++version = "0.4.32"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
