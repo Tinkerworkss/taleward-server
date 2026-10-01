@@ -437,7 +437,12 @@ erwähnt (Regelerklärung, Planung, außerhalb des Spiels). detail = nur, was di
 Wichtig:
 - detail ist Spielerwissen: nur, was am Tisch gesagt oder erlebt wurde. Übernimm NIE Inhalte aus „gmNotes“ oder aus \
 dem Text geheimer Einträge in detail – sie dienen dir nur zum Erkennen und Zuordnen.
-- gmNotes nur bei create: was die Spielleitung am Tisch verraten hat, die Spieler aber nicht wissen sollen. Sonst leer.
+- gmNotes nur bei create: Hintergrund, den die Spielleitung am Tisch preisgegeben hat, den die Figuren aber nicht \
+kennen sollen. Sonst leer.
+- Schreib detail und gmNotes als Aussagen über die Spielwelt, nie als Bericht über den Spieltisch. Die Spielleitung liest \
+das selbst – also nie „die SL hat angedeutet/erwähnt/beschrieben, dass …“, „laut SL …“ oder „am Tisch wurde gesagt …“. \
+Richtig: „Oren hilft Iria gegen Bezahlung bei der Flucht.“ Falsch: „Die SL hat angedeutet, dass Oren Iria hilft.“ \
+War es nur eine Andeutung, schreib es als Spur in der Welt: „Oren scheint Iria zu kennen.“
 - suggestedVisibility: public, wenn die Spieler es am Tisch erfahren haben; gm_only, wenn nur die Spielleitung davon \
 gesprochen hat. visibilityReason: ein kurzer Satz.
 - confidence zwischen 0 und 1. flags: joke_suspected (vermutlich Witz), low_confidence, contradicts_bible (widerspricht \
