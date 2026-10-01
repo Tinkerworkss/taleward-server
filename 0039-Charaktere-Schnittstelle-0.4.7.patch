@@ -1,0 +1,1846 @@
+From 292fbb2f849991517b7e18702e50fd09eca5c24e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 08:51:40 +0200
+Subject: [PATCH] Charaktere: Schnittstelle 0.4.7 (Server 0.4.31)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Die App ist Ort der Wahrheit für Charaktere; der Server hält eine Kopie am Mitglied und bearbeitet sie nie.
+- Beitritt mit Charakter (POST /campaigns/join, character), PUT/DELETE …/members/me/character mit
+  character_in_campaign, character_mismatch, character_version_stale (Error.details.serverVersion), no_character
+- Bibel-Eintrag der Art pc: legt nur der Server an und hält ihn synchron; keine Vorschläge dafür
+- Mitgebrachte Welt als Vorschläge (source character) mit Prüfliste der SL; Entscheidung wirkt sofort;
+  Geheimes ist vor den anderen Spielern verborgen; Stand für die Einreichende (…/members/me/world)
+- Neuzugänge kommen in alle nicht-leeren Verborgen-Listen, die SL bekommt einen Hinweis (gmNotices)
+- Chronik als Abschrift (…/members/me/chronicle), auch nach dem Verlassen; /me/export mit characters[]
+- Charakterbögen (character_sheet): jedes Mitglied darf hochladen, nur SL und Urheberin sehen sie, nie ausgewertet
+- Stimmen von Gästen benennen (guestName, Speaker.assignedGuestName) – als „Name (Gast)“ in der Zusammenfassung
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/charaktere.py                             | 300 +++++++++++++++
+ app/errors.py                                 |  26 +-
+ app/konto.py                                  |  14 +
+ app/main.py                                   |   4 +-
+ app/models.py                                 |  35 +-
+ app/routers/auth.py                           |   2 +-
+ app/routers/campaigns.py                      |  14 +-
+ app/routers/charaktere.py                     |  78 ++++
+ app/routers/entries.py                        |   8 +-
+ app/routers/pruefung.py                       |  34 +-
+ app/routers/sessions.py                       |   3 +-
+ app/routers/unterlagen.py                     |  31 +-
+ app/schemas.py                                |  74 +++-
+ app/services.py                               |  21 +-
+ app/unterlagen.py                             |  18 +-
+ app/zusammenfassung.py                        |   4 +
+ contract/session-chronik-api.yaml             | 358 +++++++++++++++++-
+ docs/ARCHITEKTUR.md                           |  11 +
+ .../versions/f2c6a8e0b4d7_charaktere_0_4_7.py |  79 ++++
+ pyproject.toml                                |   2 +-
+ tests/contract.py                             |   2 +
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_charaktere_047.py                  | 232 ++++++++++++
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_step1b.py                          |   4 +-
+ tests/test_unterlagen.py                      |   2 +-
+ tests/test_verwaltung2.py                     |   2 +-
+ tests/test_webapp.py                          |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 31 files changed, 1317 insertions(+), 53 deletions(-)
+ create mode 100644 app/charaktere.py
+ create mode 100644 app/routers/charaktere.py
+ create mode 100644 migrations/versions/f2c6a8e0b4d7_charaktere_0_4_7.py
+ create mode 100644 tests/test_charaktere_047.py
+
+diff --git a/app/charaktere.py b/app/charaktere.py
+new file mode 100644
+index 0000000..6956573
+--- /dev/null
++++ b/app/charaktere.py
+@@ -0,0 +1,300 @@
++"""Charaktere (Schnittstelle 0.4.7).
++
++Die App ist Ort der Wahrheit: Sie vergibt die Kennung eines Charakters und zählt seine Fassung hoch. Der Server hält
++am Mitglied eine Kopie (Member.character_*) und bearbeitet sie nie selbst. Dazu gehört ein öffentlicher Bibel-Eintrag
++der Art pc, den der Server mit Name und Kurzbeschreibung synchron hält.
++
++Mitgebrachte Welt (Orte, NSCs … aus der Sammlung der App) wird nie direkt zu Einträgen, sondern zu Vorschlägen mit
++source character, über die die SL sofort entscheidet. Geheimes ist öffentlich, aber vor allen anderen Spielern
++verborgen (hiddenFromMemberIds).
++
++Spoilerschutz wie überall: Spieler sehen keine Vorschläge – auch nicht die eigenen, nur deren Stand.
++"""
++from __future__ import annotations
++
++import json
++
++from sqlalchemy import func, select
++from sqlalchemy.orm import Session
++
++from app import errors, schemas
++from app.db import utcnow
++from app.models import Campaign, Entry, EntryHidden, GmNotice, Member, Proposal
++
++MAX_WELT = 100
++CHARAKTER_PROPOSALS_ENTSCHIEDEN = 50
++
++
++# ---------------------------------------------------------------- Charakter am Mitglied
++def _anderer_mit(db: Session, me: Member, character_id: str) -> bool:
++    return db.scalar(select(Member.id).where(
++        Member.campaign_id == me.campaign_id, Member.character_id == character_id, Member.id != me.id,
++        Member.user_id.is_not(None), Member.left_at.is_(None)).limit(1)) is not None
++
++
++def _pc_eintrag(db: Session, me: Member) -> Entry | None:
++    """pc-Eintrag des aktuellen Charakters: über das Mitglied, sonst über die Kennung (nach Lösen und Wiederkehr)."""
++    e = db.scalar(select(Entry).where(Entry.campaign_id == me.campaign_id, Entry.type == "pc",
++                                      Entry.holder_member_id == me.id).limit(1))
++    if e is None and me.character_id:
++        e = db.scalar(select(Entry).where(Entry.campaign_id == me.campaign_id, Entry.type == "pc",
++                                          Entry.pc_character_id == me.character_id).limit(1))
++    return e
++
++
++def _pc_abgleichen(db: Session, me: Member) -> None:
++    """pc-Eintrag anlegen bzw. Name und Kurzbeschreibung übernehmen."""
++    jetzt = utcnow()
++    e = _pc_eintrag(db, me)
++    if e is None:
++        e = Entry(campaign_id=me.campaign_id, type="pc", name=me.character_name or "?", summary="",
++                  visibility="public", created_at=jetzt)
++        db.add(e)
++    alt = (e.name, e.summary, e.holder_member_id)
++    e.name = (me.character_name or e.name)[:300]
++    e.summary = me.character_summary or ""
++    e.holder_member_id = me.id
++    e.pc_character_id = me.character_id
++    if (e.name, e.summary, e.holder_member_id) != alt or e.public_changed_at is None:
++        e.updated_at = jetzt
++        if e.visibility == "public":
++            e.public_changed_at = jetzt
++
++
++def _uebernehmen(me: Member, ch: schemas.CharacterIn) -> None:
++    me.character_id = ch.id.lower()
++    me.character_version = ch.version
++    me.character_status = ch.status
++    me.character_name = ch.name.strip()[:200] or me.character_name
++    me.character_nickname = (ch.nickname or "").strip() or None
++    me.character_summary = (ch.summary or "").strip() or None
++    me.character_backstory = (ch.backstory or "").strip() or None
++    me.character_system = (ch.system or "").strip() or None
++
++
++def setzen(db: Session, me: Member, ch: schemas.CharacterIn, beitritt: bool = False) -> None:
++    """PUT …/members/me/character bzw. Beitritt mit Charakter.
++
++    Ohne bisherigen Charakter: übernehmen. Sonst nur dieselbe Kennung (409 character_mismatch) und nur eine höhere
++    Fassung (409 character_version_stale mit details.serverVersion) – beim Beitritt wird eine gleiche oder ältere
++    Fassung still übergangen (die App schickt beim Wiederbeitritt einfach ihren Stand)."""
++    kennung = ch.id.lower()
++    if me.character_id is None:
++        if _anderer_mit(db, me, kennung):
++            raise errors.conflict("character_in_campaign")
++    elif me.character_id != kennung:
++        raise errors.conflict("character_mismatch")
++    elif ch.version <= (me.character_version or 0):
++        if beitritt:
++            return
++        raise errors.ApiError(409, "character_version_stale", details={"serverVersion": me.character_version})
++    _uebernehmen(me, ch)
++    db.flush()
++    _pc_abgleichen(db, me)
++
++
++def loesen(db: Session, me: Member) -> None:
++    """DELETE …/members/me/character: Kennung lösen, der pc-Eintrag bleibt ohne Halter stehen."""
++    if me.character_id is None:
++        raise errors.conflict("no_character")
++    e = _pc_eintrag(db, me)
++    if e is not None:
++        e.holder_member_id = None
++        e.updated_at = utcnow()
++    me.character_id = me.character_version = me.character_status = None
++    me.character_nickname = me.character_system = None
++
++
++# ---------------------------------------------------------------- Neuzugang
++def neuzugang(db: Session, me: Member) -> None:
++    """Regel 0.4.7: Wer neu dazukommt, wird in alle nicht-leeren Verborgen-Listen aufgenommen (Einträge und offene
++    Vorschläge) – wer etwas nicht miterlebt hat, soll es nicht plötzlich wissen. Die SL bekommt einen Hinweis und
++    gibt einzeln frei."""
++    betroffen = []
++    for e in db.scalars(select(Entry).where(Entry.campaign_id == me.campaign_id)):
++        ids = e.hidden_member_ids
++        if ids and me.id not in ids:
++            e.hidden_from.append(EntryHidden(entry_id=e.id, member_id=me.id))
++            betroffen.append(e.id)
++    for p in db.scalars(select(Proposal).where(Proposal.campaign_id == me.campaign_id, Proposal.decision == "open")):
++        ids = json.loads(p.hidden_member_ids_json or "[]")
++        if ids and me.id not in ids:
++            p.hidden_member_ids_json = json.dumps(sorted(set(ids) | {me.id}))
++    if betroffen:
++        db.add(GmNotice(campaign_id=me.campaign_id, code="hidden_entries_for_newcomer", member_id=me.id,
++                        entry_ids=json.dumps(sorted(betroffen))))
++
++
++def hinweise(db: Session, c: Campaign) -> list[schemas.GmNoticeOut]:
++    vorhanden = set(db.scalars(select(Entry.id).where(Entry.campaign_id == c.id)))
++    return [schemas.GmNoticeOut(id=n.id, code=n.code, member_id=n.member_id, created_at=n.created_at,
++                                entry_ids=[i for i in json.loads(n.entry_ids or "[]") if i in vorhanden])
++            for n in db.scalars(select(GmNotice).where(GmNotice.campaign_id == c.id).order_by(GmNotice.created_at))]
++
++
++# ---------------------------------------------------------------- Mitgebrachte Welt
++def _herkunft(stmt, character_id: str, origin_entry_id: str):
++    return stmt.where(Proposal.source == "character", Proposal.origin_character_id == character_id,
++                      Proposal.origin_entry_id == origin_entry_id)
++
++
++def _eintrag_zu(db: Session, campaign_id: str, character_id: str, origin_entry_id: str) -> Entry | None:
++    return db.scalar(select(Entry).where(Entry.campaign_id == campaign_id, Entry.origin_character_id == character_id,
++                                         Entry.origin_entry_id == origin_entry_id).limit(1))
++
++
++def _stand(p: Proposal | None, e: Entry | None, kennung: str, zustand: str | None = None) -> schemas.WorldEntryStatusOut:
++    if zustand is None:
++        zustand = {"open": "pending", "accepted": "accepted", "rejected": "rejected"}[p.decision] if p else "unchanged"
++    return schemas.WorldEntryStatusOut(id=kennung, proposal_id=p.id if p else None, entry_id=e.id if e else None,
++                                       state=zustand, server_version=e.origin_version if e else None)
++
++
++def einreichen(db: Session, me: Member, eintraege: list[schemas.WorldEntryIn]) -> list[schemas.WorldEntryStatusOut]:
++    if me.character_id is None:
++        raise errors.conflict("no_character")
++    if not 1 <= len(eintraege) <= MAX_WELT:
++        raise errors.bad_request("world_too_many")
++    andere = sorted(m.id for m in db.scalars(select(Member).where(Member.campaign_id == me.campaign_id))
++                    if m.aktiv and m.id != me.id and m.role != "gm")
++    aus = []
++    for pos, w in enumerate(eintraege):
++        kennung = w.id.lower()
++        e = _eintrag_zu(db, me.campaign_id, me.character_id, kennung)
++        if e is not None and w.version <= (e.origin_version or 0):
++            aus.append(_stand(None, e, kennung, "unchanged"))
++            continue
++        offen = list(db.scalars(_herkunft(select(Proposal), me.character_id, kennung)
++                                .where(Proposal.decision == "open")))
++        abgelehnt = db.scalar(_herkunft(select(Proposal), me.character_id, kennung)
++                              .where(Proposal.decision == "rejected", Proposal.origin_version >= w.version)
++                              .order_by(Proposal.decided_at.desc()).limit(1))
++        if abgelehnt is not None and not offen:
++            aus.append(_stand(abgelehnt, e, kennung))  # diese Fassung hat die SL schon abgelehnt
++            continue
++        for alt in offen:  # offener Vorschlag zu derselben Kennung wird ersetzt
++            db.delete(alt)
++        p = Proposal(
++            campaign_id=me.campaign_id, source="character", origin_character_id=me.character_id,
++            origin_entry_id=kennung, origin_version=w.version, submitted_by_member_id=me.id, position=pos,
++            entry_type=w.type, action="update" if e is not None else "create",
++            target_entry_id=e.id if e is not None else None, title=w.name.strip()[:300], detail=w.summary.strip(),
++            suggested_visibility="public", hidden_member_ids_json=json.dumps(andere if w.secret else []),
++            confidence=1.0, flags="[]", evidence="[]", decision="open",
++        )
++        db.add(p)
++        db.flush()
++        aus.append(_stand(p, e, kennung))
++    return aus
++
++
++def stand(db: Session, me: Member) -> list[schemas.WorldEntryStatusOut]:
++    """Stand aller je eingereichten Einträge dieses Mitglieds (jeweils der neueste Vorschlag)."""
++    neueste: dict[tuple[str, str], Proposal] = {}
++    for p in db.scalars(select(Proposal).where(Proposal.source == "character", Proposal.submitted_by_member_id == me.id)
++                        .order_by(Proposal.created_at)):
++        neueste[(p.origin_character_id or "", p.origin_entry_id or "")] = p
++    return [_stand(p, _eintrag_zu(db, me.campaign_id, cid, oid), oid) for (cid, oid), p in neueste.items()]
++
++
++def offene_anzahl(db: Session, campaign_id: str) -> int:
++    return db.scalar(select(func.count()).select_from(Proposal).where(
++        Proposal.campaign_id == campaign_id, Proposal.source == "character", Proposal.decision == "open")) or 0
++
++
++def vorschlaege(db: Session, campaign_id: str) -> list[Proposal]:
++    """Prüfliste der SL: offene zuerst, danach die letzten 50 entschiedenen."""
++    basis = select(Proposal).where(Proposal.campaign_id == campaign_id, Proposal.source == "character")
++    offen = list(db.scalars(basis.where(Proposal.decision == "open").order_by(Proposal.created_at)))
++    fertig = list(db.scalars(basis.where(Proposal.decision != "open").order_by(Proposal.decided_at.desc())
++                             .limit(CHARAKTER_PROPOSALS_ENTSCHIEDEN)))
++    return offen + fertig
++
++
++def entscheiden(db: Session, p: Proposal, mitglieder: set[str]) -> None:
++    """Bei source character wirkt accepted/rejected sofort (kein Veröffentlichen, kein apply)."""
++    from app.services import apply_entry_input
++
++    p.decided_at = utcnow()
++    if p.decision != "accepted":
++        return
++    oeffentlich = p.suggested_visibility == "public"
++    verborgen = [m for m in json.loads(p.hidden_member_ids_json or "[]") if m in mitglieder] if oeffentlich else []
++    e = db.get(Entry, p.target_entry_id or "") if p.action == "update" else None
++    if e is None or e.campaign_id != p.campaign_id:
++        e = Entry(campaign_id=p.campaign_id, type=p.entry_type, name=p.title, visibility="gm_only")
++        db.add(e)
++        db.flush()
++        daten = dict(type=p.entry_type, name=p.title, summary=p.detail, gm_notes=p.gm_notes or "",
++                     visibility=p.suggested_visibility, hidden_from_member_ids=verborgen)
++    else:
++        daten = dict(name=p.title, summary=p.detail)
++        if p.gm_notes:
++            daten["gm_notes"] = "\n\n".join(t for t in ((e.gm_notes or "").strip(), p.gm_notes.strip()) if t)
++        if verborgen and e.visibility == "public":
++            daten["hidden_from_member_ids"] = sorted(set(e.hidden_member_ids) | set(verborgen))
++    apply_entry_input(db, e, schemas.EntryInput(**daten))
++    e.origin_character_id, e.origin_entry_id = p.origin_character_id, p.origin_entry_id
++    e.origin_version, e.origin_member_id = p.origin_version, p.submitted_by_member_id
++    p.target_entry_id = e.id
++
++
++# ---------------------------------------------------------------- Chronik
++def _z(dt) -> str | None:
++    if dt is None:
++        return None
++    from app.services import _utc
++
++    return _utc(dt).isoformat().replace("+00:00", "Z")
++
++
++def chronik(db: Session, me: Member, request) -> dict:
++    """Abschrift aus Sicht der Urheberin. Nie: Transkripte, Hörproben, SL-Notizen, gm_only, Vorschläge, Namen
++    anderer Personen."""
++    from app.einstellungen import angaben, oeffentliche_adresse
++    from app.models import Attendee, Comment, GameSession, Recap
++    from app.routers.auth import API_VERSION
++
++    c = db.get(Campaign, me.campaign_id)
++    bis = me.left_at
++    sitzungen = list(db.scalars(select(GameSession).where(GameSession.campaign_id == c.id,
++                                                          GameSession.state == "published")
++                                .order_by(GameSession.number)))
++    if bis is not None:
++        sitzungen = [s for s in sitzungen if s.published_at is None or s.published_at <= bis]
++    da = set(db.scalars(select(Attendee.session_id).where(Attendee.member_id == me.id)))
++    kapitel = []
++    for s in sitzungen:
++        recap = None
++        r = db.get(Recap, s.id) if s.id in da else None
++        if r is not None:
++            recap = {"title": r.title, "text": r.text, "openThreads": json.loads(r.open_threads or "[]"),
++                     "publishedAt": _z(s.published_at)}
++        kapitel.append({"id": s.id, "number": s.number, "title": s.title, "playedAt": _z(s.played_at),
++                        "attended": s.id in da, "recap": recap})
++    namen = [n.casefold() for n in (me.character_name, me.character_nickname) if n and len(n) >= 2]
++    erwaehnt, mitgebracht = [], []
++    for e in db.scalars(select(Entry).where(Entry.campaign_id == c.id, Entry.visibility == "public")
++                        .order_by(Entry.name)):
++        if me.id in e.hidden_member_ids and me.role != "gm":
++            continue
++        if e.origin_member_id == me.id:
++            mitgebracht.append({"originEntryId": e.origin_entry_id, "entryId": e.id, "entryType": e.type,
++                                "name": e.name, "summary": e.summary, "hidden": bool(e.hidden_member_ids),
++                                "updatedAt": _z(e.updated_at)})
++        text = f"{e.name}\n{e.summary}".casefold()
++        if namen and any(n in text for n in namen):
++            erwaehnt.append({"entryId": e.id, "entryType": e.type, "name": e.name, "summary": e.summary,
++                             "updatedAt": _z(e.updated_at)})
++    kommentare = [{"sessionId": k.session_id, "text": k.text, "createdAt": _z(k.created_at)}
++                  for k in db.scalars(select(Comment).where(Comment.author_member_id == me.id)
++                                      .order_by(Comment.created_at))]
++    return {
++        "server": {"name": angaben(db).server_name, "url": oeffentliche_adresse(db, request), "version": API_VERSION},
++        "campaign": {"id": c.id, "title": c.title, "system": c.system_name or c.system, "language": c.language,
++                     "createdAt": _z(c.created_at), "archivedAt": _z(c.archived_at)},
++        "member": {"id": me.id, "role": me.role, "joinedAt": _z(me.joined_at), "leftAt": _z(me.left_at),
++                   "characterId": me.character_id, "characterVersion": me.character_version},
++        "sessions": kapitel, "mentions": erwaehnt, "broughtEntries": mitgebracht, "comments": kommentare,
++        "takenAt": _z(utcnow()),
++    }
+diff --git a/app/errors.py b/app/errors.py
+index cf1b412..f165a25 100644
+--- a/app/errors.py
++++ b/app/errors.py
+@@ -264,2 +264,20 @@ MESSAGES: dict[str, tuple[str, str]] = {
+     "payload_too_large": ("Die Datei ist zu groß.", "The file is too large."),
++    # Charaktere (0.4.7)
++    "character_in_campaign": ("Dieser Charakter spielt in dieser Kampagne schon mit.",
++                              "This character is already part of this campaign."),
++    "character_version_stale": ("Auf dem Server liegt schon ein neuerer Stand dieses Charakters.",
++                                "The server already has a newer version of this character."),
++    "character_mismatch": ("Du spielst in dieser Kampagne einen anderen Charakter. Löse ihn zuerst.",
++                           "You play a different character in this campaign. Release it first."),
++    "no_character": ("Du hast in dieser Kampagne keinen Charakter aus deiner Sammlung.",
++                     "You have no character from your collection in this campaign."),
++    "world_too_many": ("Bitte 1 bis 100 Einträge auf einmal einreichen.", "Please submit 1 to 100 entries at once."),
++    "guest_unknown": ("Dieser Gast war bei diesem Kapitel nicht dabei.", "This guest was not present in this chapter."),
++    "speaker_member_and_guest": ("Eine Stimme gehört entweder einem Mitglied oder einem Gast, nicht beiden.",
++                                 "A voice belongs either to a member or to a guest, not both."),
++    "invalid_state.proposal_decided": ("Über diesen Vorschlag ist schon entschieden.",
++                                       "This proposal has already been decided."),
++    "validation_error.pc": ("Einträge für Spielercharaktere legt der Server selbst an.",
++                            "Entries for player characters are created by the server."),
++    "not_found.notice": ("Der Hinweis wurde nicht gefunden.", "Notice not found."),
+     "internal_error": ("Auf dem Server ist ein unerwarteter Fehler aufgetreten.", "An unexpected server error occurred."),
+@@ -275,3 +293,3 @@ class ApiError(Exception):
+ 
+-    def __init__(self, status: int, code: str, key: str | None = None, **params):
++    def __init__(self, status: int, code: str, key: str | None = None, details: dict | None = None, **params):
+         self.status = status
+@@ -279,2 +297,3 @@ class ApiError(Exception):
+         self.key = key or code
++        self.details = details  # 0.4.7: Error.details, z. B. {"serverVersion": 3}
+         self.params = params
+@@ -329,3 +348,6 @@ BAD_CREDENTIALS = ApiError(401, "invalid_credentials")
+ def _body(err: ApiError, lang: str) -> dict:
+-    return {"code": err.code, "message": err.message(lang)}
++    body = {"code": err.code, "message": err.message(lang)}
++    if err.details:
++        body["details"] = err.details
++    return body
+ 
+diff --git a/app/konto.py b/app/konto.py
+index 6017b7a..5626058 100644
+--- a/app/konto.py
++++ b/app/konto.py
+@@ -112,2 +112,13 @@ def _z(dt) -> str | None:
+ 
++def _charaktere(mitglieder: list[Member], kampagnen: dict) -> list[dict]:
++    """Je Charakter aus der Sammlung der App die Kampagnen auf diesem Server (0.4.7)."""
++    aus: dict[str, list] = {}
++    for m in mitglieder:
++        if m.character_id:
++            aus.setdefault(m.character_id, []).append({
++                "serverCampaignId": m.campaign_id, "title": kampagnen[m.campaign_id].title, "memberId": m.id,
++                "joinedAt": _z(m.joined_at), "leftAt": _z(m.left_at)})
++    return [{"characterId": k, "campaigns": v} for k, v in aus.items()]
++
++
+ def exportieren(db: Session, u: User, basis_url: str) -> dict:
+@@ -165,4 +176,7 @@ def exportieren(db: Session, u: User, basis_url: str) -> dict:
+             "characterSummary": m.character_summary, "characterBackstory": m.character_backstory,
++            "characterId": m.character_id, "characterVersion": m.character_version,
++            "characterNickname": m.character_nickname, "characterStatus": m.character_status,
+             "recordingConsentAt": _z(m.recording_consent_at), "portrait": bilder(m),
+         } for m in mitglieder],
++        "characters": _charaktere(mitglieder, kampagnen),  # 0.4.7
+         "sessionsAttended": [{"campaignId": s.campaign_id, "sessionId": s.id, "number": s.number, "title": s.title,
+diff --git a/app/main.py b/app/main.py
+index 8df46db..f42c8bb 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -173,3 +173,5 @@ def create_app() -> FastAPI:
+ 
+-    for r in (auth.router, anmeldung.router, voice_profile.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
++    from app.routers import charaktere
++
++    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
+         api.include_router(r)
+diff --git a/app/models.py b/app/models.py
+index 3f6714b..60a1fb6 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -128,2 +128,8 @@ class Member(Base):
+     joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
++    # 0.4.7: Serverkopie des Charakters aus der Sammlung der App – nur die Person selbst ändert sie
++    character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
++    character_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    character_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # active | retired | deceased
++    character_nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
++    character_system: Mapped[str | None] = mapped_column(String(64), nullable=True)
+ 
+@@ -252,2 +258,9 @@ class Entry(Base):
+     public_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
++    # 0.4.7: pc-Eintrag – zu welchem Charakter er gehört (bleibt nach einem Charakterwechsel stehen)
++    pc_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
++    # 0.4.7: mitgebrachter Eintrag – nur die SL und die Urheberin sehen die Herkunft
++    origin_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
++    origin_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    origin_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+ 
+@@ -390,2 +403,3 @@ class Speaker(Base):
+     assigned_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    assigned_guest_name: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 0.4.7: Gast benannt
+ 
+@@ -465,2 +479,21 @@ class Proposal(Base):
+     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
++    # 0.4.7: mitgebrachte Welt (source character) – wirkt beim Entscheiden sofort
++    source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # None = aus session_id/document_id
++    origin_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    origin_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    submitted_by_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
++    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
++
++
++class GmNotice(Base):
++    """Hinweis an die SL (0.4.7), z. B. Neuzugang bei teilweise verborgenen Einträgen. Spieler sehen ihn nie."""
++
++    __tablename__ = "gm_notices"
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
++    code: Mapped[str] = mapped_column(String(48))
++    member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    entry_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON-Liste
++    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+ 
+@@ -477,3 +510,3 @@ class CampaignDocument(Base):
+     file_name: Mapped[str] = mapped_column(String(300))
+-    kind: Mapped[str] = mapped_column(String(16))  # handout | gm | mixed
++    kind: Mapped[str] = mapped_column(String(16))  # handout | gm | mixed | character_sheet
+     size_bytes: Mapped[int] = mapped_column(Integer)
+diff --git a/app/routers/auth.py b/app/routers/auth.py
+index 54f5681..c3e945a 100644
+--- a/app/routers/auth.py
++++ b/app/routers/auth.py
+@@ -15,3 +15,3 @@ from app.services import user_out
+ 
+-API_VERSION = "0.4.6"
++API_VERSION = "0.4.7"
+ 
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index c2ef0a9..6b23d2a 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -7,3 +7,3 @@ from sqlalchemy.orm import Session
+ 
+-from app import errors, schemas
++from app import charaktere, errors, schemas
+ from app.access import aktive_sl_anzahl, current_user, membership, require_gm, require_member
+@@ -66,2 +66,5 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
+     char = (body.character_name or "").strip() or None
++    if body.character is not None:  # 0.4.7: Charakter aus der Sammlung gewinnt gegen den freien Namen
++        char = body.character.name.strip() or char
++    neu = me is None
+     if me is None:
+@@ -72,2 +75,4 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
+             me.chronicle_seen_at = me.bible_seen_at = None
++            if body.character is not None and me.character_id not in (None, body.character.id.lower()):
++                charaktere.loesen(db, me)  # mit einem anderen Charakter zurück
+             if char is not None:
+@@ -77,4 +82,9 @@ def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Sess
+             db.add(me)
+-    elif char is not None:
++        db.flush()
++    elif char is not None and body.character is None:
+         me.character_name = char
++    if body.character is not None:
++        charaktere.setzen(db, me, body.character, beitritt=True)
++    if neu:
++        charaktere.neuzugang(db, me)
+     if c.organization_id:
+diff --git a/app/routers/charaktere.py b/app/routers/charaktere.py
+new file mode 100644
+index 0000000..ca6c981
+--- /dev/null
++++ b/app/routers/charaktere.py
+@@ -0,0 +1,78 @@
++"""Charaktere (Schnittstelle 0.4.7): eigener Charakter, mitgebrachte Welt, Chronik, Prüfliste und Hinweise der SL.
++Logik in app/charaktere.py."""
++from fastapi import APIRouter, Depends, Request, Response
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app import charaktere, errors, schemas
++from app.access import current_user, require_member
++from app.db import get_db
++from app.models import GmNotice, Member, User
++from app.routers.pruefung import proposal_out
++from app.services import member_out
++
++router = APIRouter(tags=["Charaktere"])
++
++
++@router.put("/campaigns/{campaignId}/members/me/character", response_model=schemas.MemberOut,
++            response_model_exclude_unset=True)
++def put_character(campaignId: str, body: schemas.CharacterIn, user: User = Depends(current_user),
++                  db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    charaktere.setzen(db, me, body)
++    db.commit()
++    db.refresh(me)
++    return member_out(me, me)
++
++
++@router.delete("/campaigns/{campaignId}/members/me/character", status_code=204)
++def delete_character(campaignId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    charaktere.loesen(db, me)
++    db.commit()
++    return Response(status_code=204)
++
++
++@router.get("/campaigns/{campaignId}/members/me/world", response_model=schemas.WorldOut)
++def get_world(campaignId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    return schemas.WorldOut(entries=charaktere.stand(db, me))
++
++
++@router.post("/campaigns/{campaignId}/members/me/world", response_model=schemas.WorldOut)
++def post_world(campaignId: str, body: schemas.WorldIn, user: User = Depends(current_user),
++               db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    aus = charaktere.einreichen(db, me, body.entries)
++    db.commit()
++    return schemas.WorldOut(entries=aus)
++
++
++@router.get("/campaigns/{campaignId}/members/me/chronicle")
++def get_chronicle(campaignId: str, request: Request, user: User = Depends(current_user),
++                  db: Session = Depends(get_db)):
++    """Auch nach dem Verlassen, solange das Konto besteht – deshalb ohne die Prüfung auf aktive Mitgliedschaft."""
++    me = db.scalar(select(Member).where(Member.campaign_id == campaignId, Member.user_id == user.id))
++    if me is None:
++        raise errors.not_found("campaign")
++    return charaktere.chronik(db, me, request)
++
++
++@router.get("/campaigns/{campaignId}/character-proposals", tags=["Vorschläge"],
++            response_model=list[schemas.ProposalOut], response_model_exclude_unset=True)
++def character_proposals(campaignId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    if me.role != "gm":
++        raise errors.not_found("campaign")  # Spieler: nicht einmal die Existenz der Liste
++    return [proposal_out(p) for p in charaktere.vorschlaege(db, campaignId)]
++
++
++@router.delete("/campaigns/{campaignId}/gm-notices/{noticeId}", tags=["Kampagnen"], status_code=204)
++def delete_notice(campaignId: str, noticeId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    me = require_member(db, campaignId, user)
++    n = db.get(GmNotice, noticeId)
++    if me.role != "gm" or n is None or n.campaign_id != campaignId:
++        raise errors.not_found("notice")
++    db.delete(n)
++    db.commit()
++    return Response(status_code=204)
+diff --git a/app/routers/entries.py b/app/routers/entries.py
+index 1a425ca..980b791 100644
+--- a/app/routers/entries.py
++++ b/app/routers/entries.py
+@@ -38,3 +38,3 @@ def list_entries(
+     entries.sort(key=lambda e: e.name.casefold())
+-    return [entry_out(e, is_gm) for e in entries]
++    return [entry_out(e, is_gm, me.id) for e in entries]
+ 
+@@ -49,4 +49,6 @@ def create_entry(
+         raise errors.bad_request("validation_error", "validation_error.type_name")
++    if body.type == "pc":
++        raise errors.bad_request("validation_error", "validation_error.pc")
+     # Ohne Angabe ist ein Eintrag geheim – lieber versehentlich zu wenig verraten als zu viel.
+-    e = Entry(campaign_id=campaignId, type=body.type, name="", summary="", visibility="gm_only")
++    e = Entry(campaign_id=campaignId, type="", name="", summary="", visibility="gm_only")
+     db.add(e)
+@@ -62,3 +64,3 @@ def get_entry(entryId: str, user: User = Depends(current_user), db: Session = De
+     acc = load_entry(db, entryId, user)
+-    return entry_out(acc.entry, acc.is_gm)
++    return entry_out(acc.entry, acc.is_gm, acc.member.id)
+ 
+diff --git a/app/routers/pruefung.py b/app/routers/pruefung.py
+index d9ed7d8..4cbbbed 100644
+--- a/app/routers/pruefung.py
++++ b/app/routers/pruefung.py
+@@ -65,2 +65,14 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
+         raise errors.bad_request("member_unknown")
++    # 0.4.7: Stimmen von Gästen benennen – nur mit einem guestName der Anwesenden, nie zusammen mit memberId
++    gaeste = {" ".join(a.guest_name.split()).casefold(): a.guest_name for a in s.attendees if a.guest_name}
++    gast = {}
++    for z in body:
++        name = " ".join((z.guest_name or "").split())
++        if not name:
++            continue
++        if z.member_id is not None:
++            raise errors.bad_request("speaker_member_and_guest")
++        if name.casefold() not in gaeste:
++            raise errors.bad_request("guest_unknown")
++        gast[z.speaker_id] = gaeste[name.casefold()]
+     angegeben = {z.speaker_id: z.member_id for z in body}
+@@ -68,2 +80,3 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
+         sp.assigned_member_id = angegeben[sp.id] if sp.id in angegeben else sp.suggested_member_id
++        sp.assigned_guest_name = gast.get(sp.id)
+     db.flush()
+@@ -79,4 +92,7 @@ def proposal_out(p: Proposal) -> schemas.ProposalOut:
+     public = p.suggested_visibility == "public"
++    quelle = p.source or ("session" if p.session_id else "document")
+     return schemas.ProposalOut(
+-        id=p.id, session_id=p.session_id, document_id=p.document_id, entry_type=p.entry_type, action=p.action,
++        id=p.id, session_id=p.session_id, document_id=p.document_id, source=quelle,
++        origin_character_id=p.origin_character_id, origin_entry_id=p.origin_entry_id,
++        submitted_by_member_id=p.submitted_by_member_id, entry_type=p.entry_type, action=p.action,
+         target_entry_id=p.target_entry_id, title=p.title, detail=p.detail, gm_notes=p.gm_notes,
+@@ -105,3 +121,13 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
+         raise errors.not_found()
+-    if p.session_id is not None:
++    vorher = p.decision
++    if p.source == "character":  # mitgebrachte Welt (0.4.7): nur die SL, Entscheidung wirkt sofort
++        from app.access import membership
++
++        me = membership(db, p.campaign_id, user)
++        if me is None or me.role != "gm":
++            raise errors.not_found()
++        if p.decision != "open":
++            raise errors.conflict("invalid_state", "invalid_state.proposal_decided")
++        campaign_id = p.campaign_id
++    elif p.session_id is not None:
+         try:
+@@ -144,2 +170,6 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
+         raise errors.bad_request("validation_error", "public_text_required")
++    if p.source == "character" and p.decision != vorher:
++        from app import charaktere
++
++        charaktere.entscheiden(db, p, _kampagnen_mitglieder(db, campaign_id))
+     db.commit()
+diff --git a/app/routers/sessions.py b/app/routers/sessions.py
+index c3ee4a2..87a6a6f 100644
+--- a/app/routers/sessions.py
++++ b/app/routers/sessions.py
+@@ -144,3 +144,4 @@ def list_speakers(sessionId: str, user: User = Depends(current_user), db: Sessio
+         schemas.SpeakerOut(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
+-                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source)
++                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
++                           assigned_guest_name=sp.assigned_guest_name)
+         for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position))
+diff --git a/app/routers/unterlagen.py b/app/routers/unterlagen.py
+index e7e2a4c..ee0c287 100644
+--- a/app/routers/unterlagen.py
++++ b/app/routers/unterlagen.py
+@@ -1,3 +1,3 @@
+-"""SL-Unterlagen (nur SL). Spieler bekommen für die Liste 403 (die Kampagne kennen sie), für einzelne Unterlagen
+-404 – schon deren Existenz ist SL-Wissen. Logik in app/unterlagen.py."""
++"""SL-Unterlagen (nur SL). Spieler sehen in der Liste nur ihre eigenen Charakterbögen (0.4.7, vorher 403), fremde
++Unterlagen bekommen sie nie (404) – schon deren Existenz ist SL-Wissen. Logik in app/unterlagen.py."""
+ from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
+@@ -46,3 +46,4 @@ def dokument_out(db: Session, doc: CampaignDocument, lang: str) -> schemas.Campa
+         message=meldung, proposal_count=sum(zaehlen.values()), open_proposal_count=zaehlen.get("open", 0),
+-        world_info_suggestion=doc.world_info_suggestion, created_at=doc.created_at,
++        world_info_suggestion=doc.world_info_suggestion, uploaded_by_member_id=doc.uploaded_by_member_id,
++        created_at=doc.created_at,
+     )
+@@ -50,7 +51,10 @@ def dokument_out(db: Session, doc: CampaignDocument, lang: str) -> schemas.Campa
+ 
+-def _dokument(db: Session, document_id: str, user: User) -> CampaignDocument:
+-    """Nur für die SL der Kampagne – alle anderen bekommen 404."""
++def _dokument(db: Session, document_id: str, user: User, eigener_bogen: bool = False) -> CampaignDocument:
++    """Nur für die SL der Kampagne – alle anderen bekommen 404. eigener_bogen: auch die Person, die den Charakterbogen
++    hochgeladen hat (0.4.7)."""
+     doc = db.get(CampaignDocument, document_id)
+     me = membership(db, doc.campaign_id, user) if doc else None
+-    if doc is None or me is None or me.role != "gm":
++    if doc is None or me is None:
++        raise errors.not_found("document")
++    if me.role != "gm" and not (eigener_bogen and doc.kind == "character_sheet" and doc.uploaded_by_member_id == me.id):
+         raise errors.not_found("document")
+@@ -62,5 +66,7 @@ def documents_list(campaignId: str, request: Request, user: User = Depends(curre
+                    db: Session = Depends(get_db)):
+-    require_gm(require_member(db, campaignId, user))
+-    docs = db.scalars(select(CampaignDocument).where(CampaignDocument.campaign_id == campaignId)
+-                      .order_by(CampaignDocument.created_at.desc()))
++    me = require_member(db, campaignId, user)
++    stmt = select(CampaignDocument).where(CampaignDocument.campaign_id == campaignId)
++    if me.role != "gm":  # Spieler: nur die eigenen Charakterbögen
++        stmt = stmt.where(CampaignDocument.kind == "character_sheet", CampaignDocument.uploaded_by_member_id == me.id)
++    docs = db.scalars(stmt.order_by(CampaignDocument.created_at.desc()))
+     return [dokument_out(db, d, sprache(request)) for d in docs]
+@@ -73,3 +79,4 @@ def documents_upload(campaignId: str, request: Request, file: UploadFile = File(
+     me = require_member(db, campaignId, user)
+-    require_gm(me)
++    if kind != "character_sheet":  # Charakterbögen darf jedes aktive Mitglied hochladen (0.4.7)
++        require_gm(me)
+     daten = file.file.read(unterlagen.MAX_BYTES + 1)
+@@ -84,3 +91,3 @@ def document_get(documentId: str, request: Request, user: User = Depends(current
+                  db: Session = Depends(get_db)):
+-    return dokument_out(db, _dokument(db, documentId, user), sprache(request))
++    return dokument_out(db, _dokument(db, documentId, user, eigener_bogen=True), sprache(request))
+ 
+@@ -89,3 +96,3 @@ def document_get(documentId: str, request: Request, user: User = Depends(current
+ def document_delete(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+-    unterlagen.loeschen(db, _dokument(db, documentId, user))
++    unterlagen.loeschen(db, _dokument(db, documentId, user, eigener_bogen=True))
+     db.commit()
+diff --git a/app/schemas.py b/app/schemas.py
+index 26f918f..57661b1 100644
+--- a/app/schemas.py
++++ b/app/schemas.py
+@@ -15,3 +15,5 @@ Role = Literal["gm", "player"]
+ Visibility = Literal["public", "gm_only"]
+-EntryType = Literal["npc", "location", "quest", "item", "faction", "other"]
++EntryType = Literal["npc", "location", "quest", "item", "faction", "other", "pc"]  # pc ab 0.4.7, nur vom Server
++UUID_MUSTER = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
++CharacterStatus = Literal["active", "retired", "deceased"]
+ ContentLanguage = Literal["de", "en"]
+@@ -190,2 +192,6 @@ class MemberOut(ApiModel):
+     left_at: datetime | None = None
++    character_id: str | None = None  # 0.4.7
++    character_version: int | None = None
++    character_status: CharacterStatus | None = None
++    character_nickname: str | None = None
+ 
+@@ -208,2 +214,3 @@ class CampaignSummaryOut(ApiModel):
+     pending_review_count: int
++    open_character_proposals: int = 0  # 0.4.7, nur für die SL befüllt
+     last_published_at: datetime | None
+@@ -225,2 +232,3 @@ class CampaignOut(CampaignSummaryOut):
+     hotwords: list[str] | None = None  # 0.4.6: nur für die SL, für Spieler weggelassen
++    gm_notices: list["GmNoticeOut"] | None = None  # 0.4.7: nur für die SL, für Spieler weggelassen
+     members: list[MemberOut]
+@@ -228,2 +236,48 @@ class CampaignOut(CampaignSummaryOut):
+ 
++class GmNoticeOut(ApiModel):
++    id: str
++    code: Literal["hidden_entries_for_newcomer"]
++    member_id: str | None
++    entry_ids: list[str]
++    created_at: datetime
++
++
++class CharacterIn(ApiModel):
++    """Serverkopie eines Charakters aus der Sammlung der App (0.4.7)."""
++    id: str = Field(pattern=UUID_MUSTER)
++    version: int = Field(ge=1)
++    name: str = Field(min_length=1, max_length=128)
++    nickname: str | None = Field(default=None, max_length=64)
++    summary: str | None = Field(default=None, max_length=2000)
++    backstory: str | None = Field(default=None, max_length=20000)
++    system: str | None = Field(default=None, max_length=64)
++    status: CharacterStatus
++    status_changed_at: datetime | None = None
++
++
++class WorldEntryIn(ApiModel):
++    id: str = Field(pattern=UUID_MUSTER)
++    version: int = Field(ge=1)
++    type: Literal["npc", "location", "faction", "item", "quest", "other"]
++    name: str = Field(min_length=1, max_length=200)
++    summary: str = Field(min_length=1, max_length=4000)
++    secret: bool
++
++
++class WorldIn(ApiModel):
++    entries: list[WorldEntryIn]  # 1–100, geprüft im Endpunkt (400 world_too_many)
++
++
++class WorldEntryStatusOut(ApiModel):
++    id: str
++    proposal_id: str | None
++    entry_id: str | None
++    state: Literal["pending", "accepted", "rejected", "unchanged"]
++    server_version: int | None
++
++
++class WorldOut(ApiModel):
++    entries: list[WorldEntryStatusOut]
++
++
+ class CampaignCreate(ApiModel):
+@@ -254,2 +308,3 @@ class JoinRequest(ApiModel):
+     character_name: str | None = Field(default=None, max_length=200)
++    character: CharacterIn | None = None  # 0.4.7
+ 
+@@ -362,2 +417,3 @@ class SpeakerOut(ApiModel):
+     source: Literal["intro_round", "voice_match", "discord_track", "none"]
++    assigned_guest_name: str | None = None  # 0.4.7
+ 
+@@ -366,3 +422,4 @@ class SpeakerAssignIn(ApiModel):
+     speaker_id: str
+-    member_id: str | None = None  # null = Gast / ignorieren
++    member_id: str | None = None  # null = Gast (mit guestName) / ignorieren
++    guest_name: str | None = Field(default=None, max_length=200)  # 0.4.7
+ 
+@@ -395,2 +452,6 @@ class ProposalOut(ApiModel):
+     document_id: str | None
++    source: Literal["session", "document", "character"]  # 0.4.7
++    origin_character_id: str | None = None
++    origin_entry_id: str | None = None
++    submitted_by_member_id: str | None = None
+     entry_type: EntryType
+@@ -460,2 +521,5 @@ class EntryOut(ApiModel):
+     updated_at: datetime
++    origin_character_id: str | None = None  # 0.4.7: nur für SL und Urheberin, sonst weggelassen
++    origin_entry_id: str | None = None
++    origin_version: int | None = None
+ 
+@@ -530,3 +594,3 @@ class DatePollClose(ApiModel):
+ # ---------- SL-Unterlagen ----------
+-DocumentKind = Literal["handout", "gm", "mixed"]
++DocumentKind = Literal["handout", "gm", "mixed", "character_sheet"]
+ 
+@@ -547,2 +611,3 @@ class CampaignDocumentOut(ApiModel):
+     world_info_suggestion: str | None
++    uploaded_by_member_id: str | None = None  # 0.4.7
+     created_at: datetime
+@@ -564 +629,4 @@ class CorrectionsIn(ApiModel):
+     retranscribe: bool = False
++
++
++CampaignOut.model_rebuild()
+diff --git a/app/services.py b/app/services.py
+index 336a40f..4ca3ce7 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -88,2 +88,4 @@ def member_out(m: Member, viewer: Member | None) -> schemas.MemberOut:
+         portrait_updated_at=m.portrait_updated_at, deleted_at=m.deleted_at, left_at=m.left_at,
++        character_id=m.character_id, character_version=m.character_version, character_status=m.character_status,
++        character_nickname=m.character_nickname,
+     )
+@@ -147,4 +149,7 @@ def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
+     ).one()
+-    pending = 0
++    pending = mitgebracht = 0
+     if me.role == "gm":
++        from app.charaktere import offene_anzahl
++
++        mitgebracht = offene_anzahl(db, c.id)
+         pending = db.scalar(
+@@ -159,2 +164,3 @@ def _summary_fields(db: Session, c: Campaign, me: Member) -> dict:
+         member_count=member_count, archived_at=c.archived_at, published_session_count=published[0], pending_review_count=pending,
++        open_character_proposals=mitgebracht,
+         last_published_at=_utc(published[1]), cover_preset=c.cover_preset, unread=_unread(db, c, me),
+@@ -181,2 +187,5 @@ def campaign_out(db: Session, c: Campaign, me: Member) -> schemas.CampaignOut:
+         out.hotwords = namenshilfe.anzeige(db, c)
++        from app.charaktere import hinweise
++
++        out.gm_notices = hinweise(db, c)  # 0.4.7
+     return out
+@@ -401,3 +410,4 @@ def set_state(s: GameSession, state: str, progress: float | None = None, message
+ # ---------- Bibel ----------
+-def entry_out(e: Entry, is_gm: bool) -> schemas.EntryOut:
++def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.EntryOut:
++    """viewer_id: Mitglied, das abfragt – die Herkunft mitgebrachter Einträge (0.4.7) sehen nur SL und Urheberin."""
+     mentions = [mn for mn in e.mentions if is_gm or mn.session.state == "published"]
+@@ -416,2 +426,5 @@ def entry_out(e: Entry, is_gm: bool) -> schemas.EntryOut:
+         daten["hidden_from_member_ids"] = sorted(e.hidden_member_ids)
++    if is_gm or (viewer_id is not None and viewer_id == e.origin_member_id):
++        daten.update(origin_character_id=e.origin_character_id, origin_entry_id=e.origin_entry_id,
++                     origin_version=e.origin_version)
+     return schemas.EntryOut(**daten)
+@@ -433,2 +446,4 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
+             raise errors.bad_request("validation_error", "validation_error.type")
++        if (data.type == "pc") != (e.type == "pc") and e.type:
++            raise errors.bad_request("validation_error", "validation_error.pc")  # pc legt nur der Server an
+         e.type = data.type
+@@ -468,3 +483,3 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
+         e.status = "active"
+-    if e.type != "item":
++    if e.type not in ("item", "pc"):  # pc: Halter = Mitglied mit dem Charakter (0.4.7)
+         e.holder_member_id = None
+diff --git a/app/unterlagen.py b/app/unterlagen.py
+index d162799..1993d37 100644
+--- a/app/unterlagen.py
++++ b/app/unterlagen.py
+@@ -193,3 +193,3 @@ def hochladen(db: Session, campaign_id: str, member_id: str, dateiname: str, dat
+ 
+-    if kind not in ("handout", "gm", "mixed"):
++    if kind not in ("handout", "gm", "mixed", "character_sheet"):
+         raise errors.bad_request("validation_error", "validation_error.value", field="kind")
+@@ -198,2 +198,12 @@ def hochladen(db: Session, campaign_id: str, member_id: str, dateiname: str, dat
+     art = art_der_datei(dateiname, daten)
++    if kind == "character_sheet":
++        # 0.4.7: Charakterbogen – nur gespeichert, nie ausgelesen oder ausgewertet, fließt nie in Recaps/Vorschläge
++        name = Path(dateiname).name[:300] or "charakterbogen"
++        doc = CampaignDocument(campaign_id=campaign_id, title=(titel or "").strip()[:300] or Path(name).stem[:300],
++                               file_name=name, kind=kind, size_bytes=len(daten), page_count=None,
++                               uploaded_by_member_id=member_id, state="done")
++        db.add(doc)
++        db.flush()
++        storage.write_atomic(ordner(doc.id) / f"datei{Path(name).suffix.lower()}", daten)
++        return doc
+     x = auslesen(art, daten)
+@@ -279,3 +289,7 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
+     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == doc.campaign_id))}
+-    vorschlaege = dokument_pruefen(d.get("proposals") or [], {i: e.name for i, e in eintraege.items()})
++    # pc-Einträge (0.4.7) pflegt die App – keine Vorschläge dafür, auch nicht als neuer Eintrag gleichen Namens
++    spieler = {e.name.casefold() for e in eintraege.values() if e.type == "pc"}
++    vorschlaege = [v for v in dokument_pruefen(d.get("proposals") or [],
++                                               {i: e.name for i, e in eintraege.items() if e.type != "pc"})
++                   if v["title"].casefold() not in spieler]
+     markiert = geheime_abschnitte(text_laden(doc.id))
+diff --git a/app/zusammenfassung.py b/app/zusammenfassung.py
+index cb546d8..6619cc5 100644
+--- a/app/zusammenfassung.py
++++ b/app/zusammenfassung.py
+@@ -115,2 +115,4 @@ def eingabe_bauen(db: Session, s: GameSession) -> Eingabe:
+         m = mitglieder.get(sp.assigned_member_id or "")
++        if m is None and sp.assigned_guest_name:  # 0.4.7: als Gast benannt
++            return f"{sp.assigned_guest_name} ({'guest' if c.language == 'en' else 'Gast'})", None
+         if m is None:
+@@ -354,2 +356,4 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
+             continue  # Bezug auf einen Eintrag, den es nicht (mehr) gibt
++        if ziel is not None and ziel.type == "pc":
++            continue  # Spielercharaktere pflegt die App (0.4.7) – keine Vorschläge dafür
+         if v.action == "reveal" and ziel.visibility != "gm_only":
+diff --git a/contract/session-chronik-api.yaml b/contract/session-chronik-api.yaml
+index 97f56c2..51a42c8 100644
+--- a/contract/session-chronik-api.yaml
++++ b/contract/session-chronik-api.yaml
+@@ -3,3 +3,3 @@ info:
+   title: Taleward API
+-  version: 0.4.6
++  version: 0.4.7
+   description: |
+@@ -132,2 +132,9 @@ info:
+     Spielern gar nicht ausgeliefert (nicht null, sondern weggelassen); ältere Apps ignorieren die Felder.
++    Änderungen in 0.4.7 (Charaktere): Die App ist Ort der Wahrheit für Charaktere (eigene Sammlung, auf mehreren
++    Servern nutzbar); der Server hält eine Kopie mit characterId/characterVersion und bearbeitet sie nie. Beitritt mit
++    Charakter (POST /campaigns/join, character), PUT/DELETE …/members/me/character, mitgebrachte Welt als Vorschläge
++    für die SL (POST/GET …/members/me/world, GET /campaigns/{id}/character-proposals), Chronik als Abschrift
++    (GET …/members/me/chronicle), Eintragsart pc, Proposal.source, DocumentKind character_sheet, Hinweise an die SL
++    (Campaign.gmNotices, z. B. Neuzugang bei teilweise verborgenen Einträgen), Stimmen von Gästen benennen
++    (guestName bei PUT …/speakers, Speaker.assignedGuestName), Error.details. Kein Kampagnen-Umzug (kommt in 0.4.8).
+ 
+@@ -447,3 +454,7 @@ paths:
+       summary: Alle eigenen Daten auf diesem Server als JSON (Recht auf Datenübertragbarkeit)
+-      description: Konto (ab 0.4.0 mit email und den Namen verbundener Dienste, keine Kennungen), Mitgliedschaften mit Charakterangaben, eigene Kommentare, Zustimmungen mit Zeitpunkten, Stimmprofil-Status (ohne Stimmabdruck), Charakterbilder als Verweise.
++      description: |
++        Konto (ab 0.4.0 mit email und den Namen verbundener Dienste, keine Kennungen), Mitgliedschaften mit
++        Charakterangaben, eigene Kommentare, Zustimmungen mit Zeitpunkten, Stimmprofil-Status (ohne Stimmabdruck),
++        Charakterbilder als Verweise. Ab 0.4.7 zusätzlich characters[]: { characterId, campaigns: [{ serverCampaignId,
++        title, memberId, joinedAt, leftAt }] }.
+       responses:
+@@ -617,3 +628,11 @@ paths:
+                 code: { type: string, example: "RABE-4821" }
+-                characterName: { type: string }
++                characterName: { type: string, description: "Freier Name ohne Sammlung (Gäste, ältere Apps)" }
++                character:
++                  description: |
++                    Ab 0.4.7: Charakter aus der Sammlung der App. Setzt Member.character* und legt den pc-Eintrag an
++                    (öffentlich, holderMemberId = das neue Mitglied). Mit characterName zusammen gewinnt character.name.
++                    Gleiche characterId schon bei einem aktiven Mitglied dieser Kampagne → 409 character_in_campaign.
++                  oneOf:
++                    - { $ref: "#/components/schemas/Character" }
++                    - { type: "null" }
+       responses:
+@@ -627,2 +646,3 @@ paths:
+         "401": { $ref: "#/components/responses/Unauthorized" }
++        "409": { $ref: "#/components/responses/Conflict" }
+ 
+@@ -783,2 +803,140 @@ paths:
+ 
++  /campaigns/{campaignId}/members/me/character:
++    parameters: [{ $ref: "#/components/parameters/campaignId" }]
++    put:
++      tags: [Charaktere]
++      summary: Eigenen Charakter setzen oder aktualisieren (ab 0.4.7)
++      description: |
++        Nur das Mitglied selbst. Ohne bisherigen Charakter (Altbestand, nach DELETE): übernimmt den Charakter und legt
++        bzw. verknüpft den pc-Eintrag („in die Sammlung übernehmen“: neue UUID, version 1). Mit bisherigem Charakter:
++        nur dieselbe id (sonst 409 character_mismatch) und nur eine höhere version (sonst 409 character_version_stale,
++        details.serverVersion). Aktualisiert Member.character* und den pc-Eintrag. Die SL kann das nicht.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: { $ref: "#/components/schemas/Character" }
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Member" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++    delete:
++      tags: [Charaktere]
++      summary: Charakter lösen, z. B. für einen Charakterwechsel nach Tod oder Ruhestand (ab 0.4.7)
++      description: |
++        characterId wird gelöst; der pc-Eintrag bleibt mit holderMemberId null und dem letzten Status. Danach PUT mit
++        dem neuen Charakter.
++      responses:
++        "204": { description: Gelöst }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++
++  /campaigns/{campaignId}/members/me/world:
++    parameters: [{ $ref: "#/components/parameters/campaignId" }]
++    get:
++      tags: [Charaktere]
++      summary: Stand aller je eingereichten mitgebrachten Einträge dieses Mitglieds (ab 0.4.7)
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  entries: { type: array, items: { $ref: "#/components/schemas/WorldEntryStatus" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    post:
++      tags: [Charaktere]
++      summary: Mitgebrachte Welt einreichen – wird zu Vorschlägen für die SL (ab 0.4.7)
++      description: |
++        Nur Mitglieder mit characterId (sonst 409 no_character); 1–100 Einträge (sonst 400 world_too_many). Je Eintrag:
++        - unbekannte id → Vorschlag create, source character, suggestedVisibility public; bei secret
++          hiddenFromMemberIds = alle anderen aktiven Mitglieder (die SL sieht es ohnehin)
++        - bekannt, höhere version → Vorschlag update mit targetEntryId, detail = neue summary
++        - bekannt, gleiche oder ältere version → unchanged
++        - offener Vorschlag zu derselben id → wird durch den neuen ersetzt
++        Nie direkt zu Einträgen; die SL entscheidet (GET /campaigns/{id}/character-proposals). Die Antwort nennt nur
++        eigene Vorschläge und Zustände – Inhalte der Vorschläge bekommt die Person nicht.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required: [entries]
++              properties:
++                entries: { type: array, minItems: 1, maxItems: 100, items: { $ref: "#/components/schemas/WorldEntryIn" } }
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  entries: { type: array, items: { $ref: "#/components/schemas/WorldEntryStatus" } }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++
++  /campaigns/{campaignId}/members/me/chronicle:
++    parameters: [{ $ref: "#/components/parameters/campaignId" }]
++    get:
++      tags: [Charaktere]
++      summary: Chronik des eigenen Charakters als Abschrift (ab 0.4.7)
++      description: |
++        Nur das Mitglied selbst, auch nach dem Verlassen (solange das Konto besteht). Die SL sieht keine Chroniken
++        anderer (404). Nie enthalten: Transkripte, Hörproben, SL-Notizen, gm_only, Vorschläge, Namen anderer Personen
++        (Charaktere anderer nur, soweit sie im Recap-Text stehen). Die App speichert die Abschrift in ihrer Sammlung;
++        das Dateiformat ist Sache der App.
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Chronicle" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /campaigns/{campaignId}/character-proposals:
++    parameters: [{ $ref: "#/components/parameters/campaignId" }]
++    get:
++      tags: [Vorschläge]
++      summary: Vorschläge aus mitgebrachter Welt (nur SL, ab 0.4.7; Spieler 404)
++      description: |
++        Offene zuerst, danach die letzten 50 entschiedenen. Entscheiden per PATCH /proposals/{id}: bei source character
++        wirkt accepted sofort (Eintrag wird angelegt bzw. ergänzt, mit originCharacterId/originEntryId/originVersion),
++        rejected ebenso – es gibt kein Veröffentlichen wie bei Sessions. CampaignSummary.openCharacterProposals zählt
++        die offenen.
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { type: array, items: { $ref: "#/components/schemas/Proposal" } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /campaigns/{campaignId}/gm-notices/{noticeId}:
++    parameters:
++      - { $ref: "#/components/parameters/campaignId" }
++      - { name: noticeId, in: path, required: true, schema: { type: string } }
++    delete:
++      tags: [Kampagnen]
++      summary: Hinweis an die SL erledigt (nur SL, ab 0.4.7)
++      responses:
++        "204": { description: Erledigt }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   /organizations:
+@@ -1276,3 +1434,9 @@ paths:
+                     type: [string, "null"]
+-                    description: null = Gast / ignorieren
++                    description: null = Gast (mit guestName) oder ignorieren (ohne)
++                  guestName:
++                    type: [string, "null"]
++                    description: |
++                      Ab 0.4.7: einer der guestName-Werte der Anwesenden. Der Server schreibt ihn als Sprecher ins
++                      Transkript („Mira (Gast)“) und in die Eingabe der Zusammenfassung. Schließt memberId aus (400);
++                      beide null = ignorieren. Kein Stimmprofil für Gäste.
+       responses:
+@@ -1332,2 +1496,5 @@ paths:
+       summary: Vorschlag übernehmen, verwerfen oder vor dem Übernehmen bearbeiten (nur SL)
++      description: |
++        Bei Session-Vorschlägen wirkt die Entscheidung beim Veröffentlichen, bei Unterlagen mit …/apply. Bei source
++        character (ab 0.4.7) wirkt accepted bzw. rejected sofort.
+       requestBody:
+@@ -1798,3 +1965,3 @@ paths:
+       tags: [Unterlagen]
+-      summary: Hochgeladene SL-Unterlagen (nur SL; Spieler 403)
++      summary: Hochgeladene Unterlagen (SL alle; Spieler ab 0.4.7 nur eigene Charakterbögen, vorher 403)
+       responses:
+@@ -1812,4 +1979,8 @@ paths:
+       tags: [Unterlagen]
+-      summary: Unterlage hochladen und Auswertung einreihen (nur SL)
++      summary: Unterlage hochladen und Auswertung einreihen (nur SL; character_sheet jedes aktive Mitglied)
+       description: |
++        Ab 0.4.7 darf jedes aktive Mitglied kind character_sheet hochladen (Charakterbogen). Sichtbar nur für die SL und
++        die hochladende Person (GET-Liste für Spieler: nur eigene character_sheet; alle anderen 404). Wird nie
++        ausgewertet und fließt nie in Recaps oder Vorschläge.
++
+         PDF, Word (.docx), .txt oder .md bis 50 MB (sonst 400 `unsupported_document` bzw. 413 `document_too_large`).
+@@ -2056,2 +2227,6 @@ components:
+         message: { type: string, description: "Für Nutzer lesbar, in der Sprache aus Accept-Language (Standard: Deutsch)" }
++        details:
++          type: object
++          additionalProperties: true
++          description: Zusätzliche Angaben je Fehlercode (ab 0.4.7), z. B. character_version_stale → { serverVersion }
+ 
+@@ -2134,4 +2309,7 @@ components:
+       type: string
+-      enum: [handout, gm, mixed]
+-      description: handout = Spielerhandout (öffentlich), gm = SL-Unterlage (alles geheim), mixed = gemischt (geheim mit Freigabe-Vorschlägen)
++      enum: [handout, gm, mixed, character_sheet]
++      description: |
++        handout = Spielerhandout (öffentlich), gm = SL-Unterlage (alles geheim), mixed = gemischt (geheim mit
++        Freigabe-Vorschlägen), character_sheet = Charakterbogen eines Mitglieds (ab 0.4.7; nur SL und Urheberin, keine
++        Auswertung)
+ 
+@@ -2153,2 +2331,3 @@ components:
+         worldInfoSuggestion: { type: [string, "null"] }
++        uploadedByMemberId: { type: [string, "null"], description: "Ab 0.4.7; bei character_sheet die Urheberin" }
+         createdAt: { type: string, format: date-time }
+@@ -2189,3 +2368,7 @@ components:
+       type: string
+-      enum: [npc, location, quest, item, faction, other]
++      enum: [npc, location, quest, item, faction, other, pc]
++      description: |
++        pc (ab 0.4.7) = Spielercharakter. Legt nur der Server an (beim Beitritt mit Charakter oder PUT …/character),
++        hält name/summary synchron mit der Serverkopie; holderMemberId = das Mitglied (null nach Charakterwechsel).
++        Nicht per POST /entries anlegbar (400); keine Vorschläge dafür. Ältere Apps zeigen ihn wie other.
+ 
+@@ -2250,2 +2433,9 @@ components:
+           description: Gesetzt, wenn ein Charakterbild existiert; die App nutzt es als Cache-Schlüssel
++        characterId: { type: [string, "null"], description: "Ab 0.4.7: UUID aus der Sammlung der App; null bei Altbestand und Gästen" }
++        characterVersion: { type: [integer, "null"], description: "Ab 0.4.7: Stand der Serverkopie" }
++        characterStatus:
++          type: [string, "null"]
++          enum: [active, retired, deceased, null]
++          description: Ab 0.4.7
++        characterNickname: { type: [string, "null"], description: "Ab 0.4.7" }
+ 
+@@ -2272,2 +2462,5 @@ components:
+           description: Nur für SL befüllt, für Spieler immer 0
++        openCharacterProposals:
++          type: integer
++          description: Ab 0.4.7; offene Vorschläge aus mitgebrachter Welt, nur für SL befüllt, für Spieler 0
+         lastPublishedAt: { type: [string, "null"], format: date-time }
+@@ -2339,2 +2532,9 @@ components:
+                 kommen dazu. Per PATCH /campaigns/{id} ganz ersetzbar.
++            gmNotices:
++              type: array
++              description: |
++                Hinweise an die SL (ab 0.4.7; für Spieler weggelassen). hidden_entries_for_newcomer: Ein neues Mitglied
++                wurde beim Beitritt in alle nicht-leeren hiddenFromMemberIds-Listen aufgenommen; die SL gibt einzeln
++                frei (PATCH /entries/{id}) und erledigt den Hinweis mit DELETE /campaigns/{id}/gm-notices/{noticeId}.
++              items: { $ref: "#/components/schemas/GmNotice" }
+             members:
+@@ -2428,2 +2628,3 @@ components:
+         source: { type: string, enum: [intro_round, voice_match, discord_track, none] }
++        assignedGuestName: { type: [string, "null"], description: "Ab 0.4.7: als Gast benannt (nach PUT)" }
+ 
+@@ -2435,2 +2636,9 @@ components:
+         documentId: { type: [string, "null"] }
++        source:
++          type: string
++          enum: [session, document, character]
++          description: Ab 0.4.7; ältere Server lassen es weg (dann aus sessionId/documentId ableiten)
++        originCharacterId: { type: [string, "null"], description: "Ab 0.4.7, nur bei source character" }
++        originEntryId: { type: [string, "null"], description: "Ab 0.4.7, nur bei source character" }
++        submittedByMemberId: { type: [string, "null"], description: "Ab 0.4.7, bei source character die Urheberin" }
+         entryType: { $ref: "#/components/schemas/EntryType" }
+@@ -2643 +2851,133 @@ components:
+             updatedAt: { type: string, format: date-time }
++            originCharacterId: { type: [string, "null"], description: "Ab 0.4.7: mitgebrachter Eintrag – nur für SL und Urheberin, sonst weggelassen" }
++            originEntryId: { type: [string, "null"] }
++            originVersion: { type: [integer, "null"] }
++
++    Character:
++      type: object
++      description: |
++        Serverkopie der Stammdaten eines Charakters aus der Sammlung der App (ab 0.4.7). Die App vergibt id und zählt
++        version bei jeder Änderung hoch; der Server bearbeitet sie nie. Nicht auf dem Server: private Notizen, Galerie
++        (nur das eine Porträt über …/portrait), eigene Unterlagen (nur auf Wunsch als character_sheet).
++      required: [id, version, name, status]
++      properties:
++        id: { type: string, format: uuid }
++        version: { type: integer, minimum: 1 }
++        name: { type: string, minLength: 1, maxLength: 128, description: "wird zu Member.characterName" }
++        nickname: { type: [string, "null"], maxLength: 64 }
++        summary: { type: [string, "null"], maxLength: 2000, description: "wird zu Member.characterSummary (alle Mitglieder; darf in Recap/Vorschläge)" }
++        backstory: { type: [string, "null"], maxLength: 20000, description: "wird zu Member.characterBackstory (nur Person und SL; nie in Recap/Vorschläge)" }
++        system: { type: [string, "null"], maxLength: 64, description: "Regelsystem als freier Text, nur Anzeige" }
++        status: { type: string, enum: [active, retired, deceased] }
++        statusChangedAt: { type: [string, "null"], format: date-time }
++
++    WorldEntryIn:
++      type: object
++      required: [id, version, type, name, summary, secret]
++      properties:
++        id: { type: string, format: uuid, description: "Kennung der App" }
++        version: { type: integer, minimum: 1 }
++        type: { type: string, enum: [npc, location, faction, item, quest, other] }
++        name: { type: string, minLength: 1, maxLength: 200 }
++        summary: { type: string, minLength: 1, maxLength: 4000 }
++        secret: { type: boolean, description: "Nur SL und Urheberin sollen es wissen" }
++
++    WorldEntryStatus:
++      type: object
++      properties:
++        id: { type: string, description: "wie eingereicht" }
++        proposalId: { type: [string, "null"] }
++        entryId: { type: [string, "null"], description: "Übernommener Eintrag auf dem Server" }
++        state: { type: string, enum: [pending, accepted, rejected, unchanged] }
++        serverVersion: { type: [integer, "null"], description: "Zuletzt übernommene Version" }
++
++    Chronicle:
++      type: object
++      description: Abschrift aus Sicht der Urheberin (ab 0.4.7)
++      properties:
++        server:
++          type: object
++          properties:
++            name: { type: string }
++            url: { type: string }
++            version: { type: string }
++        campaign:
++          type: object
++          properties:
++            id: { type: string }
++            title: { type: string }
++            system: { type: [string, "null"] }
++            language: { $ref: "#/components/schemas/ContentLanguage" }
++            createdAt: { type: string, format: date-time }
++            archivedAt: { type: [string, "null"], format: date-time }
++        member:
++          type: object
++          properties:
++            id: { type: string }
++            role: { $ref: "#/components/schemas/Role" }
++            joinedAt: { type: string, format: date-time }
++            leftAt: { type: [string, "null"], format: date-time }
++            characterId: { type: [string, "null"] }
++            characterVersion: { type: [integer, "null"] }
++        sessions:
++          type: array
++          items:
++            type: object
++            properties:
++              id: { type: string }
++              number: { type: integer }
++              title: { type: [string, "null"] }
++              playedAt: { type: string, format: date-time }
++              attended: { type: boolean }
++              recap:
++                description: Nur bei veröffentlichten Kapiteln mit Anwesenheit
++                oneOf:
++                  - type: object
++                    properties:
++                      title: { type: string }
++                      text: { type: string }
++                      openThreads: { type: array, items: { type: string } }
++                      publishedAt: { type: string, format: date-time }
++                  - { type: "null" }
++        mentions:
++          type: array
++          description: Öffentliche, für die Person sichtbare Einträge, die den Charakter erwähnen
++          items:
++            type: object
++            properties:
++              entryId: { type: string }
++              entryType: { $ref: "#/components/schemas/EntryType" }
++              name: { type: string }
++              summary: { type: string }
++              updatedAt: { type: string, format: date-time }
++        broughtEntries:
++          type: array
++          description: Mitgebrachte Einträge in ihrer öffentlichen Serverfassung
++          items:
++            type: object
++            properties:
++              originEntryId: { type: string }
++              entryId: { type: string }
++              entryType: { $ref: "#/components/schemas/EntryType" }
++              name: { type: string }
++              summary: { type: string }
++              hidden: { type: boolean }
++              updatedAt: { type: string, format: date-time }
++        comments:
++          type: array
++          items:
++            type: object
++            properties:
++              sessionId: { type: string }
++              text: { type: string }
++              createdAt: { type: string, format: date-time }
++        takenAt: { type: string, format: date-time }
++
++    GmNotice:
++      type: object
++      properties:
++        id: { type: string }
++        code: { type: string, enum: [hidden_entries_for_newcomer] }
++        memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
++        entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
++        createdAt: { type: string, format: date-time }
+diff --git a/docs/ARCHITEKTUR.md b/docs/ARCHITEKTUR.md
+index a6bdd48..d594b06 100644
+--- a/docs/ARCHITEKTUR.md
++++ b/docs/ARCHITEKTUR.md
+@@ -75,2 +75,13 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
+   Freigabe-Vorschlag. Markierte Abschnitte (`[SL]`, `Geheim:` …) wandern immer in `gmNotes`.
++- **Charaktere (ab 0.4.7, `app/charaktere.py`):**
++  - Die App ist Ort der Wahrheit. Der Server hält am Mitglied nur eine Kopie und nimmt Änderungen nur von der Person
++    selbst und nur mit höherer Fassung an.
++  - Der Bibel-Eintrag der Art `pc` entsteht und ändert sich nur durch den Server; dafür gibt es keine Vorschläge.
++  - Mitgebrachte Welt wird nie direkt zum Eintrag, sondern zum Vorschlag für die SL. Geheimes ist vor allen anderen
++    Spielern verborgen. Die Einreichende sieht nur den Stand, nie den Vorschlag selbst.
++  - Wer neu dazukommt, wird in alle nicht-leeren Verborgen-Listen aufgenommen. Die SL bekommt dazu einen Hinweis
++    (`gmNotices`).
++  - Charakterbögen werden nur gespeichert, nie ausgewertet. Sichtbar sind sie für die SL und die Person, die sie
++    hochgeladen hat.
++  - Die Chronik enthält nur, was die Person ohnehin sehen darf, und keine Namen anderer Personen.
+ 
+diff --git a/migrations/versions/f2c6a8e0b4d7_charaktere_0_4_7.py b/migrations/versions/f2c6a8e0b4d7_charaktere_0_4_7.py
+new file mode 100644
+index 0000000..3bd956f
+--- /dev/null
++++ b/migrations/versions/f2c6a8e0b4d7_charaktere_0_4_7.py
+@@ -0,0 +1,79 @@
++"""Charaktere (Schnittstelle 0.4.7): Serverkopie am Mitglied, pc-Einträge, mitgebrachte Welt, Hinweise an die SL,
++Gäste bei der Stimmzuordnung
++
++Revision ID: f2c6a8e0b4d7
++Revises: e4a8c2f6b1d3
++Create Date: 2026-10-01 10:00:00
++
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = 'f2c6a8e0b4d7'
++down_revision: Union[str, Sequence[str], None] = 'e4a8c2f6b1d3'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++
++def upgrade() -> None:
++    with op.batch_alter_table('members') as b:
++        b.add_column(sa.Column('character_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('character_version', sa.Integer(), nullable=True))
++        b.add_column(sa.Column('character_status', sa.String(length=16), nullable=True))
++        b.add_column(sa.Column('character_nickname', sa.String(length=64), nullable=True))
++        b.add_column(sa.Column('character_system', sa.String(length=64), nullable=True))
++        b.create_index('ix_members_character_id', ['character_id'])
++    with op.batch_alter_table('entries') as b:
++        b.add_column(sa.Column('pc_character_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('origin_character_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('origin_entry_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('origin_version', sa.Integer(), nullable=True))
++        b.add_column(sa.Column('origin_member_id', sa.String(length=36), nullable=True))
++        b.create_index('ix_entries_pc_character_id', ['pc_character_id'])
++        b.create_index('ix_entries_origin_character_id', ['origin_character_id'])
++    with op.batch_alter_table('speakers') as b:
++        b.add_column(sa.Column('assigned_guest_name', sa.String(length=200), nullable=True))
++    with op.batch_alter_table('proposals') as b:
++        b.add_column(sa.Column('source', sa.String(length=16), nullable=True))
++        b.add_column(sa.Column('origin_character_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('origin_entry_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('origin_version', sa.Integer(), nullable=True))
++        b.add_column(sa.Column('submitted_by_member_id', sa.String(length=36), nullable=True))
++        b.add_column(sa.Column('decided_at', sa.DateTime(), nullable=True))
++        b.create_index('ix_proposals_submitted_by_member_id', ['submitted_by_member_id'])
++    op.create_table(
++        'gm_notices',
++        sa.Column('id', sa.String(length=36), nullable=False),
++        sa.Column('campaign_id', sa.String(length=36), nullable=False),
++        sa.Column('code', sa.String(length=48), nullable=False),
++        sa.Column('member_id', sa.String(length=36), nullable=True),
++        sa.Column('entry_ids', sa.Text(), nullable=False),
++        sa.Column('created_at', sa.DateTime(), nullable=False),
++        sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id'], ondelete='CASCADE'),
++        sa.PrimaryKeyConstraint('id'),
++    )
++    op.create_index('ix_gm_notices_campaign_id', 'gm_notices', ['campaign_id'])
++
++
++def downgrade() -> None:
++    op.drop_index('ix_gm_notices_campaign_id', table_name='gm_notices')
++    op.drop_table('gm_notices')
++    with op.batch_alter_table('proposals') as b:
++        b.drop_index('ix_proposals_submitted_by_member_id')
++        for s in ('decided_at', 'submitted_by_member_id', 'origin_version', 'origin_entry_id', 'origin_character_id',
++                  'source'):
++            b.drop_column(s)
++    with op.batch_alter_table('speakers') as b:
++        b.drop_column('assigned_guest_name')
++    with op.batch_alter_table('entries') as b:
++        b.drop_index('ix_entries_origin_character_id')
++        b.drop_index('ix_entries_pc_character_id')
++        for s in ('origin_member_id', 'origin_version', 'origin_entry_id', 'origin_character_id', 'pc_character_id'):
++            b.drop_column(s)
++    with op.batch_alter_table('members') as b:
++        b.drop_index('ix_members_character_id')
++        for s in ('character_system', 'character_nickname', 'character_status', 'character_version', 'character_id'):
++            b.drop_column(s)
+diff --git a/pyproject.toml b/pyproject.toml
+index 0832208..752b363 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -2,3 +2,3 @@
+ name = "taleward-server"
+-version = "0.4.30"
++version = "0.4.31"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+diff --git a/tests/contract.py b/tests/contract.py
+index bc89cee..16150f0 100644
+--- a/tests/contract.py
++++ b/tests/contract.py
+@@ -26,2 +26,4 @@ OPTIONAL_FIELDS = {"characterBackstory", "gmNotes", "hiddenFromMemberIds", "memb
+                    "review", "hotwords",  # 0.4.6: nur für die SL, für Spieler weggelassen
++                   "gmNotices", "originCharacterId", "originEntryId", "originVersion",  # 0.4.7: nur SL (und Urheberin)
++                   "details",  # 0.4.7: Error.details nur bei manchen Fehlercodes
+                    "user"}
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 939bfa9..c6a6040 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -132,3 +132,3 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.30"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.31"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index d327e83..f78372c 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -136,3 +136,3 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.30"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.31"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+diff --git a/tests/test_charaktere_047.py b/tests/test_charaktere_047.py
+new file mode 100644
+index 0000000..f0a95a0
+--- /dev/null
++++ b/tests/test_charaktere_047.py
+@@ -0,0 +1,232 @@
++"""Schnittstelle 0.4.7: Charaktere aus der Sammlung der App, mitgebrachte Welt, Chronik, Hinweise an die SL, Gäste."""
++import uuid
++
++import pytest
++
++from tests.test_pruefung_046 import _zur_pruefung
++from tests.test_step2a import API
++from tests.test_step2b import _kleine_teile, zusammenfassen  # noqa: F401 (Fixture)
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++def _char(name="Tharvok", version=1, cid=None, **mehr):
++    return {"id": cid or str(uuid.uuid4()), "version": version, "name": name, "status": "active",
++            "summary": f"{name}, Söldner aus dem Norden.", "backstory": "GEHEIMER-HINTERGRUND", **mehr}
++
++
++def _einladen(client, w):
++    return client.post(f"{API}/campaigns/{w['cid']}/invites", headers=w["gm"]).json()["code"]
++
++
++def _pc(client, w, h=None):
++    return [e for e in client.get(f"{API}/campaigns/{w['cid']}/entries", headers=h or w["gm"]).json()
++            if e["type"] == "pc"]
++
++
++def test_charakter_setzen_aktualisieren_loesen(client, world):
++    w = world
++    ch = _char()
++    url = f"{API}/campaigns/{w['cid']}/members/me/character"
++    m = client.put(url, headers=w["pl"], json=ch).json()
++    assert m["characterId"] == ch["id"] and m["characterVersion"] == 1 and m["characterName"] == "Tharvok"
++    assert m["characterStatus"] == "active" and m["characterBackstory"] == "GEHEIMER-HINTERGRUND"
++    # pc-Eintrag: öffentlich, Halter = das Mitglied, für Spieler sichtbar
++    pc = _pc(client, w, w["pl"])
++    assert len(pc) == 1 and pc[0]["holderMemberId"] == w["pl_member"] and pc[0]["visibility"] == "public"
++    # gleiche oder ältere Fassung → 409 mit details.serverVersion
++    r = client.put(url, headers=w["pl"], json=ch)
++    assert r.status_code == 409 and r.json()["code"] == "character_version_stale"
++    assert r.json()["details"] == {"serverVersion": 1}
++    # anderer Charakter → character_mismatch
++    assert client.put(url, headers=w["pl"], json=_char("Anderer")).json()["code"] == "character_mismatch"
++    # höhere Fassung: Member und pc-Eintrag ziehen mit
++    m = client.put(url, headers=w["pl"], json={**ch, "version": 2, "name": "Tharvok der Graue",
++                                               "status": "retired"}).json()
++    assert m["characterVersion"] == 2 and m["characterStatus"] == "retired"
++    assert _pc(client, w)[0]["name"] == "Tharvok der Graue"
++    # die SL kann pc-Einträge nicht anlegen und nicht umwidmen
++    r = client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"],
++                    json={"type": "pc", "name": "X", "visibility": "public", "summary": "x"})
++    assert r.status_code == 400
++    assert client.patch(f"{API}/entries/{_pc(client, w)[0]['id']}", headers=w["gm"],
++                        json={"type": "npc"}).status_code == 400
++    # lösen: pc-Eintrag bleibt ohne Halter, danach neuer Charakter möglich
++    assert client.delete(url, headers=w["pl"]).status_code == 204
++    assert client.delete(url, headers=w["pl"]).json()["code"] == "no_character"
++    assert _pc(client, w)[0]["holderMemberId"] is None
++    m = client.put(url, headers=w["pl"], json=_char("Litha")).json()
++    assert m["characterName"] == "Litha" and len(_pc(client, w)) == 2
++    # Außenstehende: 404
++    assert client.put(url, headers=w["out"], json=_char()).status_code == 404
++
++
++def test_beitritt_mit_charakter_und_neuzugang(client, world, make_user, login):
++    w = world
++    # Ein öffentlicher Eintrag, der vor Ben verborgen ist – wer neu kommt, soll ihn auch nicht sehen
++    e = client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Die Verräterin", "summary": "Hat Ben verraten.", "visibility": "public",
++        "hiddenFromMemberIds": [w["pl_member"]]}).json()
++    offen = client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "location", "name": "Marktplatz", "summary": "Laut.", "visibility": "public"}).json()
++    make_user("dora")
++    dora = login("dora")
++    ch = _char("Dorin", 3)
++    c = client.post(f"{API}/campaigns/join", headers=dora, json={"code": _einladen(client, w), "characterName": "x",
++                                                                 "character": ch}).json()
++    ich = next(m for m in c["members"] if m["displayName"] == "Dora")
++    assert ich["characterName"] == "Dorin" and ich["characterId"] == ch["id"] and ich["characterVersion"] == 3
++    assert "gmNotices" not in c  # Spieler sehen keine Hinweise
++    sichtbar = {x["id"] for x in client.get(f"{API}/campaigns/{w['cid']}/entries", headers=dora).json()}
++    assert offen["id"] in sichtbar and e["id"] not in sichtbar
++    # Die SL bekommt einen Hinweis und erledigt ihn
++    sl = client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()
++    assert [(n["code"], n["memberId"], n["entryIds"]) for n in sl["gmNotices"]] == [
++        ("hidden_entries_for_newcomer", ich["id"], [e["id"]])]
++    nid = sl["gmNotices"][0]["id"]
++    assert client.delete(f"{API}/campaigns/{w['cid']}/gm-notices/{nid}", headers=w["pl"]).status_code == 404
++    assert client.delete(f"{API}/campaigns/{w['cid']}/gm-notices/{nid}", headers=w["gm"]).status_code == 204
++    assert client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()["gmNotices"] == []
++    # Derselbe Charakter kann nicht zweimal in einer Kampagne mitspielen
++    r = client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json={**ch, "version": 9})
++    assert r.status_code == 409 and r.json()["code"] == "character_in_campaign"
++    # Wiederbeitritt mit gleichem Stand: nichts passiert
++    c = client.post(f"{API}/campaigns/join", headers=dora, json={"code": _einladen(client, w), "character": ch})
++    assert c.status_code == 200
++
++
++def test_mitgebrachte_welt(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/members/me/world"
++    ort = {"id": str(uuid.uuid4()), "version": 1, "type": "location", "name": "Nebelhain",
++           "summary": "Heimatdorf im Moor.", "secret": False}
++    feind = {"id": str(uuid.uuid4()), "version": 1, "type": "npc", "name": "Bruder Kael",
++             "summary": "Sucht Tharvok.", "secret": True}
++    assert client.post(url, headers=w["pl"], json={"entries": [ort]}).json()["code"] == "no_character"
++    client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json=_char())
++    assert client.post(url, headers=w["pl"], json={"entries": []}).json()["code"] == "world_too_many"
++    aus = client.post(url, headers=w["pl"], json={"entries": [ort, feind]}).json()["entries"]
++    assert [a["state"] for a in aus] == ["pending", "pending"] and aus[0]["entryId"] is None
++    # Spieler: keine Prüfliste, kein Zähler
++    assert client.get(f"{API}/campaigns/{w['cid']}/character-proposals", headers=w["pl"]).status_code == 404
++    assert client.get(f"{API}/campaigns", headers=w["pl"]).json()[0]["openCharacterProposals"] == 0
++    assert client.get(f"{API}/campaigns", headers=w["gm"]).json()[0]["openCharacterProposals"] == 2
++    liste = client.get(f"{API}/campaigns/{w['cid']}/character-proposals", headers=w["gm"]).json()
++    assert {p["source"] for p in liste} == {"character"} and liste[0]["submittedByMemberId"] == w["pl_member"]
++    p_ort, p_feind = liste
++    assert p_feind["hiddenFromMemberIds"] == []  # nur die SL und Ben in der Kampagne – niemand sonst
++    # Annehmen wirkt sofort
++    r = client.patch(f"{API}/proposals/{p_ort['id']}", headers=w["gm"], json={"decision": "accepted"}).json()
++    assert r["decision"] == "accepted"
++    assert client.patch(f"{API}/proposals/{p_ort['id']}", headers=w["gm"],
++                        json={"decision": "rejected"}).status_code == 409
++    client.patch(f"{API}/proposals/{p_feind['id']}", headers=w["gm"], json={"decision": "rejected"})
++    eintraege = {e["name"]: e for e in client.get(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"]).json()}
++    assert eintraege["Nebelhain"]["originEntryId"] == ort["id"] and eintraege["Nebelhain"]["originVersion"] == 1
++    assert "Bruder Kael" not in eintraege
++    # Herkunft: SL und Urheberin ja, andere Spieler nein (hier: Ben ist Urheber)
++    assert client.get(f"{API}/entries/{eintraege['Nebelhain']['id']}", headers=w["pl"]).json()["originVersion"] == 1
++    stand = {s["id"]: s for s in client.get(url, headers=w["pl"]).json()["entries"]}
++    assert stand[ort["id"]]["state"] == "accepted" and stand[ort["id"]]["serverVersion"] == 1
++    assert stand[feind["id"]]["state"] == "rejected"
++    # Gleiche Fassung erneut: unverändert bzw. weiter abgelehnt; neue Fassung → update-Vorschlag
++    aus = client.post(url, headers=w["pl"], json={"entries": [ort, feind]}).json()["entries"]
++    assert [a["state"] for a in aus] == ["unchanged", "rejected"]
++    aus = client.post(url, headers=w["pl"], json={"entries": [{**ort, "version": 2, "summary": "Abgebrannt."}]}).json()
++    pid = aus["entries"][0]["proposalId"]
++    p = next(x for x in client.get(f"{API}/campaigns/{w['cid']}/character-proposals", headers=w["gm"]).json()
++             if x["id"] == pid)
++    assert p["action"] == "update" and p["targetEntryId"] == eintraege["Nebelhain"]["id"]
++    client.patch(f"{API}/proposals/{pid}", headers=w["gm"], json={"decision": "accepted"})
++    e = client.get(f"{API}/entries/{eintraege['Nebelhain']['id']}", headers=w["gm"]).json()
++    assert e["summary"] == "Abgebrannt." and e["originVersion"] == 2
++
++
++def test_geheime_welt_vor_anderen_verborgen(client, world, make_user, login):
++    w = world
++    make_user("dora")
++    dora = login("dora")
++    client.post(f"{API}/campaigns/join", headers=dora, json={"code": _einladen(client, w), "characterName": "Dorin"})
++    dora_id = next(m["id"] for m in client.get(f"{API}/campaigns/{w['cid']}", headers=dora).json()["members"]
++                   if m["displayName"] == "Dora")
++    client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json=_char())
++    geheim = {"id": str(uuid.uuid4()), "version": 1, "type": "npc", "name": "Bruder Kael",
++              "summary": "Sucht Tharvok.", "secret": True}
++    client.post(f"{API}/campaigns/{w['cid']}/members/me/world", headers=w["pl"], json={"entries": [geheim]})
++    p = client.get(f"{API}/campaigns/{w['cid']}/character-proposals", headers=w["gm"]).json()[0]
++    assert p["hiddenFromMemberIds"] == [dora_id]
++    client.patch(f"{API}/proposals/{p['id']}", headers=w["gm"], json={"decision": "accepted"})
++    assert "Bruder Kael" in {e["name"] for e in client.get(f"{API}/campaigns/{w['cid']}/entries",
++                                                           headers=w["pl"]).json()}
++    assert "Bruder Kael" not in {e["name"] for e in client.get(f"{API}/campaigns/{w['cid']}/entries",
++                                                               headers=dora).json()}
++
++
++def test_chronik_und_export(client, world, dbs, tmp_path):
++    w = world
++    ch = _char("Mira")
++    client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json=ch)
++    s = _zur_pruefung(client, w, dbs, tmp_path)
++    client.post(f"{API}/sessions/{s['id']}/publish", headers=w["gm"])
++    client.post(f"{API}/sessions/{s['id']}/comments", headers=w["pl"], json={"text": "Schöne Runde!"})
++    url = f"{API}/campaigns/{w['cid']}/members/me/chronicle"
++    assert client.get(url, headers=w["out"]).status_code == 404
++    c = client.get(url, headers=w["pl"]).json()
++    assert c["member"]["characterId"] == ch["id"] and c["campaign"]["title"] == "Rabenfels"
++    assert c["sessions"][0]["attended"] is True and c["sessions"][0]["recap"]["text"]
++    assert c["comments"][0]["text"] == "Schöne Runde!"
++    assert any(m["entryType"] == "pc" for m in c["mentions"])
++    roh = client.get(url, headers=w["pl"]).text
++    assert "GEHEIMER-HINTERGRUND" not in roh and "Anna" not in roh  # keine Namen anderer Personen
++    # auch nach dem Verlassen
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"])
++    assert client.get(url, headers=w["pl"]).status_code == 200
++    export = client.get(f"{API}/me/export", headers=w["pl"]).json()
++    assert export["characters"][0]["characterId"] == ch["id"]
++    assert export["characters"][0]["campaigns"][0]["leftAt"] is not None
++
++
++def test_charakterbogen(client, world):
++    w = world
++    dateien = {"file": ("bogen.txt", "Stärke 14\n\nGeschick 12".encode(), "text/plain")}
++    r = client.post(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"], files=dateien,
++                    data={"kind": "character_sheet"})
++    assert r.status_code == 201
++    d = r.json()
++    assert d["state"] == "done" and d["uploadedByMemberId"] == w["pl_member"] and d["proposalCount"] == 0
++    # andere Arten bleiben der SL vorbehalten
++    assert client.post(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"], files=dateien,
++                       data={"kind": "handout"}).status_code == 403
++    assert [x["id"] for x in client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).json()] == [d["id"]]
++    assert client.get(f"{API}/documents/{d['id']}", headers=w["pl"]).status_code == 200
++    assert client.get(f"{API}/documents/{d['id']}", headers=w["out"]).status_code == 404
++    assert len(client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["gm"]).json()) == 1
++    assert client.delete(f"{API}/documents/{d['id']}", headers=w["pl"]).status_code == 204
++
++
++def test_gast_stimme_benennen(client, world, dbs, tmp_path):
++    from app.models import Attendee, GameSession
++    from tests.test_step2b import transkribiert
++
++    w = world
++    s = transkribiert(client, w, dbs, tmp_path)
++    sitzung = dbs.get(GameSession, s["id"])
++    sitzung.attendees.append(Attendee(guest_name="Mira", position=9, consent=True, consent_source="on_site"))
++    dbs.commit()
++    sp = client.get(f"{API}/sessions/{s['id']}/speakers", headers=w["gm"]).json()
++    url = f"{API}/sessions/{s['id']}/speakers"
++    r = client.put(url, headers=w["gm"], json=[{"speakerId": sp[0]["id"], "memberId": w["gm_member"],
++                                                "guestName": "Mira"}])
++    assert r.status_code == 400 and r.json()["code"] == "speaker_member_and_guest"
++    r = client.put(url, headers=w["gm"], json=[{"speakerId": sp[0]["id"], "guestName": "Unbekannt"}])
++    assert r.json()["code"] == "guest_unknown"
++    r = client.put(url, headers=w["gm"], json=[{"speakerId": sp[0]["id"], "memberId": w["gm_member"]},
++                                               {"speakerId": sp[1]["id"], "memberId": None, "guestName": "mira"}])
++    assert r.status_code == 202
++    neu = {x["id"]: x for x in client.get(url, headers=w["gm"]).json()}
++    assert neu[sp[1]["id"]]["assignedGuestName"] == "Mira" and neu[sp[0]["id"]]["assignedGuestName"] is None
++    from app.zusammenfassung import eingabe_bauen
++
++    dbs.expire_all()
++    zeilen = eingabe_bauen(dbs, dbs.get(GameSession, s["id"])).transkript
++    assert any(z.sprecher == "Mira (Gast)" for z in zeilen)
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 63f810f..53e1b76 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -85,3 +85,3 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.30"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.31"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+diff --git a/tests/test_step1b.py b/tests/test_step1b.py
+index cbe9936..0b88747 100644
+--- a/tests/test_step1b.py
++++ b/tests/test_step1b.py
+@@ -24,3 +24,3 @@ def test_info_ist_oeffentlich(client):
+     i = r.json()
+-    assert i["apiVersion"] == "0.4.6" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
++    assert i["apiVersion"] == "0.4.7" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+ 
+@@ -240,3 +240,3 @@ def test_spaetere_funktionen_antworten_verstaendlich(client, world, dbs):
+     assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["gm"]).json() == []
+-    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).status_code == 403
++    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).json() == []  # 0.4.7: Spieler sehen nur eigene Charakterbögen
+     assert client.put(f"{API}/uploads/x/files/y/chunks/0", content=b"x", headers=w["gm"]).status_code == 404
+diff --git a/tests/test_unterlagen.py b/tests/test_unterlagen.py
+index b57b497..2306399 100644
+--- a/tests/test_unterlagen.py
++++ b/tests/test_unterlagen.py
+@@ -39,3 +39,3 @@ def test_hochladen_pruefungen(client, world, monkeypatch):
+     assert hochladen(client, w, "a.pdf", pdf(["Text"]), h=w["out"]).status_code == 404
+-    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).status_code == 403
++    assert client.get(f"{API}/campaigns/{w['cid']}/documents", headers=w["pl"]).json() == []  # 0.4.7: nur eigene Charakterbögen
+     r = hochladen(client, w, "a.exe", b"MZ....")
+diff --git a/tests/test_verwaltung2.py b/tests/test_verwaltung2.py
+index 3357fb5..74fa8ef 100644
+--- a/tests/test_verwaltung2.py
++++ b/tests/test_verwaltung2.py
+@@ -169,3 +169,3 @@ def test_mindestversion(client, world, admin):  # noqa: F811
+     assert info["minAppVersion"] == "0.9.0" and info["latestAppVersion"] == "0.9.1"
+-    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.6"
++    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.7"
+     url = f"{API}/campaigns"
+diff --git a/tests/test_webapp.py b/tests/test_webapp.py
+index cdcdccf..73c97b9 100644
+--- a/tests/test_webapp.py
++++ b/tests/test_webapp.py
+@@ -100,3 +100,3 @@ def test_info_mit_pruefsumme(client, dbs):
+     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
+-    assert info["apiVersion"] == "0.4.6"
++    assert info["apiVersion"] == "0.4.7"
+ 
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index d58c352..45e3f10 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -114,3 +114,3 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.30"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.31"
+ 
+diff --git a/uv.lock b/uv.lock
+index 555a681..b218467 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1988,3 +1988,3 @@ wheels = [
+ name = "taleward-server"
+-version = "0.4.30"
++version = "0.4.31"
+ source = { editable = "." }
+-- 
+2.43.0
+
