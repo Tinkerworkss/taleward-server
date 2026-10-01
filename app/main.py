@@ -72,6 +72,12 @@ def _wartung_starten() -> threading.Event | None:
                     benachrichtigung.pruefen(db)
             except Exception:
                 log.exception("Benachrichtigungen fehlgeschlagen")
+            try:
+                from app import woerterbuch
+
+                woerterbuch.automatisch()  # einmal laden; danach nichts mehr zu tun
+            except Exception:
+                log.exception("Wortlisten fehlgeschlagen")
             if stop.wait(takt):
                 break
 

@@ -393,6 +393,13 @@ EN: dict[str, str] = {
     "Konto löschen": "Delete account",
     "Prüfung": "Review",
     "Recap gegenprüfen": "Cross-check the recap",
+    "Wortlisten für unsicher erkannte Namen:": "Word lists for uncertain names:",
+    "Deutsch": "German",
+    "Englisch": "English",
+    "geladen": "loaded",
+    "wird geladen": "loading",
+    "Dazu kommen die Texte der Kampagne (Bibel, Notizen, Unterlagen, Charaktere) und was in früheren Kapiteln sicher erkannt wurde.":
+        "Plus the campaign's own texts (bible, notes, documents, characters) and what was recognised reliably in earlier chapters.",
     "Ein zweiter Durchgang des Sprachmodells prüft jeden Absatz gegen das Transkript, bessert Unbelegtes einmal nach und zeigt der Spielleitung vor der Freigabe, worauf sich jeder Absatz stützt. Kostet etwa ein Drittel mehr Rechenzeit.":
         "A second pass of the language model checks every paragraph against the transcript, revises unsupported parts once and shows the game master what each paragraph is based on before sharing. Takes about a third more computing time.",
     "Löscht Konto, Anmeldungen, Charakterbilder, Hintergrund und Stimmprofil endgültig. Kommentare bleiben als „gelöschtes Konto“ stehen, Kapitel und Recaps bleiben unverändert. Ist die Person irgendwo die einzige Spielleitung, geht es erst, wenn dort jemand anderes Spielleitung ist.":

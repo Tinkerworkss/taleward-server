@@ -3,9 +3,10 @@
 Quelle: Der Worker meldet je Abschnitt die Wörter, die die zeitliche Ausrichtung schlecht getroffen hat
 (`TranscriptSegment.unsicher`). Daraus werden Kandidaten für die SL:
 - nur großgeschriebene Wörter ab drei Buchstaben, nicht am Satzanfang (dort sagt Großschreibung nichts),
-- nicht, was schon genau so als Name bekannt ist (Namenshilfe, Bibel, Charaktere) oder was die SL weggeklickt hat,
+- nicht, was bekannt ist (app/woerterbuch.py: allgemeine Wortliste, Texte der Kampagne, in anderen Kapiteln sicher
+  Gesagtes) oder was die SL weggeklickt hat,
 - gebündelt nach Klang (Kölner Phonetik): „Tharvok“, „Tarvok“ und „Darvok“ sind ein Begriff,
-- ähnlich klingende Bibel- und Charakternamen kommen als Vorschlag mit.
+- ähnlich klingende Bibel- und Charakternamen und Namen aus den Texten der Kampagne kommen als Vorschlag mit.
 
 Korrektur: reine Textersetzung (ganze Wörter) in Transkript, Recap, Vorschlägen und Prüfteil – oder, solange das
 Audio da ist, eine erneute Transkription mit der korrigierten Namenshilfe (höchstens zweimal je Session).
@@ -75,21 +76,35 @@ def _wort(roh: str) -> str:
     return roh.strip(".,;:!?…\"'„“”‚‘()[]«»-–")
 
 
-def _bekannte(db: Session, c: Campaign) -> tuple[list[tuple[str, str | None, str | None]], set[str]]:
-    """(Name, entryId, memberId) aller bekannten Namen – für Vorschläge – und die Menge aller bekannten Wörter."""
+def _namen(db: Session, c: Campaign, b) -> list[tuple[str, str | None, str | None]]:
+    """(Name, entryId, memberId) für Vorschläge: Bibel, Charaktere und namenartige Wörter aus den Texten der Kampagne."""
     namen: list[tuple[str, str | None, str | None]] = []
     for e in db.scalars(select(Entry).where(Entry.campaign_id == c.id)):
         namen.append((e.name, e.id, None))
     for m in db.scalars(select(Member).where(Member.campaign_id == c.id)):
         if m.character_name:
             namen.append((m.character_name, None, m.id))
-    woerter = {w.casefold() for n in namenshilfe.anzeige(db, c) + [n for n, _, _ in namen] for w in re.findall(r"\w+", n)}
-    return namen, woerter
+    schon = {n.casefold() for n, _, _ in namen}
+    namen += [(w, None, None) for k, w in b.namen.items() if k not in schon]
+    return namen
+
+
+def _bekannt(wort: str, bekannt, namen) -> bool:
+    """Bekanntes Wort – außer es ist nur als Zusammensetzung bekannt und klingt fast wie ein Name der Kampagne
+    („Rabenfeld“ statt „Rabenfels“): dann lieber nachfragen."""
+    if bekannt.direkt(wort):
+        return True
+    if not bekannt.enthaelt(wort):
+        return False
+    return not any(n.casefold() != wort.casefold() and aehnlich(wort, n) >= 0.85 for n, _, _ in namen)
 
 
 def begriffe(db: Session, s: GameSession) -> list[dict]:
+    from app import woerterbuch
+
     c = db.get(Campaign, s.campaign_id)
-    namen, bekannt = _bekannte(db, c)
+    bekannt = woerterbuch.kampagne(db, c, ausser_session_id=s.id)
+    namen = _namen(db, c, bekannt)
     weg = namenshilfe.ignoriert(c)
     gruppen: dict[str, dict] = {}
     for seg in db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id,
@@ -103,7 +118,7 @@ def begriffe(db: Session, s: GameSession) -> list[dict]:
         for w in woerter:
             wort = _wort(str(w.get("word") or ""))
             if (len(wort) < 3 or not wort[0].isupper() or wort.isupper() or w.get("anfang")
-                    or wort.casefold() in bekannt or wort.casefold() in weg or wort not in text_woerter):
+                    or wort.casefold() in weg or wort not in text_woerter or _bekannt(wort, bekannt, namen)):
                 continue  # nicht (mehr) im Text: schon korrigiert
             g = gruppen.setdefault(phonetik(wort) or wort.casefold(), {"schreibweisen": {}, "werte": [], "beispiele": []})
             g["schreibweisen"][wort] = g["schreibweisen"].get(wort, 0) + 1

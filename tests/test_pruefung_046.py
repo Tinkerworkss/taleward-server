@@ -205,3 +205,102 @@ def test_phonetik_und_absaetze():
     assert befund[0]["verdict"] == "unchecked"
     assert befund[1] == {"index": 1, "verdict": "contradicted", "note": "Falsch",
                          "evidence": [{"start": 65.0, "quote": ""}]}
+
+
+# ---------------------------------------------------------------- Wörterbücher (Server 0.4.30)
+def _wortliste(woerter, sprache="de"):
+    import gzip
+
+    from app import woerterbuch
+
+    woerterbuch.ordner().mkdir(parents=True, exist_ok=True)
+    with gzip.open(woerterbuch.pfad(sprache), "wt", encoding="utf-8") as f:
+        f.write("\n".join(woerter))
+
+
+def test_woerterbuch_allgemein_und_zusammengesetzt():
+    from app.woerterbuch import Bekannt
+
+    b = Bekannt("de", frozenset({"schwert", "platte", "panzer", "fahndung", "plakat", "heil", "trank", "tor"}))
+    for w in ("Schwert", "Plattenpanzer", "Fahndungsplakat", "Heiltrank", "Panzer-Tor"):
+        assert b.enthaelt(w), w
+    for w in ("Tharvok", "Torx", "Pla"):
+        assert not b.enthaelt(w), w
+    assert not Bekannt("en", frozenset({"platte", "panzer"})).enthaelt("Plattenpanzer")  # nur im Deutschen
+    # Nur als Zusammensetzung bekannt und fast wie ein Name der Kampagne → trotzdem nachfragen
+    from app.unsicher import _bekannt
+
+    b = Bekannt("de", frozenset({"rabe", "feld", "schwert"}))
+    namen = [("Rabenfels", "e1", None)]
+    assert not _bekannt("Rabenfeld", b, namen) and _bekannt("Schwert", b, namen) and _bekannt("Rabenfeld", b, [])
+
+
+def test_unsichere_namen_mit_woerterbuch_und_kampagnentexten(client, world, dbs, tmp_path):
+    from app.models import Campaign, TranscriptSegment
+
+    w = world
+    s = _zur_pruefung(client, w, dbs, tmp_path)
+    sid = s["id"]
+    dbs.expire_all()
+    seg = dbs.query(TranscriptSegment).filter_by(session_id=sid).order_by(TranscriptSegment.start).first()
+    seg.text += " Das Schwert im Plattenpanzer. Die Tavernenwirtin Grimhild lacht."
+    seg.unsicher = ('[{"word": "Schwert", "start": 1, "score": 0.2}, {"word": "Plattenpanzer", "start": 2, '
+                    '"score": 0.2}, {"word": "Grimhild", "start": 3, "score": 0.2}, {"word": "Tharvok", "start": 3, '
+                    '"score": 0.31}]')
+    dbs.commit()
+    # Ohne Wortliste: alles Großgeschriebene ist verdächtig
+    heard = {t["heard"] for t in client.get(f"{API}/sessions/{sid}/uncertain-terms", headers=w["gm"]).json()["terms"]}
+    assert {"Schwert", "Plattenpanzer", "Grimhild", "Tharvok"} <= heard
+    # Mit Wortliste: allgemeine Wörter und Komposita fallen weg
+    _wortliste(["schwert", "platte", "panzer", "das", "die", "im"])
+    heard = {t["heard"] for t in client.get(f"{API}/sessions/{sid}/uncertain-terms", headers=w["gm"]).json()["terms"]}
+    assert heard == {"Grimhild", "Tharvok"}
+    # Steht der Name in einer SL-Notiz, ist die Schreibweise bekannt; „Darvok“ aus der Welt-Info wird vorgeschlagen
+    client.put(f"{API}/sessions/{sid}/gm-note", headers=w["gm"], json={"text": "Die Wirtin heißt Grimhild."})
+    c = dbs.get(Campaign, w["cid"])
+    c.world_info = "Im Norden herrscht der Fürst Darvok."
+    dbs.commit()
+    terms = client.get(f"{API}/sessions/{sid}/uncertain-terms", headers=w["gm"]).json()["terms"]
+    assert [t["heard"] for t in terms] == ["Tharvok"] and terms[0]["alternatives"][0] == "Darvok"
+
+
+def test_sicher_gesagtes_aus_anderen_kapiteln(client, world, dbs, tmp_path):
+    from app.models import TranscriptSegment
+
+    w = world
+    s1 = _zur_pruefung(client, w, dbs, tmp_path)
+    s2 = _zur_pruefung(client, w, dbs, tmp_path)
+    dbs.expire_all()
+    for seg in dbs.query(TranscriptSegment).filter_by(session_id=s1["id"]):
+        seg.unsicher = None  # im ersten Kapitel sauber erkannt …
+    dbs.commit()
+    # … „Tharvok“ fiel dort dreimal (zwei Abschnitte mit dem Namen, dazu einer mehr)
+    seg = dbs.query(TranscriptSegment).filter_by(session_id=s1["id"]).first()
+    seg.text += " Tharvok!"
+    dbs.commit()
+    terms = client.get(f"{API}/sessions/{s2['id']}/uncertain-terms", headers=w["gm"]).json()["terms"]
+    assert terms == []
+
+
+def test_wortliste_laden(client, monkeypatch):  # client: eigener Datenordner
+    import gzip
+    import hashlib
+
+    import httpx
+
+    from app import woerterbuch
+
+    roh = "ich 900\nschwert 50\nseltenes 3\nTaverne 12\n".encode()
+    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", hashlib.sha256(roh).hexdigest()))
+    klient = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=roh)))
+    assert woerterbuch.herunterladen("de", klient)
+    with gzip.open(woerterbuch.pfad("de"), "rt", encoding="utf-8") as f:
+        assert f.read().split("\n") == ["ich", "schwert", "taverne"]
+    assert "taverne" in woerterbuch.liste("de")
+    monkeypatch.setitem(woerterbuch.QUELLEN, "de", ("x/de_full.txt", "0" * 64))
+    try:
+        woerterbuch.herunterladen("de", klient)
+    except ValueError as e:
+        assert "Prüfsumme" in str(e)
+    else:
+        raise AssertionError("keine Prüfung")

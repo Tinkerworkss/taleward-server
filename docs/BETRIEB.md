@@ -194,6 +194,16 @@ Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen (**Updates**):
 - **Server:** siehe [INSTALLATION.md](../INSTALLATION.md#alltag-und-updates).
 - Ohne Internetzugang oder zum Abschalten: `UPDATE_CHECK=false` in der `.env`.
 
+## Wortlisten für die Namensprüfung
+
+Damit die SL nur wirklich unsicher erkannte Namen zur Prüfung bekommt (Schnittstelle 0.4.6), lädt der Server einmal
+je eine Wortliste für Deutsch und Englisch von GitHub (feste Fassung mit Prüfsumme, zusammen etwa 37 MB Download,
+verkleinert gut 1 MB unter `data/woerterbuch/`). Quelle: Häufigkeitslisten aus Filmuntertiteln (OpenSubtitles 2018),
+aufbereitet von Hermit Dave ([FrequencyWords](https://github.com/hermitdave/FrequencyWords)), Lizenz
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Ohne Internetzugang fehlt nur diese eine Quelle – die
+Prüfung nutzt dann die Texte der Kampagne und frühere Kapitel und meldet etwas mehr. Der Stand steht unter
+Verwaltung → Zusammenfassung → Prüfung.
+
 ## Datenschutz und Verträge
 
 - Die **Vorlage für den Datenschutzhinweis** füllt sich aus den Einstellungen (Betreiber, Cloud-Dienste,

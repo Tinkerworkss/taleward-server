@@ -658,6 +658,7 @@ TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-A
 def _llm_anzeige(db: Session) -> dict:
     from app.einstellungen import extern_konfig, llm_konfig
     from app.sprachmodell import PREISE
+    from app import woerterbuch
     from app.zusammenfassung import gegenpruefen_an
 
     k = llm_konfig(db)
@@ -669,7 +670,8 @@ def _llm_anzeige(db: Session) -> dict:
             "key_von_extern": bool(k.api_key) and not k.eigener_key,
             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
-                                  for kn in worker), "gegenpruefen": gegenpruefen_an(db)}
+                                  for kn in worker), "gegenpruefen": gegenpruefen_an(db),
+             "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")}}
 
 
 @router.get("/zusammenfassung", response_class=HTMLResponse)
