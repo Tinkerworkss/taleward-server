@@ -379,6 +379,28 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
 
 
+def transkript_speichern(ordner: Path, recap_ein: dict) -> Path:
+    """Das Transkript so, wie es die Modelle bekommen – als Grundlage für einen Referenz-Recap (z. B. mit einem
+    großen Modell geschrieben) und zum Nachprüfen der Recaps. Nur auf dem eigenen PC, wird nirgends hingeschickt."""
+    ordner.mkdir(parents=True, exist_ok=True)
+    kopf = [f"{recap_ein.get('kampagne')} – Kapitel {recap_ein.get('session_nummer')}"
+            + (f": {recap_ein['session_titel']}" if recap_ein.get("session_titel") else "")]
+    for p in recap_ein.get("personen") or []:
+        rolle = "Spielleitung" if p.get("rolle") == "gm" else "Spieler"
+        kopf.append(f"- {p.get('name')} ({rolle})" + (f" spielt {p['charakter']}" if p.get("charakter") else "")
+                    + (f": {p['charakter_kurz']}" if p.get("charakter_kurz") else ""))
+    kopf += [f"- {g} (Gast)" for g in recap_ein.get("gaeste") or []]
+
+    def uhr(sek: float) -> str:
+        sek = int(sek)
+        return f"{sek // 3600}:{sek % 3600 // 60:02d}:{sek % 60:02d}"
+
+    zeilen = [f"[{uhr(z['start'])}] {z['sprecher']}: {z['text']}" for z in recap_ein.get("transkript") or []]
+    pfad = ordner / "transkript.txt"
+    pfad.write_text("\n".join(kopf) + "\n\n" + "\n".join(zeilen) + "\n", encoding="utf-8")
+    return pfad
+
+
 def modelle_lesen(text: str, kontext: int) -> list[tuple[str, int]]:
     """„a, b@8192“ → [(a, kontext), (b, 8192)]."""
     aus = []
@@ -408,6 +430,7 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
     recap_ein, vorschlag_ein, info = eingabe_aus_schnittstelle(server, session_id)
     melden(f"{info['kampagne']}, Kapitel {info['kapitel']}: {info['zeilen']} Zeilen, Aufnahme {_zeit(info['dauer_s'])}")
     ordner = ziel / f"modellvergleich-{datetime.now():%Y%m%d-%H%M}"
+    melden(f"Transkript: {transkript_speichern(ordner, recap_ein)}")
     paare = []
     for modell, kontext in modelle:
         melden(f"\n== {modell} (Kontext {kontext}) ==")
