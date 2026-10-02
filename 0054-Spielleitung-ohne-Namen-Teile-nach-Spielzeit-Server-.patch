@@ -1,0 +1,359 @@
+From da74efdbf3521c02f2ff4c854a74e83e08e62181 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 01:20:40 +0200
+Subject: [PATCH] Spielleitung ohne Namen, Teile nach Spielzeit (Server 0.4.44)
+
+- Die Spielleitung erscheint im Transkript fuer das Modell nur noch als
+  "Spielleitung", ohne Namen; Absaetze, in denen sie trotzdem als Figur
+  auftritt, gehen in die Nachbesserung
+- Notizen ohne Zeit uebernehmen die Zeit der Notiz davor; abgeschriebene
+  Transkriptzeilen fallen weg
+- Teile fuer die Zwischenzusammenfassung nach Spielzeit (etwa 30 Minuten)
+  statt nach Textmenge
+- Regelfilter um Wurf, kritisch, Schaden, erleichtert/erschwert erweitert
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/modellvergleich.py        |  2 +-
+ app/sprachmodell.py           | 89 ++++++++++++++++++++++++++++++-----
+ app/zusammenfassung.py        |  4 +-
+ pyproject.toml                |  2 +-
+ tests/test_aktualisierung.py  |  2 +-
+ tests/test_assistent.py       |  2 +-
+ tests/test_modellablage.py    |  2 +-
+ tests/test_modellvergleich.py |  2 +-
+ tests/test_szenennotizen.py   | 58 +++++++++++++++++++++++
+ tests/test_worker_app.py      |  2 +-
+ uv.lock                       |  2 +-
+ 11 files changed, 145 insertions(+), 22 deletions(-)
+
+diff --git a/app/modellvergleich.py b/app/modellvergleich.py
+index 1626b63..cc7361e 100644
+--- a/app/modellvergleich.py
++++ b/app/modellvergleich.py
+@@ -127,5 +127,5 @@ def eingabe_aus_schnittstelle(server: Server, session_id: str) -> tuple[dict, di
+             return sp.get("label") or ("Unknown" if en else "Unbekannt")
+         if m["role"] == "gm":
+-            return f"{m['displayName']} ({'game master' if en else 'Spielleitung'})"
++            return "Game Master" if en else "Spielleitung"  # ohne Namen, wie im Betrieb
+         return m.get("characterName") or m["displayName"]
+ 
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 2b95f2b..186cec3 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -33,5 +33,6 @@ NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szene
+ BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
+ NOTIZEN_HOECHSTENS = 15  # je Abschnitt; mehr sprengt die Antwortlänge, und das Ende des Abschnitts geht verloren
+-TEIL_TOKEN = 2000  # lange Runden: so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
++TEIL_TOKEN = 2000  # lange Runden: höchstens so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
++TEIL_MINUTEN = 30  # … und Teile nach Spielzeit geschnitten, damit jeder Teil gleich viel Platz im Kapitel bekommt
+ ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
+ 
+@@ -388,8 +389,10 @@ _ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] 
+ _REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
+                      r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
+-                     r"|Initiative|erleichtert um|erschwert um|kritisch(?:er)? (?:erfolgreich|Erfolg|Patzer)|Patzer"
++                     r"|Initiative|erleichtert\w*|erschwert\w*|kritisch\w* (?:erfolgreich|Erfolg\w*|Patzer|Wurf\w*|Treffer|bei)|Patzer"
++                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b"
+                      r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
+                      r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
+                      r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
++_SPIELLEITUNG = re.compile(r"\b(?:Spielleitung|Spielleiter\w*|game master|GM)\b", re.I)
+ ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
+ ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
+@@ -442,5 +445,5 @@ def _kopf(ein: dict) -> str:
+     for p in ein["personen"]:
+         if p["rolle"] == "gm":
+-            runde.append(f"- {p['name']}: Spielleitung")
++            runde.append("- Spielleitung (leitet die Runde, keine Figur)")
+         else:
+             c = p.get("charakter") or "(ohne Charaktername)"
+@@ -469,6 +472,7 @@ Ende des Abschnitts bleibt.
+ Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen Klammern, z. B. „[12:34]“ oder \
+ „[1:09:07]“ – ohne Zeitstempel ist eine Notiz unbrauchbar. Übernimm Namen genau so, wie sie gesagt werden. \
+-Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
+-einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
++Der Sprecher „Spielleitung“ ist keine Figur der Geschichte: Spricht er, erzählt er oder spricht für einen \
++Nichtspielercharakter – schreib dann den Namen dieser Figur; das Wort „Spielleitung“ kommt in den Notizen nicht vor. \
++Schreib die Zeilen nicht ab, sondern fasse sie zusammen. \
+ Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
+ des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
+@@ -496,6 +500,6 @@ weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht t
+ geschehen; wer etwas wofür gibt, steht so in der Grundlage.
+ - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
+-Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung. Regeln, Würfe, Punkte und Gespräche außerhalb des \
+-Spiels kommen nicht vor.
++Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung; das Wort „Spielleitung“ kommt im Recap nicht vor. \
++Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
+ - Offensichtliche Witze sind kein Spielgeschehen.
+ - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
+@@ -554,5 +558,6 @@ sie beanstandet; der Grund steht jeweils dabei.
+ Schreibe jeden genannten Absatz neu, sodass er nur noch enthält, was die Grundlage belegt. Lass Unbelegtes und \
+ Ausgeschmücktes weg, statt es umzuformulieren – lieber kürzer. Gleicher Ton, Erzählstimme in der Vergangenheit, Figuren \
+-nach ihren Charakteren. Bleibt von einem Absatz nichts Belegtes übrig, gib als text "" zurück. Reiner Text ohne Markdown.
++nach ihren Charakteren. Die Spielleitung ist keine Figur: Was sie sagt oder tut, sagt oder tut ein \
++Nichtspielercharakter oder die Erzählung. Bleibt von einem Absatz nichts Belegtes übrig, gib als text "" zurück. Reiner Text ohne Markdown.
+ Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+ 
+@@ -563,4 +568,16 @@ BEANSTANDET = ("unsupported", "contradicted", "off_game")
+ 
+ 
++def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
++    """Absätze, in denen die Spielleitung als Figur auftritt („die Spielleitung zusicherte“), gelten als beanstandet –
++    die Nachbesserung bekommt den Grund. Die Prüfung durch das Modell übersieht das regelmäßig."""
++    teile = absaetze(text)
++    for b in befund:
++        i = b.get("index", -1)
++        if 0 <= i < len(teile) and _SPIELLEITUNG.search(teile[i]) and b["verdict"] not in BEANSTANDET:
++            b["verdict"] = "off_game"
++            b["note"] = "Die Spielleitung ist keine Figur – nenne den Nichtspielercharakter, für den sie spricht, oder erzähle ohne sie."
++    return befund
++
++
+ def absaetze(text: str) -> list[str]:
+     """Absätze eines Recaps (durch Leerzeile getrennt) – wie die App sie zählt."""
+@@ -782,4 +799,44 @@ def _notizkern(n: str) -> str:
+ 
+ 
++_SPRECHER_VORN = re.compile(r"^\[[^\]]*\]\s*[^:\n]{1,60}:\s*")  # „[1:00] Spielleitung: “
++
++
++def _zeilenkerne(zeilen: list[str]) -> set[str]:
++    """Transkriptzeilen als Kern (mit und ohne Sprechernamen), um abgeschriebene Zeilen in den Notizen zu erkennen."""
++    kerne = set()
++    for z in zeilen:
++        k = _notizkern(z)
++        if len(k) >= 12:
++            kerne.add(k)
++            ohne = _SPRECHER_VORN.sub("", z)
++            if ohne != z and len(_notizkern(ohne)) >= 12:
++                kerne.add(_notizkern(ohne))
++    return kerne
++
++
++def _teile_nach_zeit(notizen: list[str]) -> list[str]:
++    """Notizen in Teile von etwa TEIL_MINUTEN Spielzeit, keiner länger als TEIL_TOKEN Token. Nach Zeit statt nach
++    Textmenge, damit eine wortreiche halbe Stunde nicht den ganzen Teil füllt und das Ende der Runde in einen
++    Zwei-Minuten-Teil rutscht."""
++    zeiten = [t for t in (_zeit_vorn(n) for n in notizen) if t is not None]
++    if not zeiten:
++        return stuecke(notizen, TEIL_TOKEN)
++    von, bis = min(zeiten), max(zeiten)
++    anzahl = max(1, round((bis - von) / (TEIL_MINUTEN * 60)))
++    laenge = (bis - von) / anzahl if anzahl else 0
++    gruppen: list[list[str]] = [[] for _ in range(anzahl)]
++    letzte = 0
++    for n in notizen:
++        t = _zeit_vorn(n)
++        if t is not None and laenge:
++            letzte = min(anzahl - 1, int((t - von) / laenge))
++        gruppen[letzte].append(n)
++    teile = []
++    for g in gruppen:
++        if g:
++            teile += stuecke(g, TEIL_TOKEN)  # zu wortreich: weiter teilen
++    return teile
++
++
+ def _ohne_doppelte(notizen: list[str]) -> list[str]:
+     """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
+@@ -860,9 +917,17 @@ class Ablauf:
+                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
+         gerettet = bool(d.pop("_gerettet", False))
+-        notizen = []
++        kopien = _zeilenkerne(zeilen)
++        notizen, zuletzt = [], None
+         for n in d.get("notizen") or []:
+             n = _notiz_normieren(str(n))
++            m = _ZEIT_VORN.match(n)
++            if m:
++                zuletzt = f"[{m.group(1)}]"
++            elif zuletzt is not None:
++                n = f"{zuletzt} {n}"  # Notiz ohne Zeit gehört zur Stelle davor
+             if not n or _REGELN.search(n) or _bruchstueck(n):
+                 continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
++            if _notizkern(n) in kopien or _notizkern(_SPRECHER_VORN.sub("", n)) in kopien:
++                continue  # abgeschriebene Transkriptzeile statt Notiz
+             if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
+                 notizen.append(n)
+@@ -895,5 +960,5 @@ class Ablauf:
+         """Lange Runden: die Notizen in Teile gliedern und jeden Teil einzeln zusammenfassen. Der Recap bekommt diese
+         Gliederung, damit kein Teil der Runde untergeht (kleine Modelle erzählen sonst vor allem den Anfang)."""
+-        teile = stuecke([z for z in notizen.split("\n") if z.strip()], TEIL_TOKEN)
++        teile = _teile_nach_zeit([z for z in notizen.split("\n") if z.strip()])
+         if len(teile) < 2:
+             return ""
+@@ -976,5 +1041,5 @@ class Ablauf:
+         try:
+             self._schritt("review")
+-            befund = self.pruefen(ein, titel, grundlage, r["text"])
++            befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
+             if any(b["verdict"] in BEANSTANDET for b in befund):
+                 self._schritt("revision")
+@@ -983,5 +1048,5 @@ class Ablauf:
+                     r["text"], pruefung["revised"] = neu, True
+                     self._schritt("review")
+-                    befund = self.pruefen(ein, titel, grundlage, neu)
++                    befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
+             pruefung["paragraphs"] = befund
+         except SprachmodellFehler as e:
+diff --git a/app/zusammenfassung.py b/app/zusammenfassung.py
+index e929e5f..cabad5f 100644
+--- a/app/zusammenfassung.py
++++ b/app/zusammenfassung.py
+@@ -118,6 +118,6 @@ def eingabe_bauen(db: Session, s: GameSession) -> Eingabe:
+         if m is None:
+             return sp.label, None
+-        if m.role == "gm":
+-            return f"{m.anzeigename} (Spielleitung)", m.id
++        if m.role == "gm":  # ohne Namen: das Modell soll die Spielleitung nie als Figur mit Namen erzählen
++            return "Game Master" if c.language == "en" else "Spielleitung", m.id
+         return m.character_name or m.anzeigename, m.id
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index bd59e8f..ff3e3f3 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.43"
++version = "0.4.44"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index a01e633..65e93f7 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.43"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.44"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index a9b1df6..db85e08 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.43"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.44"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 4056166..3f13bb8 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.43"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.44"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
+index 4ce773e..d854843 100644
+--- a/tests/test_modellvergleich.py
++++ b/tests/test_modellvergleich.py
+@@ -74,5 +74,5 @@ def test_modellvergleich(client, world, dbs, tmp_path):
+     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
+     transkript = (ordner / "transkript.txt").read_text(encoding="utf-8")
+-    assert "(Spielleitung)" in transkript and "[0:00:00]" in transkript
++    assert "] Spielleitung:" in transkript and "[0:00:00]" in transkript
+     # Denkmodus: nur beim Modell, das ihn kann, wird er abgeschaltet
+     assert all("think" not in b for b in aufrufe if b["model"] == "a:1")
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index bd39616..d3b16d0 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -289,2 +289,60 @@ def test_beleg_zeit_aus_zitierter_notiz():
+     belege = pruefen(roh, set(), set(), grundlage=notizen)[0]["evidence"]
+     assert belege[0]["start"] == 24 * 60 + 48 and belege[1]["start"] == 0.0
++
++
++def test_notizen_erben_zeit_und_abschriften_fallen_weg():
++    """Lauf 8: Ein Abschnitt bestand aus abgeschriebenen Transkriptzeilen, je gefolgt von einer Notiz ohne Zeit."""
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def chat(self, system, nutzer):
++            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
++            return Antwort(json.dumps({"notizen": [
++                zeilen[2],  # wörtlich abgeschrieben, mit Sprecher
++                "Die Gruppe spricht über Rabenfels und den Regen.",  # ohne Zeit → erbt die Zeit der Notiz davor
++                "[1:00] Spielleitung: " + zeilen[3].split(": ", 1)[1],  # abgeschrieben, anderer Sprecher
++                "[2:00] Mira bricht nach Rabenfels auf.",
++                "Anna bleibt zurück und wartet.",
++                "[9:00] Alle erreichen Rabenfels im Regen."]}), 1, 1)
++
++    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
++    assert text.split("\n") == ["[0:40] Die Gruppe spricht über Rabenfels und den Regen.",
++                                "[2:00] Mira bricht nach Rabenfels auf.", "[2:00] Anna bleibt zurück und wartet.",
++                                "[9:00] Alle erreichen Rabenfels im Regen."]
++
++
++def test_teile_nach_spielzeit():
++    from app.sprachmodell import _teile_nach_zeit, TEIL_MINUTEN
++
++    # 90 Minuten, aber die ersten 10 Minuten sind wortreich: trotzdem drei Teile nach Zeit
++    notizen = [f"[{m}:00] " + ("Lange Notiz über den Kerker, die viel Platz braucht. " * 6) for m in range(0, 10)]
++    notizen += [f"[{m}:00] Kurze Notiz." for m in range(10, 91, 5)]
++    teile = _teile_nach_zeit(notizen)
++    assert len(teile) == 3
++    assert teile[0].startswith("[0:00]") and "[30:00]" in teile[1] and teile[2].endswith("[90:00] Kurze Notiz.")
++    # ohne Zeiten: nach Textmenge wie bisher
++    assert _teile_nach_zeit(["a", "b"]) == ["a\nb"]
++    assert TEIL_MINUTEN == 30
++
++
++def test_spielleitung_im_recap_wird_beanstandet():
++    from app.sprachmodell import spielleitung_beanstanden, BEANSTANDET
++
++    text = "Die Gruppe floh.\n\nDie Spielleitung sicherte zu, Arbon zu schützen.\n\nAm Ende schliefen alle."
++    befund = [{"index": i, "verdict": "supported", "note": None, "evidence": []} for i in range(3)]
++    aus = spielleitung_beanstanden(befund, text)
++    assert [b["verdict"] for b in aus] == ["supported", "off_game", "supported"]
++    assert aus[1]["verdict"] in BEANSTANDET and "Nichtspielercharakter" in aus[1]["note"]
++
++
++def test_spielleitung_ohne_namen_im_transkript():
++    from app.sprachmodell import _kopf, SYSTEM_NOTIZEN, SYSTEM_RECAP
++
++    ein = _ein(3)
++    ein["personen"] = [{"id": "1", "name": "Tinker", "rolle": "gm", "charakter": None},
++                       {"id": "2", "name": "Ben", "rolle": "player", "charakter": "Mira"}]
++    kopf = _kopf(ein)
++    assert "Tinker" not in kopf and "Spielleitung" in kopf and "Ben spielt Mira" in kopf
++    assert "„Spielleitung“ kommt" in SYSTEM_NOTIZEN and "„Spielleitung“ kommt im Recap nicht vor" in SYSTEM_RECAP
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 3c1eebf..06a3d55 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.43"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.44"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index dd47792..23aa0e0 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.43"
++version = "0.4.44"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
