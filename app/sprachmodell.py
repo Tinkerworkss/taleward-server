@@ -31,6 +31,7 @@ MAX_VORSCHLAEGE = 15
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
 BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
+NOTIZEN_HOECHSTENS = 15  # je Abschnitt; mehr sprengt die Antwortlänge, und das Ende des Abschnitts geht verloren
 TEIL_TOKEN = 2000  # lange Runden: so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
@@ -383,6 +384,19 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
     return teile
 
 
+_ZEIT_VORN = re.compile(r"^\s*\[(\d{1,2}(?::\d{2}){1,2})\]")
+_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|Probe\b|Proben\b|Qualitätsstufe|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*"
+                     r"|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|Initiative|erleichtert um|erschwert um"
+                     r"|\d+\s?[wW]\d+|[wW]20\b|Schicksalsmarker|Spielleitung (?:verlangt|fordert|erlaubt|bittet)"
+                     r"|Gewinnspiel|Pause)\b")
+ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
+
+
+def _zeit_vorn(zeile: str) -> float | None:
+    m = _ZEIT_VORN.match(zeile)
+    return zeit_lesen(m.group(1)) if m else None
+
+
 def woerter(ein: dict) -> str:
     """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
     zeilen = ein.get("transkript") or []
@@ -431,10 +445,16 @@ Anführungszeichen.
 - Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
 Fragen.
 Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
-nicht getan. Lieber eine Notiz mehr als eine zu wenig – etwa eine je ein bis zwei Minuten Spielgeschehen.
+nicht getan.
+Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über seine Dauer verteilt – bis zur letzten \
+Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder lässt sie weg, damit Platz für das \
+Ende des Abschnitts bleibt.
 Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
-Lass Regelfragen, Würfelwürfe, Werte, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche Witze markierst \
-du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
+Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
+einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
+Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
+des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
+„Bisher“, ist das nur zur Orientierung – nicht wiederholen.
 Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
 
 SYSTEM_TEIL = """Du hilfst bei der Nachbereitung einer langen Pen-&-Paper-Rollenspielsession. Du bekommst die \
@@ -443,7 +463,8 @@ Reihenfolge des Geschehens.
 - Jeder Wendepunkt mit seinem Ausgang: wer gefangen, verurteilt, befreit, gerettet, verletzt oder getötet wird, wer \
 flieht, wer wem was gibt oder verspricht, welche Abmachungen gelten. Erscheinungen und Visionen mit ihrer Botschaft.
 - Orte und Nichtspielercharaktere mit ihren Namen. Verletzt ist nicht tot, angedroht ist nicht geschehen.
-- Nichts aus anderen Teilen, nichts erfinden, keine Regeln oder Würfe.
+- Nichts aus anderen Teilen, nichts erfinden, keine Regeln, Würfe oder Punkte. Die Spielleitung ist keine Figur – \
+nenne die Nichtspielercharaktere, für die sie spricht.
 Antworte nur mit JSON: {"zusammenfassung": "…"}. Sprache: {sprache}."""
 
 SYSTEM_RECAP = """Du schreibst den Recap („Was bisher geschah“) einer Pen-&-Paper-Rollenspielsession. Er wird vor der \
@@ -455,8 +476,9 @@ Absätze durch Leerzeilen getrennt.
 - Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
 weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
 geschehen; wer etwas wofür gibt, steht so in der Grundlage.
-- Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung, Regeln, Würfe und \
-Gespräche außerhalb des Spiels kommen nicht vor.
+- Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
+Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung. Regeln, Würfe, Punkte und Gespräche außerhalb des \
+Spiels kommen nicht vor.
 - Offensichtliche Witze sind kein Spielgeschehen.
 - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
 - Offene Fäden: 0 bis 6 kurze Sätze zu ungelösten Fragen, Versprechen und Zielen der Gruppe.
@@ -640,6 +662,8 @@ def _json(antwort: Antwort, retten: bool = False) -> dict:
             wert = None
         if wert is None and retten:
             wert = json_retten(text)
+            if isinstance(wert, dict):
+                wert["_gerettet"] = True  # abgeschnitten – der Aufrufer weiß dann, dass das Ende fehlt
         if wert is None:
             raise AntwortFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
     if not isinstance(wert, dict):
@@ -760,7 +784,7 @@ class Ablauf:
         if tokens(text) <= self.max_transkript_tokens:
             return "Transkript", text
         kopf = _kopf(ein)
-        system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
+        system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(NOTIZEN_HOECHSTENS))
         self._schritt("notes")
         # Notizen sind kürzer als ihr Abschnitt, aber nicht beliebig: Die Antwort darf höchstens ANTWORT_HOECHSTENS
         # Token lang werden. Darum höchstens NOTIZ_STUECK Token je Abschnitt, auch bei großem Kontext.
@@ -784,7 +808,8 @@ class Ablauf:
 
     def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
-        (höchstens zweimal) – kleine Modelle verlieren sich eher in langen Abschnitten."""
+        (höchstens zweimal). Bricht die Antwort ab oder enden die Notizen lange vor dem Abschnittsende, bekommt der
+        nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an denen das Modell aufgab."""
         try:
             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
         except AntwortFehler:
@@ -794,11 +819,28 @@ class Ablauf:
             mitte = len(zeilen) // 2
             return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
+        gerettet = bool(d.pop("_gerettet", False))
         notizen = []
         for n in d.get("notizen") or []:
             n = str(n).strip()
-            if n and (not notizen or n != notizen[-1]):  # Schleifen ergeben gleiche Zeilen hintereinander
+            if not n or _REGELN.search(n):
+                continue  # Würfe und Werte gehören nicht in die Geschichte
+            if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
                 notizen.append(n)
+        if gerettet and notizen:
+            notizen.pop()  # die letzte Notiz einer abgeschnittenen Antwort ist meist selbst unvollständig
+        # Deckt das Ergebnis den Abschnitt ab? Zeit der letzten Notiz gegen die Zeit der letzten Zeile.
+        zeiten = [t for t in (_zeit_vorn(z) for z in zeilen) if t is not None]
+        bis = max((t for t in (_zeit_vorn(n) for n in notizen) if t is not None), default=None)
+        if zeiten and tiefe < 3 and (gerettet or bis is None or bis < zeiten[0] + ABDECKUNG * (zeiten[-1] - zeiten[0])):
+            ab = 0 if bis is None else next((i for i, z in enumerate(zeilen)
+                                              if (_zeit_vorn(z) or 0) > bis), len(zeilen))
+            if gerettet and bis is None:
+                ab = len(zeilen) // 2
+            rest = zeilen[ab:]
+            if 8 <= len(rest) < len(zeilen):
+                log.info("Szenennotizen: Rest des Abschnitts (%d Zeilen) wird nachgeholt", len(rest))
+                notizen += self._notizen(system, vorspann, rest, tiefe + 1)
         return notizen
 
     def verlauf(self, ein: dict, notizen: str) -> str:

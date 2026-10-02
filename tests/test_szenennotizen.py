@@ -19,7 +19,7 @@ def test_recap_wird_nicht_gerettet():
 
     with pytest.raises(AntwortFehler):
         _json(Antwort('{"title": "Kapitel 1", "text": "Die Gruppe ritt nach'))
-    assert _json(Antwort('{"notizen": ["a", "b'), retten=True) == {"notizen": ["a"]}
+    assert _json(Antwort('{"notizen": ["a", "b'), retten=True) == {"notizen": ["a"], "_gerettet": True}
 
 
 def _ein(n=300):
@@ -107,7 +107,8 @@ def test_notizen_bekommen_die_vorgeschichte():
 
         def chat(self, system, nutzer):
             self.nutzer.append(nutzer)
-            return Antwort(json.dumps({"notizen": [f"[0:{len(self.nutzer):02d}] Notiz {len(self.nutzer)}-{j}"
+            letzte = nutzer.rstrip().rsplit("\n", 1)[-1].split("]")[0].strip("[")  # Zeit der letzten Zeile
+            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j}"
                                                    for j in range(10)]}), 1, 1)
 
     k = Klient()
@@ -178,3 +179,50 @@ def test_kurze_runde_ohne_teile():
     ein = _ein(50)
     Ablauf(k).ausfuehren(ein, ein)
     assert not any("4 bis 8 Sätzen" in s for s in k.systeme)
+
+
+def test_abgeschnittene_notizen_rest_wird_nachgeholt():
+    """Bricht die Antwort ab (Längengrenze), fehlt das Ende des Abschnitts – es wird eigens nachgeholt."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append(nutzer)
+            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+            if len(self.nutzer) == 1:  # erster Aufruf: nur die erste Hälfte, dann abgeschnitten
+                halbe = zeilen[: len(zeilen) // 2]
+                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in halbe]})
+                return Antwort(text[:-8], 1, 1)
+            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
+
+    k = Klient()
+    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=50000)
+    _, text = ablauf.grundlage(_ein(300), lambda _p: None)
+    # Abschnitt 1 abgeschnitten → sein Rest wird nachgeholt; danach Abschnitt 2 normal: ein Aufruf mehr als Abschnitte
+    abschnitte = k.nutzer[0].split("Abschnitt 1 von ")[1].split(" ")[0]
+    assert len(k.nutzer) == int(abschnitte) + 1
+    assert "[1:39:40]" in text  # das Ende der Runde (Zeile 299 × 20 s) ist in den Notizen
+    erste_zeiten = [int(z.split(":")[0].strip("[")) for z in text.split("\n")[:3]]
+    assert erste_zeiten == sorted(erste_zeiten)  # Reihenfolge bleibt
+
+
+def test_notizen_mit_regeln_fliegen_raus():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            return Antwort(json.dumps({"notizen": [
+                "[0:00] Alle verlieren 8 Lebenspunkte wegen Folter.",
+                "[0:30] Spielleitung fordert eine Probe auf Klettern.",
+                "[1:00] Orasilas verbindet Pipo notdürftig.",
+                "[99:00] Die Gruppe erreicht den Fringlasshof."]}), 1, 1)
+
+    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
+    assert "Pipo" in text and "Fringlasshof" in text and "Lebenspunkte" not in text and "Probe" not in text
