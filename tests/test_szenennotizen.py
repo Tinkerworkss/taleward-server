@@ -126,3 +126,55 @@ def test_beleg_zeit_aus_der_notiz():
                                {"quote": "[12:34] Pipo gibt sein Schwert"},
                                {"start": "5:00", "quote": "[12:34] bleibt"}]}], set(), set())
     assert [b["start"] for b in v[0]["evidence"]] == [4147.0, 754.0, 300.0]
+
+
+def test_lange_runde_recap_aus_teilen():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = []
+
+        def chat(self, system, nutzer):
+            self.aufrufe.append((system, nutzer))
+            if "4 bis 8 Sätzen" in system:
+                nr = nutzer.split("Teil ")[1].split(" ")[0]
+                return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
+            if "Szenennotizen" in system:
+                return Antwort(json.dumps({"notizen": [f"[{len(self.aufrufe)}:00] Ereignis {len(self.aufrufe)}-{j} "
+                                                       + "mit vielen Worten " * 10 for j in range(12)]}), 1, 1)
+            if "Recap" in system and "prüfst" not in system:
+                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
+            return Antwort(json.dumps({"proposals": [], "absaetze": []}), 1, 1)
+
+    k = Klient()
+    ablauf = Ablauf(k, max_transkript_tokens=2000, stueck_tokens=1500)
+    ein = _ein(600)
+    ablauf.ausfuehren(ein, ein)
+    teile = [n for s, n in k.aufrufe if "4 bis 8 Sätzen" in s]
+    assert len(teile) >= 2 and "Teil 1 von" in teile[0]
+    recap = [n for s, n in k.aufrufe if "Was bisher geschah" in s][0]
+    assert "Verlauf der Runde in Teilen" in recap and "Im Teil 1 geschieht etwas." in recap
+    assert ablauf.letzter_verlauf.startswith("Teil 1 von")
+    vorschlag = [n for s, n in k.aufrufe if "Kampagnen-Bibel" in s][0]
+    assert "Ereignis" in vorschlag  # Vorschläge arbeiten weiter mit den genauen Notizen
+
+
+def test_kurze_runde_ohne_teile():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+        systeme: list[str] = []
+
+        def chat(self, system, nutzer):
+            self.systeme.append(system)
+            return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": [],
+                                       "proposals": []}), 1, 1)
+
+    k = Klient()
+    ein = _ein(50)
+    Ablauf(k).ausfuehren(ein, ein)
+    assert not any("4 bis 8 Sätzen" in s for s in k.systeme)

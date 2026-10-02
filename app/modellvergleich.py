@@ -169,6 +169,8 @@ class Ergebnis:
     tokens_aus: int = 0
     grundlage: str = ""  # „Transkript“ oder „Szenennotizen …“
     letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
+    notizen: str = ""  # Grundlage, wenn verdichtet (Szenennotizen) – zur Fehlersuche, bleibt lokal
+    verlauf: str = ""  # Zusammenfassungen der Teile bei langen Runden
     titel: str = ""
     text: str = ""
     offene_faeden: list[str] = field(default_factory=list)
@@ -246,6 +248,9 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         erg.aufrufe, erg.tokens_ein, erg.tokens_aus = (ablauf.zaehler.aufrufe, ablauf.zaehler.tokens_in,
                                                        ablauf.zaehler.tokens_out)
         erg.grundlage = ablauf.letzte_grundlage[0]
+        if erg.grundlage.startswith("Szenennotizen"):
+            erg.notizen = ablauf.letzte_grundlage[1]
+        erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
         k.entladen()
     return erg, ablauf
 
@@ -374,10 +379,13 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
         d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}")  # dasselbe Modell mit zwei Kontexten getrennt
         d.mkdir(exist_ok=True)
         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
-        if e.letzte_antwort:
-            (d / "letzte-antwort.txt").write_text(e.letzte_antwort, encoding="utf-8")
+        for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
+                             ("verlauf.txt", e.verlauf)):
+            if inhalt:
+                (d / name).write_text(inhalt, encoding="utf-8")
         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
-        (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
+        (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
+                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")

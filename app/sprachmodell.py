@@ -31,6 +31,7 @@ MAX_VORSCHLAEGE = 15
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
 BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
+TEIL_TOKEN = 2000  # lange Runden: so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
 # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
@@ -436,6 +437,15 @@ Lass Regelfragen, Würfelwürfe, Werte, Pausen und Gespräche außerhalb des Spi
 du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
 Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
 
+SYSTEM_TEIL = """Du hilfst bei der Nachbereitung einer langen Pen-&-Paper-Rollenspielsession. Du bekommst die \
+Szenennotizen zu einem Teil der Runde (mit Zeitstempeln). Fasse diesen Teil in 4 bis 8 Sätzen zusammen, in der \
+Reihenfolge des Geschehens.
+- Jeder Wendepunkt mit seinem Ausgang: wer gefangen, verurteilt, befreit, gerettet, verletzt oder getötet wird, wer \
+flieht, wer wem was gibt oder verspricht, welche Abmachungen gelten. Erscheinungen und Visionen mit ihrer Botschaft.
+- Orte und Nichtspielercharaktere mit ihren Namen. Verletzt ist nicht tot, angedroht ist nicht geschehen.
+- Nichts aus anderen Teilen, nichts erfinden, keine Regeln oder Würfe.
+Antworte nur mit JSON: {"zusammenfassung": "…"}. Sprache: {sprache}."""
+
 SYSTEM_RECAP = """Du schreibst den Recap („Was bisher geschah“) einer Pen-&-Paper-Rollenspielsession. Er wird vor der \
 nächsten Session allen Spielern vorgelesen.
 Regeln:
@@ -730,6 +740,7 @@ class Ablauf:
     stueck_tokens: int = 6_000
     zaehler: Zaehler = field(default_factory=Zaehler)
     schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
+    letzter_verlauf: str = ""  # Zusammenfassungen der Teile (lange Runden), für den Modellvergleich
 
     def _schritt(self, name: str) -> None:
         try:
@@ -789,6 +800,28 @@ class Ablauf:
             if n and (not notizen or n != notizen[-1]):  # Schleifen ergeben gleiche Zeilen hintereinander
                 notizen.append(n)
         return notizen
+
+    def verlauf(self, ein: dict, notizen: str) -> str:
+        """Lange Runden: die Notizen in Teile gliedern und jeden Teil einzeln zusammenfassen. Der Recap bekommt diese
+        Gliederung, damit kein Teil der Runde untergeht (kleine Modelle erzählen sonst vor allem den Anfang)."""
+        teile = stuecke([z for z in notizen.split("\n") if z.strip()], TEIL_TOKEN)
+        if len(teile) < 2:
+            return ""
+        system = SYSTEM_TEIL.replace("{sprache}", _sprache(ein))
+        kopf = _kopf(ein)
+        aus = []
+        for i, teil in enumerate(teile):
+            zeiten = re.findall(r"^\[(\d{1,2}(?::\d{2}){1,2})\]", teil, re.M)
+            von_bis = f" ({zeiten[0]}–{zeiten[-1]})" if zeiten else ""
+            try:
+                d = self.zaehler.aufruf(self.klient, system, f"{kopf}\n\nTeil {i + 1} von {len(teile)}{von_bis}:\n{teil}")
+                text = klartext(d.get("zusammenfassung") or d.get("summary") or "")
+            except AntwortFehler:
+                text = ""
+            if not text:
+                return ""  # lieber ohne Gliederung als mit Lücke
+            aus.append(f"Teil {i + 1} von {len(teile)}{von_bis}:\n{text}")
+        return "\n\n".join(aus)
 
     def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
         bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"
@@ -893,7 +926,13 @@ class Ablauf:
         """Das ganze Ergebnis. Die Grundlage (Transkript bzw. Notizen) ist für beide gleich; die Notizen entstehen
         aus der Recap-Eingabe, die nichts Geheimes enthält. Die Gegenprüfung sieht nur, was der Recap sah."""
         titel, grundlage = self.grundlage(recap_ein, fortschritt)
-        r = self.recap(recap_ein, titel, grundlage)
+        verlauf = self.verlauf(recap_ein, grundlage) if titel.startswith("Szenennotizen") else ""
+        self.letzter_verlauf = verlauf
+        if verlauf:
+            r = self.recap(recap_ein, "Verlauf der Runde in Teilen (jeder Teil gehört in den Recap, in dieser "
+                                      "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
+        else:
+            r = self.recap(recap_ein, titel, grundlage)
         fortschritt(0.6 if gegenpruefen else 0.8)
         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         fortschritt(0.8)
