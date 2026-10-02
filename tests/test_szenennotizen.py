@@ -64,7 +64,7 @@ def test_abschnitte_fuer_notizen_bleiben_klein():
 
         def chat(self, system, nutzer):
             self.groessen.append(sprachmodell.tokens(nutzer))
-            return Antwort(json.dumps({"notizen": ["[0:00] x"]}), 10, 5)
+            return Antwort(json.dumps({"notizen": ["[0:00] Die Gruppe bricht auf."]}), 10, 5)
 
     k = Klient()
     Ablauf(k, max_transkript_tokens=200, stueck_tokens=30000).grundlage(_ein(2000), lambda _p: None)
@@ -108,14 +108,14 @@ def test_notizen_bekommen_die_vorgeschichte():
         def chat(self, system, nutzer):
             self.nutzer.append(nutzer)
             letzte = nutzer.rstrip().rsplit("\n", 1)[-1].split("]")[0].strip("[")  # Zeit der letzten Zeile
-            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j}"
+            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j} der Runde"
                                                    for j in range(10)]}), 1, 1)
 
     k = Klient()
     ablauf = Ablauf(k, max_transkript_tokens=200, stueck_tokens=1500)
     ablauf.grundlage(_ein(300), lambda _p: None)
     assert "Bisher" not in k.nutzer[0]
-    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9" in k.nutzer[1]
+    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9 der Runde" in k.nutzer[1]
     assert k.nutzer[1].count("Notiz 1-") == BISHER
 
 
@@ -196,9 +196,9 @@ def test_abgeschnittene_notizen_rest_wird_nachgeholt():
             zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
             if len(self.nutzer) == 1:  # erster Aufruf: nur die erste Hälfte, dann abgeschnitten
                 halbe = zeilen[: len(zeilen) // 2]
-                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in halbe]})
+                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}" for z in halbe]})
                 return Antwort(text[:-8], 1, 1)
-            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
+            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
 
     k = Klient()
     ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=50000)
@@ -226,3 +226,65 @@ def test_notizen_mit_regeln_fliegen_raus():
 
     _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
     assert "Pipo" in text and "Fringlasshof" in text and "Lebenspunkte" not in text and "Probe" not in text
+
+
+def test_notizen_ohne_zeit_werden_neu_angefordert():
+    """Lauf 7: Ein Abschnitt kam ohne Zeitstempel zurück, der Rest wurde nachgeholt – alles stand doppelt da.
+    Jetzt: einmal mit Erinnerung neu anfordern, den zweiten Versuch nehmen."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append(nutzer)
+            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+            if "Notizen ohne Zeitstempel sind unbrauchbar" not in nutzer:
+                return Antwort(json.dumps({"notizen": ["Der Galgen bricht auseinander.", "Alle fallen ins Wasser."]}), 1, 1)
+            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}"
+                                                   for z in zeilen[::4]]}), 1, 1)
+
+    k = Klient()
+    _, text = Ablauf(k, max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(40), lambda _p: None)
+    assert len(k.nutzer) == 2
+    assert "Galgen" not in text and text.startswith("[0:00]") and "[12:00]" in text
+
+
+def test_notizen_normiert_bruchstuecke_und_doppelte():
+    from app.sprachmodell import Ablauf, Antwort, _ohne_doppelte, _notiz_normieren
+
+    assert _notiz_normieren("19:31] Eine Menge Schritte.") == "[19:31] Eine Menge Schritte."
+    assert _notiz_normieren("[1:02:03]Text") == "[1:02:03] Text"
+    assert _ohne_doppelte(["[0:01] Pipo gibt sein Schwert.", "[0:05] Pipo gibt sein Schwert!", "[0:09] Weiter geht es."]) \
+        == ["[0:01] Pipo gibt sein Schwert.", "[0:09] Weiter geht es."]
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            return Antwort(json.dumps({"notizen": [
+                "[0:00] Orasilas verbindet Pipo notdürftig.",
+                "[2:22:14] Die",
+                "9:00] Pipo gibt der Gruppe sein Schwert.",
+                "[9:30] Alle müssen eine Schwimmprobe machen.",
+                "[9:40] Orasilas kritisch erfolgreich bei Raufen.",
+                "[9:50] Spielleitung kündigt eine Heldenprüfung an.",
+                "[10:00] Die Gruppe erreicht den Fringlasshof."]}), 1, 1)
+
+    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
+    assert text.split("\n") == ["[0:00] Orasilas verbindet Pipo notdürftig.", "[9:00] Pipo gibt der Gruppe sein Schwert.",
+                                "[10:00] Die Gruppe erreicht den Fringlasshof."]
+
+
+def test_beleg_zeit_aus_zitierter_notiz():
+    from app.sprachmodell import pruefen
+
+    notizen = "[24:48] Sie laufen über die Kaspomirbrücke über den Tommelfluss zum Kasmiringenplatz.\n[2:34:01] Holzbein."
+    roh = [{"entryType": "location", "action": "create", "title": "Kasmiringenplatz", "detail": "Ein Platz.",
+            "evidence": [{"start": 0.0, "quote": "Sie laufen über die Kaspomirbrücke über den Tommelfluss zum Kasmiringenplatz."},
+                         {"start": 0.0, "quote": "Ganz etwas anderes, das in keiner Notiz steht."}]}]
+    belege = pruefen(roh, set(), set(), grundlage=notizen)[0]["evidence"]
+    assert belege[0]["start"] == 24 * 60 + 48 and belege[1]["start"] == 0.0

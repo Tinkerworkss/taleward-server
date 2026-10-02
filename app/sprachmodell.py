@@ -384,12 +384,29 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
     return teile
 
 
-_ZEIT_VORN = re.compile(r"^\s*\[(\d{1,2}(?::\d{2}){1,2})\]")
-_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|Probe\b|Proben\b|Qualitätsstufe|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*"
-                     r"|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|Initiative|erleichtert um|erschwert um"
-                     r"|\d+\s?[wW]\d+|[wW]20\b|Schicksalsmarker|Spielleitung (?:verlangt|fordert|erlaubt|bittet)"
-                     r"|Gewinnspiel|Pause)\b")
+_ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] “, zur Not auch „12:34] “
+_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
+                     r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
+                     r"|Initiative|erleichtert um|erschwert um|kritisch(?:er)? (?:erfolgreich|Erfolg|Patzer)|Patzer"
+                     r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
+                     r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
+                     r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
 ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
+ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
+ERINNERUNG_ZEIT = ("\n\nWichtig: Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen "
+                   "Klammern, z. B. „[1:09:07] …“. Notizen ohne Zeitstempel sind unbrauchbar.\n")
+
+
+def _notiz_normieren(n: str) -> str:
+    """„12:34] Text“ oder „[12:34]Text“ → „[12:34] Text“. Ohne Zeitstempel unverändert."""
+    m = _ZEIT_VORN.match(n)
+    return f"[{m.group(1)}] {n[m.end():].strip()}" if m else n.strip()
+
+
+def _bruchstueck(n: str) -> bool:
+    """Weniger als drei Wörter nach dem Zeitstempel: abgeschnitten oder leer („[2:22:14] Die“)."""
+    m = _ZEIT_VORN.match(n)
+    return len((n[m.end():] if m else n).split()) < 3
 
 
 def _zeit_vorn(zeile: str) -> float | None:
@@ -449,7 +466,8 @@ nicht getan.
 Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über seine Dauer verteilt – bis zur letzten \
 Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder lässt sie weg, damit Platz für das \
 Ende des Abschnitts bleibt.
-Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
+Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen Klammern, z. B. „[12:34]“ oder \
+„[1:09:07]“ – ohne Zeitstempel ist eine Notiz unbrauchbar. Übernimm Namen genau so, wie sie gesagt werden. \
 Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
 einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
 Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
@@ -757,6 +775,24 @@ class Zaehler:
         return round(sum(self.token_s) / len(self.token_s), 1) if self.token_s else None
 
 
+def _notizkern(n: str) -> str:
+    """Notiz ohne Zeitstempel, Satzzeichen und Groß-/Kleinschreibung – zum Erkennen doppelter Notizen."""
+    m = _ZEIT_VORN.match(n)
+    return re.sub(r"[^\wäöüß]+", " ", (n[m.end():] if m else n).lower()).strip()
+
+
+def _ohne_doppelte(notizen: list[str]) -> list[str]:
+    """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
+    gesehen, aus = set(), []
+    for n in notizen:
+        k = _notizkern(n)
+        if k and k in gesehen:
+            continue
+        gesehen.add(k)
+        aus.append(n)
+    return aus
+
+
 @dataclass
 class Ablauf:
     klient: Klient
@@ -800,16 +836,19 @@ class Ablauf:
                 notizen += self._notizen(system, f"{kopf}{bisher}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
                                          teil.split("\n"))
                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
+            notizen = _ohne_doppelte(notizen)
             text = "\n".join(notizen)
             if tokens(text) <= self.max_transkript_tokens or not notizen:
                 break
             zeilen = notizen
         return "Szenennotizen (aus dem Transkript verdichtet)", text
 
-    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
+    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0, erinnert: bool = False) -> list[str]:
         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
-        (höchstens zweimal). Bricht die Antwort ab oder enden die Notizen lange vor dem Abschnittsende, bekommt der
-        nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an denen das Modell aufgab."""
+        (höchstens zweimal). Kommen die Notizen ohne Zeitstempel, werden sie einmal neu angefordert (ohne Zeiten
+        lässt sich nichts prüfen und nichts belegen). Bricht die Antwort ab oder enden die Notizen lange vor dem
+        Abschnittsende, bekommt der nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an
+        denen das Modell aufgab; Notizen ohne Zeit aus dem ersten Versuch fallen dann weg, damit nichts doppelt steht."""
         try:
             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
         except AntwortFehler:
@@ -822,13 +861,20 @@ class Ablauf:
         gerettet = bool(d.pop("_gerettet", False))
         notizen = []
         for n in d.get("notizen") or []:
-            n = str(n).strip()
-            if not n or _REGELN.search(n):
-                continue  # Würfe und Werte gehören nicht in die Geschichte
+            n = _notiz_normieren(str(n))
+            if not n or _REGELN.search(n) or _bruchstueck(n):
+                continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
             if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
                 notizen.append(n)
         if gerettet and notizen:
             notizen.pop()  # die letzte Notiz einer abgeschnittenen Antwort ist meist selbst unvollständig
+        mit_zeit = sum(1 for n in notizen if _zeit_vorn(n) is not None)
+        if notizen and not erinnert and mit_zeit < ZEIT_ANTEIL * len(notizen):
+            log.info("Szenennotizen: %d von %d ohne Zeitstempel – neu angefordert", len(notizen) - mit_zeit, len(notizen))
+            neu = self._notizen(system, vorspann + ERINNERUNG_ZEIT, zeilen, tiefe, erinnert=True)
+            if sum(1 for n in neu if _zeit_vorn(n) is not None) >= ZEIT_ANTEIL * max(1, len(neu)):
+                return neu  # der zweite Versuch hat schon Rest und Abdeckung geprüft
+            return notizen if len(notizen) >= len(neu) else neu
         # Deckt das Ergebnis den Abschnitt ab? Zeit der letzten Notiz gegen die Zeit der letzten Zeile.
         zeiten = [t for t in (_zeit_vorn(z) for z in zeilen) if t is not None]
         bis = max((t for t in (_zeit_vorn(n) for n in notizen) if t is not None), default=None)
@@ -840,6 +886,8 @@ class Ablauf:
             rest = zeilen[ab:]
             if 8 <= len(rest) < len(zeilen):
                 log.info("Szenennotizen: Rest des Abschnitts (%d Zeilen) wird nachgeholt", len(rest))
+                if bis is not None:
+                    notizen = [n for n in notizen if _zeit_vorn(n) is not None]
                 notizen += self._notizen(system, vorspann, rest, tiefe + 1)
         return notizen
 
@@ -961,7 +1009,7 @@ class Ablauf:
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
-                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]})
+                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
 
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
                    fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
@@ -1027,8 +1075,19 @@ def ohne_meta(text: str) -> str:
     return "\n".join(behalten).strip()
 
 
+def _zeit_aus_notizen(zitat: str, notizen: list[tuple[float, str]]) -> float | None:
+    """Zitiert der Vorschlag eine Szenennotiz ohne ihren Zeitstempel, liefert die Notiz die Zeit."""
+    k = _notizkern(zitat)
+    if len(k) < 12:
+        return None
+    for zeit, kern in notizen:
+        if k in kern or kern in k:
+            return zeit
+    return None
+
+
 def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
-            namen: dict[str, str] | None = None) -> list[dict]:
+            namen: dict[str, str] | None = None, grundlage: str = "") -> list[dict]:
     """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg:
     - neue Einträge für die Charaktere der Spieler und Änderungen an Einträgen, die einen Spielercharakter meinen
       (namen: Eintrags-ID → Name), die das Modell trotz Anweisung gern anlegt
@@ -1036,6 +1095,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
       Vorschlag weg
     """
     namen = namen or {}
+    notizen = [(_zeit_vorn(z), _notizkern(z)) for z in grundlage.split("\n") if _zeit_vorn(z) is not None]
     out = []
     for v in roh if isinstance(roh, list) else []:
         if not isinstance(v, dict):
@@ -1076,7 +1136,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
                 start = zeit_lesen(b.get("start"))
                 if not start:  # fehlt oder 0 – aus Notizen steht der Zeitstempel oft im Zitat: „[1:09:07] …“
                     m = re.search(r"\[(\d{1,2}(?::\d{2}){1,2})\]", str(b["quote"]))
-                    start = zeit_lesen(m.group(1)) if m else start
+                    start = zeit_lesen(m.group(1)) if m else _zeit_aus_notizen(str(b["quote"]), notizen)
                 belege.append({"start": start if start is not None else 0.0,
                                "quote": str(b["quote"]).strip()[:200]})
         flags = [f for f in v.get("flags") or [] if f in FLAGS]
