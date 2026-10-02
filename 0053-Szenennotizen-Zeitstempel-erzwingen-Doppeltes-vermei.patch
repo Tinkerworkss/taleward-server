@@ -1,0 +1,354 @@
+From 21f5975965279116bc6b1ad9d7b6f4db78ceb4b4 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 00:37:14 +0200
+Subject: [PATCH] Szenennotizen: Zeitstempel erzwingen, Doppeltes vermeiden
+ (Server 0.4.43)
+
+- Notizen ohne Zeitstempel werden einmal mit Erinnerung neu angefordert;
+  der zweite Versuch ersetzt den ersten statt daneben zu stehen
+- beim Nachholen eines Rests fallen zeitlose Notizen des ersten Versuchs weg;
+  gleiche Notizen aus mehreren Aufrufen nur einmal
+- Bruchstuecke unter drei Woertern raus; Regelfilter um Proben, Attacken,
+  Kampfrunden, kritische Erfolge und Ankuendigungen der Spielleitung erweitert
+- "19:31]" ohne oeffnende Klammer gilt als Zeitstempel
+- Belege: zitiert ein Vorschlag eine Notiz ohne ihre Zeit, kommt die Zeit
+  aus der Notiz
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 90 ++++++++++++++++++++++++++++++------
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_szenennotizen.py  | 72 +++++++++++++++++++++++++++--
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 8 files changed, 148 insertions(+), 26 deletions(-)
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 12a1c34..2b95f2b 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -385,10 +385,27 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
+ 
+ 
+-_ZEIT_VORN = re.compile(r"^\s*\[(\d{1,2}(?::\d{2}){1,2})\]")
+-_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|Probe\b|Proben\b|Qualitätsstufe|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*"
+-                     r"|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|Initiative|erleichtert um|erschwert um"
+-                     r"|\d+\s?[wW]\d+|[wW]20\b|Schicksalsmarker|Spielleitung (?:verlangt|fordert|erlaubt|bittet)"
+-                     r"|Gewinnspiel|Pause)\b")
++_ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] “, zur Not auch „12:34] “
++_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
++                     r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
++                     r"|Initiative|erleichtert um|erschwert um|kritisch(?:er)? (?:erfolgreich|Erfolg|Patzer)|Patzer"
++                     r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
++                     r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
++                     r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
+ ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
++ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
++ERINNERUNG_ZEIT = ("\n\nWichtig: Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen "
++                   "Klammern, z. B. „[1:09:07] …“. Notizen ohne Zeitstempel sind unbrauchbar.\n")
++
++
++def _notiz_normieren(n: str) -> str:
++    """„12:34] Text“ oder „[12:34]Text“ → „[12:34] Text“. Ohne Zeitstempel unverändert."""
++    m = _ZEIT_VORN.match(n)
++    return f"[{m.group(1)}] {n[m.end():].strip()}" if m else n.strip()
++
++
++def _bruchstueck(n: str) -> bool:
++    """Weniger als drei Wörter nach dem Zeitstempel: abgeschnitten oder leer („[2:22:14] Die“)."""
++    m = _ZEIT_VORN.match(n)
++    return len((n[m.end():] if m else n).split()) < 3
+ 
+ 
+@@ -450,5 +467,6 @@ Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über s
+ Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder lässt sie weg, damit Platz für das \
+ Ende des Abschnitts bleibt.
+-Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
++Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen Klammern, z. B. „[12:34]“ oder \
++„[1:09:07]“ – ohne Zeitstempel ist eine Notiz unbrauchbar. Übernimm Namen genau so, wie sie gesagt werden. \
+ Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
+ einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
+@@ -758,4 +776,22 @@ class Zaehler:
+ 
+ 
++def _notizkern(n: str) -> str:
++    """Notiz ohne Zeitstempel, Satzzeichen und Groß-/Kleinschreibung – zum Erkennen doppelter Notizen."""
++    m = _ZEIT_VORN.match(n)
++    return re.sub(r"[^\wäöüß]+", " ", (n[m.end():] if m else n).lower()).strip()
++
++
++def _ohne_doppelte(notizen: list[str]) -> list[str]:
++    """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
++    gesehen, aus = set(), []
++    for n in notizen:
++        k = _notizkern(n)
++        if k and k in gesehen:
++            continue
++        gesehen.add(k)
++        aus.append(n)
++    return aus
++
++
+ @dataclass
+ class Ablauf:
+@@ -801,4 +837,5 @@ class Ablauf:
+                                          teil.split("\n"))
+                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
++            notizen = _ohne_doppelte(notizen)
+             text = "\n".join(notizen)
+             if tokens(text) <= self.max_transkript_tokens or not notizen:
+@@ -807,8 +844,10 @@ class Ablauf:
+         return "Szenennotizen (aus dem Transkript verdichtet)", text
+ 
+-    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
++    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0, erinnert: bool = False) -> list[str]:
+         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
+-        (höchstens zweimal). Bricht die Antwort ab oder enden die Notizen lange vor dem Abschnittsende, bekommt der
+-        nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an denen das Modell aufgab."""
++        (höchstens zweimal). Kommen die Notizen ohne Zeitstempel, werden sie einmal neu angefordert (ohne Zeiten
++        lässt sich nichts prüfen und nichts belegen). Bricht die Antwort ab oder enden die Notizen lange vor dem
++        Abschnittsende, bekommt der nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an
++        denen das Modell aufgab; Notizen ohne Zeit aus dem ersten Versuch fallen dann weg, damit nichts doppelt steht."""
+         try:
+             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+@@ -823,11 +862,18 @@ class Ablauf:
+         notizen = []
+         for n in d.get("notizen") or []:
+-            n = str(n).strip()
+-            if not n or _REGELN.search(n):
+-                continue  # Würfe und Werte gehören nicht in die Geschichte
++            n = _notiz_normieren(str(n))
++            if not n or _REGELN.search(n) or _bruchstueck(n):
++                continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
+             if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
+                 notizen.append(n)
+         if gerettet and notizen:
+             notizen.pop()  # die letzte Notiz einer abgeschnittenen Antwort ist meist selbst unvollständig
++        mit_zeit = sum(1 for n in notizen if _zeit_vorn(n) is not None)
++        if notizen and not erinnert and mit_zeit < ZEIT_ANTEIL * len(notizen):
++            log.info("Szenennotizen: %d von %d ohne Zeitstempel – neu angefordert", len(notizen) - mit_zeit, len(notizen))
++            neu = self._notizen(system, vorspann + ERINNERUNG_ZEIT, zeilen, tiefe, erinnert=True)
++            if sum(1 for n in neu if _zeit_vorn(n) is not None) >= ZEIT_ANTEIL * max(1, len(neu)):
++                return neu  # der zweite Versuch hat schon Rest und Abdeckung geprüft
++            return notizen if len(notizen) >= len(neu) else neu
+         # Deckt das Ergebnis den Abschnitt ab? Zeit der letzten Notiz gegen die Zeit der letzten Zeile.
+         zeiten = [t for t in (_zeit_vorn(z) for z in zeilen) if t is not None]
+@@ -841,4 +887,6 @@ class Ablauf:
+             if 8 <= len(rest) < len(zeilen):
+                 log.info("Szenennotizen: Rest des Abschnitts (%d Zeilen) wird nachgeholt", len(rest))
++                if bis is not None:
++                    notizen = [n for n in notizen if _zeit_vorn(n) is not None]
+                 notizen += self._notizen(system, vorspann, rest, tiefe + 1)
+         return notizen
+@@ -962,5 +1010,5 @@ class Ablauf:
+         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
+                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
+-                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]})
++                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
+ 
+     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
+@@ -1028,6 +1076,17 @@ def ohne_meta(text: str) -> str:
+ 
+ 
++def _zeit_aus_notizen(zitat: str, notizen: list[tuple[float, str]]) -> float | None:
++    """Zitiert der Vorschlag eine Szenennotiz ohne ihren Zeitstempel, liefert die Notiz die Zeit."""
++    k = _notizkern(zitat)
++    if len(k) < 12:
++        return None
++    for zeit, kern in notizen:
++        if k in kern or kern in k:
++            return zeit
++    return None
++
++
+ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
+-            namen: dict[str, str] | None = None) -> list[dict]:
++            namen: dict[str, str] | None = None, grundlage: str = "") -> list[dict]:
+     """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg:
+     - neue Einträge für die Charaktere der Spieler und Änderungen an Einträgen, die einen Spielercharakter meinen
+@@ -1037,4 +1096,5 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
+     """
+     namen = namen or {}
++    notizen = [(_zeit_vorn(z), _notizkern(z)) for z in grundlage.split("\n") if _zeit_vorn(z) is not None]
+     out = []
+     for v in roh if isinstance(roh, list) else []:
+@@ -1077,5 +1137,5 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
+                 if not start:  # fehlt oder 0 – aus Notizen steht der Zeitstempel oft im Zitat: „[1:09:07] …“
+                     m = re.search(r"\[(\d{1,2}(?::\d{2}){1,2})\]", str(b["quote"]))
+-                    start = zeit_lesen(m.group(1)) if m else start
++                    start = zeit_lesen(m.group(1)) if m else _zeit_aus_notizen(str(b["quote"]), notizen)
+                 belege.append({"start": start if start is not None else 0.0,
+                                "quote": str(b["quote"]).strip()[:200]})
+diff --git a/pyproject.toml b/pyproject.toml
+index 239f22b..bd59e8f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.42"
++version = "0.4.43"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index cfc7fb0..a01e633 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.42"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.43"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 553a5b1..a9b1df6 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.42"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.43"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 045ec00..4056166 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.42"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.43"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index d69995f..bd39616 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -65,5 +65,5 @@ def test_abschnitte_fuer_notizen_bleiben_klein():
+         def chat(self, system, nutzer):
+             self.groessen.append(sprachmodell.tokens(nutzer))
+-            return Antwort(json.dumps({"notizen": ["[0:00] x"]}), 10, 5)
++            return Antwort(json.dumps({"notizen": ["[0:00] Die Gruppe bricht auf."]}), 10, 5)
+ 
+     k = Klient()
+@@ -109,5 +109,5 @@ def test_notizen_bekommen_die_vorgeschichte():
+             self.nutzer.append(nutzer)
+             letzte = nutzer.rstrip().rsplit("\n", 1)[-1].split("]")[0].strip("[")  # Zeit der letzten Zeile
+-            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j}"
++            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j} der Runde"
+                                                    for j in range(10)]}), 1, 1)
+ 
+@@ -116,5 +116,5 @@ def test_notizen_bekommen_die_vorgeschichte():
+     ablauf.grundlage(_ein(300), lambda _p: None)
+     assert "Bisher" not in k.nutzer[0]
+-    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9" in k.nutzer[1]
++    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9 der Runde" in k.nutzer[1]
+     assert k.nutzer[1].count("Notiz 1-") == BISHER
+ 
+@@ -197,7 +197,7 @@ def test_abgeschnittene_notizen_rest_wird_nachgeholt():
+             if len(self.nutzer) == 1:  # erster Aufruf: nur die erste Hälfte, dann abgeschnitten
+                 halbe = zeilen[: len(zeilen) // 2]
+-                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in halbe]})
++                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}" for z in halbe]})
+                 return Antwort(text[:-8], 1, 1)
+-            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
++            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
+ 
+     k = Klient()
+@@ -227,2 +227,64 @@ def test_notizen_mit_regeln_fliegen_raus():
+     _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
+     assert "Pipo" in text and "Fringlasshof" in text and "Lebenspunkte" not in text and "Probe" not in text
++
++
++def test_notizen_ohne_zeit_werden_neu_angefordert():
++    """Lauf 7: Ein Abschnitt kam ohne Zeitstempel zurück, der Rest wurde nachgeholt – alles stand doppelt da.
++    Jetzt: einmal mit Erinnerung neu anfordern, den zweiten Versuch nehmen."""
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.nutzer = []
++
++        def chat(self, system, nutzer):
++            self.nutzer.append(nutzer)
++            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
++            if "Notizen ohne Zeitstempel sind unbrauchbar" not in nutzer:
++                return Antwort(json.dumps({"notizen": ["Der Galgen bricht auseinander.", "Alle fallen ins Wasser."]}), 1, 1)
++            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zur Zeile bei {z.split(' ')[0]}"
++                                                   for z in zeilen[::4]]}), 1, 1)
++
++    k = Klient()
++    _, text = Ablauf(k, max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(40), lambda _p: None)
++    assert len(k.nutzer) == 2
++    assert "Galgen" not in text and text.startswith("[0:00]") and "[12:00]" in text
++
++
++def test_notizen_normiert_bruchstuecke_und_doppelte():
++    from app.sprachmodell import Ablauf, Antwort, _ohne_doppelte, _notiz_normieren
++
++    assert _notiz_normieren("19:31] Eine Menge Schritte.") == "[19:31] Eine Menge Schritte."
++    assert _notiz_normieren("[1:02:03]Text") == "[1:02:03] Text"
++    assert _ohne_doppelte(["[0:01] Pipo gibt sein Schwert.", "[0:05] Pipo gibt sein Schwert!", "[0:09] Weiter geht es."]) \
++        == ["[0:01] Pipo gibt sein Schwert.", "[0:09] Weiter geht es."]
++
++    class Klient:
++        modell = "test"
++
++        def chat(self, system, nutzer):
++            return Antwort(json.dumps({"notizen": [
++                "[0:00] Orasilas verbindet Pipo notdürftig.",
++                "[2:22:14] Die",
++                "9:00] Pipo gibt der Gruppe sein Schwert.",
++                "[9:30] Alle müssen eine Schwimmprobe machen.",
++                "[9:40] Orasilas kritisch erfolgreich bei Raufen.",
++                "[9:50] Spielleitung kündigt eine Heldenprüfung an.",
++                "[10:00] Die Gruppe erreicht den Fringlasshof."]}), 1, 1)
++
++    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
++    assert text.split("\n") == ["[0:00] Orasilas verbindet Pipo notdürftig.", "[9:00] Pipo gibt der Gruppe sein Schwert.",
++                                "[10:00] Die Gruppe erreicht den Fringlasshof."]
++
++
++def test_beleg_zeit_aus_zitierter_notiz():
++    from app.sprachmodell import pruefen
++
++    notizen = "[24:48] Sie laufen über die Kaspomirbrücke über den Tommelfluss zum Kasmiringenplatz.\n[2:34:01] Holzbein."
++    roh = [{"entryType": "location", "action": "create", "title": "Kasmiringenplatz", "detail": "Ein Platz.",
++            "evidence": [{"start": 0.0, "quote": "Sie laufen über die Kaspomirbrücke über den Tommelfluss zum Kasmiringenplatz."},
++                         {"start": 0.0, "quote": "Ganz etwas anderes, das in keiner Notiz steht."}]}]
++    belege = pruefen(roh, set(), set(), grundlage=notizen)[0]["evidence"]
++    assert belege[0]["start"] == 24 * 60 + 48 and belege[1]["start"] == 0.0
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 799d5c5..3c1eebf 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.42"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.43"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 3729b3c..dd47792 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.42"
++version = "0.4.43"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
