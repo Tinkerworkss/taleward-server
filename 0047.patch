@@ -1,0 +1,1739 @@
+From 33c3a0277e2b6cf4df40b8eaee580713ea8b9370 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 17:07:09 +0200
+Subject: [PATCH] Eingaben und Grenzen pruefen, Verwaltung ergaenzt (Server
+ 0.4.37)
+
+Strengere Pruefung von Angaben, die von aussen kommen, gemeinsame Begrenzung von Versuchen, Obergrenze fuer
+Anfragen, Kopfzeilen fuer die Web-App, Hinweise in der Verwaltung. Einzelheiten in den Tests.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/audio.py                                |  10 +-
+ app/begrenzung.py                           |  64 +++++
+ app/charaktere.py                           |   7 +
+ app/config.py                               |   2 +-
+ app/einrichtung.py                          |   7 +
+ app/einstellungen.py                        |   7 +
+ app/extern.py                               |   3 +-
+ app/koerper.py                              |  89 +++++++
+ app/konto.py                                |  22 +-
+ app/koppeln.py                              |  20 +-
+ app/main.py                                 |   4 +
+ app/modelle.py                              |  41 ++-
+ app/routers/anmeldung.py                    |  38 ++-
+ app/routers/auth.py                         |  22 +-
+ app/routers/campaigns.py                    |  29 ++-
+ app/routers/umzug.py                        |  16 +-
+ app/routers/uploads.py                      |   6 +-
+ app/routers/voice_profile.py                |   6 +-
+ app/services.py                             |   3 +-
+ app/sprachmodell.py                         |   2 +-
+ app/unterlagen.py                           |  10 +-
+ app/verwaltung/assistent.py                 |   9 +-
+ app/verwaltung/i18n.py                      |   6 +-
+ app/verwaltung/router.py                    |  81 ++++--
+ app/verwaltung/templates/anmelden.html      |   2 +-
+ app/verwaltung/templates/assistent.html     |   1 +
+ app/verwaltung/templates/transkription.html |   1 +
+ app/worker_prozess.py                       |  20 ++
+ app/zusammenfassung.py                      |  12 +-
+ deploy/Caddyfile                            |   3 +
+ deploy/aktualisieren.sh                     |  16 +-
+ pyproject.toml                              |   2 +-
+ tests/conftest.py                           |  10 +-
+ tests/test_aktualisierung.py                |   2 +-
+ tests/test_anmeldung.py                     |   1 +
+ tests/test_assistent.py                     |   2 +-
+ tests/test_box.py                           |   4 +
+ tests/test_eingaben_pruefen.py              | 265 ++++++++++++++++++++
+ tests/test_modellablage.py                  |   2 +-
+ tests/test_worker_app.py                    |   2 +-
+ tests/test_worker_netz.py                   |   4 +-
+ uv.lock                                     |   2 +-
+ 42 files changed, 717 insertions(+), 138 deletions(-)
+ create mode 100644 app/begrenzung.py
+ create mode 100644 app/koerper.py
+ create mode 100644 tests/test_eingaben_pruefen.py
+
+diff --git a/app/audio.py b/app/audio.py
+index 647f554..95a0fba 100644
+--- a/app/audio.py
++++ b/app/audio.py
+@@ -50,9 +50,15 @@ def _zeitgrenze(datei: Path) -> float:
+     return 600 + 3 * mb
+ 
+ 
++# Hochgeladene Dateien nur als Audio öffnen: keine Netz-Protokolle, keine Wiedergabelisten (HLS, concat), die andere
++# Dateien oder Adressen nachladen könnten.
++FORMATE = "wav,mp3,ogg,flac,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,aac,amr,caf,aiff,w64,asf"
++EINGABE = ["-protocol_whitelist", "file,pipe", "-format_whitelist", FORMATE]
++
++
+ def dekodieren(quelle: Path) -> bytes:
+     """Eine Datei zu 16 kHz mono, 16 bit PCM (roh)."""
+-    res = ffmpeg(["-hide_banner", "-loglevel", "error", "-i", str(quelle),
++    res = ffmpeg(["-hide_banner", "-loglevel", "error", *EINGABE, "-i", str(quelle),
+                   "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+                  _zeitgrenze(quelle))
+     if res.returncode != 0 or not res.stdout:
+@@ -87,7 +93,7 @@ def dauer(wav: Path) -> float:
+ def hoerprobe(wav: Path, start: float, laenge: float, ziel: Path) -> bytes:
+     """Kurze Hörprobe als Ogg/Opus (wenige Sekunden, klein)."""
+     res = ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, start):.2f}",
+-                  "-t", f"{laenge:.2f}", "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)], 120)
++                  "-t", f"{laenge:.2f}", *EINGABE, "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)], 120)
+     if res.returncode != 0:
+         raise AudioFehler("sample_failed", res.stderr.decode(errors="replace").strip()[-300:])
+     return ziel.read_bytes()
+diff --git a/app/begrenzung.py b/app/begrenzung.py
+new file mode 100644
+index 0000000..f8f887c
+--- /dev/null
++++ b/app/begrenzung.py
+@@ -0,0 +1,64 @@
++"""Gemeinsame Begrenzung von Versuchen (Anmelden, Einladungscodes, Kopplung, Anmeldedienste).
++
++Je Schlüssel (z. B. „login-name:anna“) zählt ein gleitendes Fenster. Abgelaufene Schlüssel fallen weg, und die
++Gesamtzahl der Schlüssel ist gedeckelt – der Speicher wächst nicht mit jedem Versuch eines Angreifers.
++Gezählt wird im Arbeitsspeicher eines Prozesses; nach einem Neustart beginnt es von vorn (bewusst einfach).
++"""
++from __future__ import annotations
++
++import threading
++import time
++from collections import OrderedDict, deque
++
++MAX_SCHLUESSEL = 20_000
++
++
++class Zaehler:
++    def __init__(self) -> None:
++        self._daten: OrderedDict[str, deque] = OrderedDict()
++        self._sperre = threading.Lock()
++
++    def _bereinigt(self, schluessel: str, fenster: float, jetzt: float) -> deque:
++        q = self._daten.get(schluessel)
++        if q is None:
++            q = deque()
++            self._daten[schluessel] = q
++            while len(self._daten) > MAX_SCHLUESSEL:
++                self._daten.popitem(last=False)  # ältester Schlüssel fällt weg
++        else:
++            self._daten.move_to_end(schluessel)
++        while q and q[0] < jetzt - fenster:
++            q.popleft()
++        return q
++
++    def voll(self, schluessel: str, anzahl: int, fenster: float) -> bool:
++        """Sind im Fenster schon anzahl Versuche gezählt? (zählt selbst nicht)"""
++        with self._sperre:
++            return len(self._bereinigt(schluessel, fenster, time.monotonic())) >= anzahl
++
++    def zaehlen(self, schluessel: str, fenster: float) -> None:
++        with self._sperre:
++            jetzt = time.monotonic()
++            self._bereinigt(schluessel, fenster, jetzt).append(jetzt)
++
++    def versuch(self, schluessel: str, anzahl: int, fenster: float) -> bool:
++        """Zählt einen Versuch. False, wenn das Fenster schon voll ist (dann wird nicht gezählt)."""
++        with self._sperre:
++            jetzt = time.monotonic()
++            q = self._bereinigt(schluessel, fenster, jetzt)
++            if len(q) >= anzahl:
++                return False
++            q.append(jetzt)
++            return True
++
++    def loeschen(self, schluessel: str) -> None:
++        with self._sperre:
++            self._daten.pop(schluessel, None)
++
++    def vergessen(self, praefix: str = "") -> None:
++        with self._sperre:
++            for k in [k for k in self._daten if k.startswith(praefix)]:
++                del self._daten[k]
++
++
++ZAEHLER = Zaehler()
+diff --git a/app/charaktere.py b/app/charaktere.py
+index 6956573..9f38e70 100644
+--- a/app/charaktere.py
++++ b/app/charaktere.py
+@@ -278,6 +278,13 @@ def chronik(db: Session, me: Member, request) -> dict:
+                         .order_by(Entry.name)):
+         if me.id in e.hidden_member_ids and me.role != "gm":
+             continue
++        if bis is not None:
++            # Ehemalige: nur, was bis zum Austritt so stand. Später Angelegtes oder Geändertes und alles, was die SL
++            # vor einzelnen verborgen hat (Ehemalige stehen in keiner Verborgen-Liste), bleibt draußen.
++            if e.updated_at is None or e.updated_at > bis:
++                continue
++            if e.hidden_member_ids and e.origin_member_id != me.id:
++                continue
+         if e.origin_member_id == me.id:
+             mitgebracht.append({"originEntryId": e.origin_entry_id, "entryId": e.id, "entryType": e.type,
+                                 "name": e.name, "summary": e.summary, "hidden": bool(e.hidden_member_ids),
+diff --git a/app/config.py b/app/config.py
+index 670ed14..0081cf6 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -31,6 +31,7 @@ class Settings(BaseSettings):
+     organization_name: str = "Rollenspielverein"
+     # Upload und Warteschlange
+     chunk_size_bytes: int = 5 * 1024 * 1024
++    max_body_bytes: int = 64 * 1024 * 1024  # Obergrenze jeder Anfrage (Unterlagen bis 50 MB); Caddy: request_body
+     max_file_bytes: int = 2 * 1024 * 1024 * 1024  # je Datei; 5 h Opus/AAC liegen weit darunter
+     import_max_bytes: int = 1024 * 1024 * 1024  # 0.4.8: größte Umzugsdatei (Kampagne aus Datei übernehmen)
+     audio_retention_days: int = 7  # Audio fehlgeschlagener Sessions wird spätestens danach gelöscht
+@@ -50,7 +51,6 @@ class Settings(BaseSettings):
+     llm_local_context: int = 32768     # höchstens – bei festem Modell; „auto“ wählt selbst
+     worker_llm_url: str = "http://localhost:11434"  # Ollama auf dem Worker
+     summarizer_interval_seconds: float = 2.0  # 0 = kein eigener Arbeitsprozess (Tests)
+-    create_setup_account: bool = True  # bei leerer Datenbank Einrichtungskonto admin/admin anlegen
+     local_worker_autostart: bool = True  # lokalen Worker mitstarten, falls in der Verwaltung eingestellt
+     # Nur für den Worker (chronik worker)
+     worker_server_url: str = "http://127.0.0.1:8000"
+diff --git a/app/einrichtung.py b/app/einrichtung.py
+index 45cb50c..0b7c78e 100644
+--- a/app/einrichtung.py
++++ b/app/einrichtung.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ import hmac
+ import logging
+ import secrets
++import time
+ from dataclasses import dataclass
+ 
+ from sqlalchemy import func, select
+@@ -44,6 +45,10 @@ def code_pruefen(db: Session, code: str) -> bool:
+     return bool(soll) and braucht_einrichtung(db) and hmac.compare_digest(soll.replace("-", ""), ist.replace("-", ""))
+ 
+ 
++HEIMNETZ_FRIST_S = 30 * 60
++_GESTARTET = time.monotonic()
++
++
+ def heimnetz_ohne_code(request) -> bool:
+     """Taleward-Box: Ersteinrichtung ohne Code – nur wenn so eingeschaltet (EINRICHTUNG_IM_HEIMNETZ) und die Anfrage
+     aus einem privaten Netz kommt (Heimnetz, Vereins-WLAN). Aus dem Internet gilt weiter der Code."""
+@@ -53,6 +58,8 @@ def heimnetz_ohne_code(request) -> bool:
+ 
+     if not get_settings().einrichtung_im_heimnetz or request.client is None:
+         return False
++    if time.monotonic() - _GESTARTET > HEIMNETZ_FRIST_S:
++        return False  # nur kurz nach dem Start; danach (oder bis zum nächsten Neustart der Box) mit Code
+     try:
+         adresse = ipaddress.ip_address(request.client.host)
+     except ValueError:
+diff --git a/app/einstellungen.py b/app/einstellungen.py
+index 8e8c04f..ba54be3 100644
+--- a/app/einstellungen.py
++++ b/app/einstellungen.py
+@@ -39,6 +39,13 @@ def oeffentliche_adresse(db: Session, request=None) -> str:
+     return "http://localhost:8000"
+ 
+ 
++def mail_adresse(db: Session) -> str | None:
++    """Adresse für Links in E-Mails – nur die eingetragene öffentliche Adresse, nie aus der Anfrage (Host-Kopfzeile
++    ist fälschbar). Ohne sie werden keine Mails mit Links verschickt."""
++    url = angaben(db).public_url
++    return url.rstrip("/") if url else None
++
++
+ def angaben(db: Session) -> Angaben:
+     s = get_settings()
+     werte = {f: getattr(s, f) for f in FELDER}
+diff --git a/app/extern.py b/app/extern.py
+index af25f0a..74d5a5a 100644
+--- a/app/extern.py
++++ b/app/extern.py
+@@ -125,7 +125,8 @@ def _teile(wav: Path, arbeit: Path, max_sek: float) -> list[tuple[Path, float]]:
+         laenge = min(max_sek, gesamt - start)
+         ziel = arbeit / f"teil-{nr:02d}.ogg"
+         res = audio.ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
+-                            "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
++                            "-t", f"{laenge:.2f}", *audio.EINGABE, "-i", str(wav), "-ac", "1", "-c:a", "libopus",
++                            "-b:a", "32k",
+                             str(ziel)], 900)
+         if res.returncode != 0:
+             raise AudioFehler("audio_unreadable", res.stderr.decode(errors="replace")[-300:])
+diff --git a/app/koerper.py b/app/koerper.py
+new file mode 100644
+index 0000000..b0a7e0f
+--- /dev/null
++++ b/app/koerper.py
+@@ -0,0 +1,89 @@
++"""Anfragekörper begrenzen – auch ohne Content-Length (Transfer-Encoding: chunked).
++
++- `lesen()`: für Routen, die den Körper selbst lesen (Upload-Teile, Umzug, Bilder) – liest gestreamt und bricht ab,
++  sobald die Grenze überschritten ist.
++- `Grenze`: ASGI-Middleware mit einer Obergrenze für jede Anfrage (Multipart-Formulare werden sonst vor jeder Prüfung
++  vollständig zwischengespeichert).
++"""
++from __future__ import annotations
++
++import json
++
++from fastapi import Request
++
++from app import errors
++
++STANDARD_GRENZE = 64 * 1024 * 1024
++
++
++async def lesen(request: Request, max_bytes: int, code: str = "payload_too_large", **werte) -> bytes:
++    """Rohdaten lesen, aber nie mehr als max_bytes in den Speicher holen."""
++    laenge = request.headers.get("content-length")
++    if laenge and laenge.isdigit() and int(laenge) > max_bytes:
++        raise errors.ApiError(413, code, **werte)
++    teile, n = [], 0
++    async for teil in request.stream():
++        n += len(teil)
++        if n > max_bytes:
++            raise errors.ApiError(413, code, **werte)
++        teile.append(teil)
++    return b"".join(teile)
++
++
++class _ZuGross(Exception):
++    pass
++
++
++class Grenze:
++    """Jede Anfrage höchstens max_bytes; darüber 413, ohne den Rest zu lesen."""
++
++    def __init__(self, app, max_bytes: int = STANDARD_GRENZE):
++        self.app, self.max_bytes = app, max_bytes
++
++    async def __call__(self, scope, receive, send):
++        if scope["type"] != "http":
++            return await self.app(scope, receive, send)
++        englisch = False
++        for name, wert in scope.get("headers") or []:
++            if name == b"accept-language":
++                englisch = wert.decode("latin-1").strip().lower().startswith("en")
++        for name, wert in scope.get("headers") or []:
++            if name == b"content-length":
++                try:
++                    if int(wert) > self.max_bytes:
++                        return await self._ablehnen(send, englisch)
++                except ValueError:
++                    return await self._ablehnen(send, englisch, 400)
++        gelesen = 0
++        begonnen = False
++
++        async def zaehlen():
++            nonlocal gelesen
++            nachricht = await receive()
++            if nachricht["type"] == "http.request":
++                gelesen += len(nachricht.get("body") or b"")
++                if gelesen > self.max_bytes:
++                    raise _ZuGross()
++            return nachricht
++
++        async def senden(nachricht):
++            nonlocal begonnen
++            if nachricht["type"] == "http.response.start":
++                begonnen = True
++            await send(nachricht)
++
++        try:
++            await self.app(scope, zaehlen, senden)
++        except _ZuGross:
++            if not begonnen:
++                await self._ablehnen(send, englisch)
++
++    @staticmethod
++    async def _ablehnen(send, englisch: bool, status: int = 413):
++        code = "payload_too_large" if status == 413 else "validation_error"
++        fehler = errors.ApiError(status, code)
++        koerper = json.dumps({"code": code, "message": fehler.message("en" if englisch else "de")}).encode()
++        await send({"type": "http.response.start", "status": status,
++                    "headers": [(b"content-type", b"application/json"),
++                                (b"content-length", str(len(koerper)).encode())]})
++        await send({"type": "http.response.body", "body": koerper})
+diff --git a/app/konto.py b/app/konto.py
+index 6d0e391..f74f353 100644
+--- a/app/konto.py
++++ b/app/konto.py
+@@ -14,9 +14,6 @@ from __future__ import annotations
+ 
+ import re
+ import shutil
+-import threading
+-import time
+-from collections import defaultdict, deque
+ 
+ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+@@ -38,8 +35,6 @@ LEICHT = {"passwort", "password", "12345678", "123456789", "1234567890", "qwertz
+ 
+ # Begrenzung: höchstens so viele Registrierungsversuche je Adresse im Zeitfenster
+ MAX_VERSUCHE, FENSTER = 10, 15 * 60
+-_versuche: dict[str, deque] = defaultdict(deque)
+-_sperre = threading.Lock()
+ 
+ 
+ def registrierung(db: Session) -> str:
+@@ -50,19 +45,16 @@ def registrierung(db: Session) -> str:
+ 
+ 
+ def _begrenzen(adresse: str) -> None:
+-    jetzt = time.monotonic()
+-    with _sperre:
+-        q = _versuche[adresse]
+-        while q and q[0] < jetzt - FENSTER:
+-            q.popleft()
+-        if len(q) >= MAX_VERSUCHE:
+-            raise errors.ApiError(429, "too_many_requests")
+-        q.append(jetzt)
++    from app.begrenzung import ZAEHLER
++
++    if not ZAEHLER.versuch(f"registrieren:{adresse}", MAX_VERSUCHE, FENSTER):
++        raise errors.ApiError(429, "too_many_requests")
+ 
+ 
+ def versuche_vergessen() -> None:
+-    with _sperre:
+-        _versuche.clear()
++    from app.begrenzung import ZAEHLER
++
++    ZAEHLER.vergessen()
+ 
+ 
+ def passwort_zu_schwach(passwort: str, *namen: str) -> bool:
+diff --git a/app/koppeln.py b/app/koppeln.py
+index 3cb49ec..23d681f 100644
+--- a/app/koppeln.py
++++ b/app/koppeln.py
+@@ -8,8 +8,6 @@ from __future__ import annotations
+ import hmac
+ import secrets
+ import threading
+-import time
+-from collections import defaultdict, deque
+ from datetime import datetime, timedelta, timezone
+ 
+ from sqlalchemy import select
+@@ -23,7 +21,6 @@ from app.models import Worker
+ ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+ GUELTIG = timedelta(minutes=15)
+ MAX_VERSUCHE, FENSTER = 10, 15 * 60
+-_versuche: dict[str, deque] = defaultdict(deque)
+ _sperre = threading.Lock()
+ 
+ 
+@@ -47,19 +44,16 @@ def aktueller_code(db: Session) -> tuple[str, datetime] | None:
+ 
+ 
+ def _begrenzen(adresse: str) -> None:
+-    jetzt = time.monotonic()
+-    with _sperre:
+-        q = _versuche[adresse]
+-        while q and q[0] < jetzt - FENSTER:
+-            q.popleft()
+-        if len(q) >= MAX_VERSUCHE:
+-            raise errors.ApiError(429, "too_many_requests")
+-        q.append(jetzt)
++    from app.begrenzung import ZAEHLER
++
++    if not ZAEHLER.versuch(f"koppeln:{adresse}", MAX_VERSUCHE, FENSTER):
++        raise errors.ApiError(429, "too_many_requests")
+ 
+ 
+ def versuche_vergessen() -> None:
+-    with _sperre:
+-        _versuche.clear()
++    from app.begrenzung import ZAEHLER
++
++    ZAEHLER.vergessen()
+ 
+ 
+ def koppeln(db: Session, adresse: str, code: str, name: str) -> tuple[Worker, str]:
+diff --git a/app/main.py b/app/main.py
+index fd2cce6..0a19e98 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -152,6 +152,10 @@ def create_app() -> FastAPI:
+     from app.versionen import pruefen
+ 
+     app.add_middleware(BaseHTTPMiddleware, dispatch=pruefen)
++    from app.koerper import Grenze
++
++    # Obergrenze für jede Anfrage (auch Multipart und chunked), größer als jedes erlaubte Teil
++    app.add_middleware(Grenze, max_bytes=max(settings.max_body_bytes, settings.chunk_size_bytes + 1024 * 1024))
+     class TalewardCORS(CORSMiddleware):
+         """Erlaubte Herkünfte ändern sich zur Laufzeit (Verwaltung: zentrale Web-App, öffentliche Adresse)."""
+ 
+diff --git a/app/modelle.py b/app/modelle.py
+index a1460f5..60321a5 100644
+--- a/app/modelle.py
++++ b/app/modelle.py
+@@ -22,6 +22,7 @@ from __future__ import annotations
+ 
+ import json
+ import logging
++import re
+ from dataclasses import dataclass
+ from pathlib import Path
+ 
+@@ -168,11 +169,33 @@ class ServerQuelle:
+         return h.hexdigest()
+ 
+ 
+-def _sicher(pfad: str) -> bool:
+-    from pathlib import PurePosixPath
++_COMMIT = re.compile(r"^[0-9a-f]{40}$")
++_PFADZEICHEN = re.compile(r"^[A-Za-z0-9._/-]+$")
+ 
+-    p = PurePosixPath(pfad)
+-    return bool(pfad) and not p.is_absolute() and ".." not in p.parts and "\\" not in pfad
++
++def commit_ok(fassung) -> bool:
++    """Eine Fassung ist ein 40-stelliger Git-Commit – nie ein Name wie „main“ oder ein Pfad."""
++    return isinstance(fassung, str) and bool(_COMMIT.match(fassung))
++
++
++def _sicher(pfad) -> bool:
++    """Relativer Pfad innerhalb des Modellordners – unter Linux und Windows (keine Laufwerke, kein „..“)."""
++    from pathlib import PurePosixPath, PureWindowsPath
++
++    if not isinstance(pfad, str) or not _PFADZEICHEN.match(pfad):
++        return False
++    w = PureWindowsPath(pfad)
++    if PurePosixPath(pfad).is_absolute() or w.is_absolute() or w.drive or w.anchor:
++        return False
++    return all(t not in ("", ".", "..") for t in pfad.split("/"))
++
++
++def _innerhalb(wurzel: Path, ziel: Path) -> bool:
++    try:
++        ziel.resolve().relative_to(wurzel.resolve())
++        return True
++    except ValueError:
++        return False
+ 
+ 
+ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
+@@ -197,7 +220,9 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
+         raise ModellFehler(f"Server nicht erreichbar, um das Modell {repo} zu laden ({type(e).__name__}).") from e
+     if v is None:
+         return None
+-    fassung = v["fassung"]
++    fassung = v.get("fassung")
++    if not commit_ok(fassung):
++        raise ModellFehler(f"Modell {repo}: Der Server nennt keine gültige Fassung.")
+     fest = FASSUNGEN.get(repo)
+     if fest and fest != fassung:
+         raise ModellFehler(f"Modell {repo}: Der Server hat Fassung {fassung[:12]}, dieser Worker erwartet "
+@@ -210,8 +235,8 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
+         shutil.rmtree(tmp, ignore_errors=True)
+         try:
+             for d in v["dateien"]:
+-                if not _sicher(d["pfad"]):
+-                    raise ModellFehler(f"Unerwarteter Pfad im Modellverzeichnis: {d['pfad']}")
++                if not _sicher(d.get("pfad")) or not _innerhalb(tmp, tmp / d["pfad"]):
++                    raise ModellFehler(f"Unerwarteter Pfad im Modellverzeichnis: {str(d.get('pfad'))[:100]}")
+                 if quelle.laden(repo, fassung, d["pfad"], tmp / d["pfad"]) != d["sha256"]:
+                     raise ModellFehler(f"Prüfsumme stimmt nicht: {d['pfad']} – bitte erneut versuchen.")
+             (tmp / ".vollstaendig").write_text(fassung, encoding="utf-8")
+@@ -229,7 +254,7 @@ def _vorhanden(repo: str) -> Bereit | None:
+     from app.config import get_settings
+ 
+     fassung = gemerkt().get(repo)
+-    if not fassung:
++    if not commit_ok(fassung):
+         return None
+     ordner = get_settings().data_dir / "modelle" / repo.replace("/", "__") / fassung
+     if not (ordner / ".vollstaendig").exists():
+diff --git a/app/routers/anmeldung.py b/app/routers/anmeldung.py
+index b05da6d..356b52c 100644
+--- a/app/routers/anmeldung.py
++++ b/app/routers/anmeldung.py
+@@ -8,9 +8,6 @@ from __future__ import annotations
+ import hmac
+ import logging
+ import re
+-import threading
+-import time
+-from collections import defaultdict, deque
+ from datetime import timedelta
+ 
+ from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
+@@ -21,7 +18,7 @@ from sqlalchemy.orm import Session
+ from app import anmeldedienste, einmal, errors, mail, schemas
+ from app.access import current_user
+ from app.db import get_db, server_id, utcnow
+-from app.einstellungen import oeffentliche_adresse
++from app.einstellungen import mail_adresse, oeffentliche_adresse
+ from app.models import AuthMethod, User
+ from app.security import create_token, token_jti, verify_password
+ from app.services import user_out
+@@ -35,25 +32,16 @@ EMAIL_GUELTIG = timedelta(hours=24)
+ RESET_GUELTIG = timedelta(hours=1)
+ 
+ # ---------------------------------------------------------------- Begrenzung
+-_sperre = threading.Lock()
+-_zaehler: dict[str, deque] = defaultdict(deque)
+-
+-
+ def _zu_viele(schluessel: str, anzahl: int, fenster: float) -> bool:
+-    jetzt = time.monotonic()
+-    with _sperre:
+-        q = _zaehler[schluessel]
+-        while q and q[0] < jetzt - fenster:
+-            q.popleft()
+-        if len(q) >= anzahl:
+-            return True
+-        q.append(jetzt)
+-        return False
++    from app.begrenzung import ZAEHLER
++
++    return not ZAEHLER.versuch(schluessel, anzahl, fenster)
+ 
+ 
+ def versuche_vergessen() -> None:
+-    with _sperre:
+-        _zaehler.clear()
++    from app.begrenzung import ZAEHLER
++
++    ZAEHLER.vergessen()
+ 
+ 
+ def _adresse(request: Request) -> str:
+@@ -85,11 +73,12 @@ def passwort_vergessen(body: schemas.PasswordResetRequest, request: Request, hin
+     if _zu_viele(f"reset:{_adresse(request)}", 10, 15 * 60):
+         raise errors.ApiError(429, "too_many_requests")
+     login = (body.login or "").strip().lower()
+-    if login and mail.kann_senden(db):
++    basis = mail_adresse(db)
++    if login and basis and mail.kann_senden(db):
+         feld = User.email if "@" in login else User.username
+         u = db.scalar(select(User).where(feld == login))
+         if u is not None and u.email and not u.setup_account and not _zu_viele(f"reset-konto:{u.id}", 3, 3600):
+-            hintergrund.add_task(_reset_senden, u.id, errors.sprache(request), oeffentliche_adresse(db, request))
++            hintergrund.add_task(_reset_senden, u.id, errors.sprache(request), basis)
+     return Response(status_code=202)
+ 
+ 
+@@ -103,7 +92,8 @@ def email_eintragen(body: schemas.EmailRequest, request: Request, user: User = D
+     anderer = db.scalar(select(User).where(User.email == adresse, User.id != user.id))
+     if anderer is not None:
+         raise errors.conflict("email_taken")
+-    if not mail.kann_senden(db):
++    basis = mail_adresse(db)
++    if not mail.kann_senden(db) or not basis:
+         raise errors.ApiError(503, "mail_unavailable")
+     if _zu_viele(f"email:{user.id}", 5, 3600):
+         raise errors.ApiError(429, "too_many_requests")
+@@ -111,7 +101,7 @@ def email_eintragen(body: schemas.EmailRequest, request: Request, user: User = D
+     wert = einmal.erzeugen(db, "email_bestaetigen", EMAIL_GUELTIG, user_id=user.id, email=adresse)
+     user.email_pending = adresse
+     betreff, text = mail.text(db, "bestaetigen", errors.sprache(request), name=user.display_name,
+-                              benutzer=user.username, link=f"{oeffentliche_adresse(db, request)}/konto/email/{wert}")
++                              benutzer=user.username, link=f"{basis}/konto/email/{wert}")
+     try:
+         mail.senden(db, adresse, betreff, text)
+     except mail.MailFehler:
+@@ -230,6 +220,8 @@ def dienst_start(provider: str, request: Request, challenge: str = "", purpose:
+                  db: Session = Depends(get_db)):
+     from app import webapp
+ 
++    if _zu_viele(f"oidc-start:{_adresse(request)}", 30, 15 * 60):  # jeder Aufruf legt einen Datensatz an
++        return RedirectResponse("taleward://auth?error=too_many_requests", status_code=302)
+     basis = oeffentliche_adresse(db, request)
+     rueckweg = "taleward://auth"
+     if returnTo:
+diff --git a/app/routers/auth.py b/app/routers/auth.py
+index eaf0c51..aa02a55 100644
+--- a/app/routers/auth.py
++++ b/app/routers/auth.py
+@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
+ 
+ from app import errors, schemas
+ from app.access import current_user
+-from app.einstellungen import angaben
++from app.einstellungen import angaben, mail_adresse
+ from app.extern import anbieter
+ from app.konto import registrierung
+ from app.db import get_db, server_id, utcnow
+@@ -45,18 +45,32 @@ def info(request: Request, db: Session = Depends(get_db)):
+         external_transcription_mode=(("primary" if betriebsart(db) == "cloud" else "fallback") if extern else None),
+         cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
+         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],
+-        password_reset=mail.kann_senden(db),
++        password_reset=mail.kann_senden(db) and mail_adresse(db) is not None,
+         audio_retention=schemas.AudioRetentionOut(**aufbewahrung.lesen(db).api()),
+     )
+ 
+ 
++LOGIN_FENSTER = 15 * 60
++LOGIN_JE_ADRESSE, LOGIN_JE_NAME = 30, 10  # Fehlversuche im Fenster
++
++
+ @router.post("/auth/login", response_model=schemas.LoginResponse)
+-def login(body: schemas.LoginRequest, db: Session = Depends(get_db)):
+-    user = db.scalar(select(User).where(User.username == body.username.strip().lower()))
++def login(body: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
++    from app.begrenzung import ZAEHLER
++
++    name = body.username.strip().lower()
++    adresse = request.client.host if request.client else "?"
++    if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
++            ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
++        # 401 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
++        raise errors.ApiError(401, "too_many_requests")
++    user = db.scalar(select(User).where(User.username == name))
+     methode = None
+     if user is not None:
+         methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id, AuthMethod.kind == "password"))
+     if not verify_password(body.password, methode.secret if methode else None):
++        ZAEHLER.zaehlen(f"login-adr:{adresse}", LOGIN_FENSTER)
++        ZAEHLER.zaehlen(f"login-name:{name}", LOGIN_FENSTER)
+         raise errors.BAD_CREDENTIALS
+     if user.setup_account:  # admin/admin: nur für die Ersteinrichtung in der Verwaltung
+         raise errors.ApiError(401, "setup_account_only")
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index f4944b8..4616aef 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -56,10 +56,24 @@ def create_campaign(body: schemas.CampaignCreate, user: User = Depends(current_u
+     return campaign_out(db, c, me)
+ 
+ 
++JOIN_FENSTER = 15 * 60
++JOIN_JE_KONTO, JOIN_JE_ADRESSE = 10, 30  # falsche Codes im Fenster
++
++
+ @router.post("/campaigns/join", response_model=schemas.CampaignOut, response_model_exclude_unset=True)
+-def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
++def join(body: schemas.JoinRequest, request: Request, user: User = Depends(current_user),
++         db: Session = Depends(get_db)):
++    from app.begrenzung import ZAEHLER
++
++    adresse = request.client.host if request.client else "?"
++    if ZAEHLER.voll(f"join-konto:{user.id}", JOIN_JE_KONTO, JOIN_FENSTER) or \
++            ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
++        # 409 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
++        raise errors.ApiError(409, "too_many_requests")
+     inv = db.get(Invite, normalize_invite_code(body.code))
+     if inv is None or inv.expires_at <= utcnow():
++        ZAEHLER.zaehlen(f"join-konto:{user.id}", JOIN_FENSTER)
++        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
+         raise errors.ApiError(404, "invite_invalid")
+     c = db.get(Campaign, inv.campaign_id)
+     me = membership(db, c.id, user)
+@@ -405,13 +419,6 @@ def delete_portrait(campaignId: str, memberId: str, user: User = Depends(current
+ 
+ async def _koerper(request: Request, max_bytes: int) -> bytes:
+     """Rohdaten lesen, aber nie mehr als erlaubt in den Speicher holen."""
+-    laenge = request.headers.get("content-length")
+-    if laenge and laenge.isdigit() and int(laenge) > max_bytes:
+-        raise errors.ApiError(413, "image_too_large", mb=max_bytes // (1024 * 1024))
+-    teile, n = [], 0
+-    async for teil in request.stream():
+-        n += len(teil)
+-        if n > max_bytes:
+-            raise errors.ApiError(413, "image_too_large", mb=max_bytes // (1024 * 1024))
+-        teile.append(teil)
+-    return b"".join(teile)
++    from app.koerper import lesen
++
++    return await lesen(request, max_bytes, "image_too_large", mb=max_bytes // (1024 * 1024))
+diff --git a/app/routers/umzug.py b/app/routers/umzug.py
+index 612d412..5a4ebda 100644
+--- a/app/routers/umzug.py
++++ b/app/routers/umzug.py
+@@ -2,12 +2,13 @@
+ from fastapi import APIRouter, Depends, Header, Query, Request, Response
+ from fastapi.responses import FileResponse
+ from fastapi.security import HTTPAuthorizationCredentials
++from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+ from app import errors, schemas, umzug
+ from app.access import _bearer, current_user, membership, require_gm, require_member
+ from app.db import get_db
+-from app.models import Campaign, CampaignExport, User
++from app.models import Campaign, CampaignExport, Member, User
+ from app.services import campaign_out, member_out, set_move_consent
+ 
+ router = APIRouter(tags=["Umzug"])
+@@ -64,6 +65,12 @@ def export_file(campaignId: str, exportId: str, t: str | None = Query(default=No
+     if t is not None:
+         if x is None or x.campaign_id != campaignId or not umzug.schluessel_passt(x.id, t):
+             raise errors.not_found("export")
++        # Der Schlüssel gilt nur, solange die Anforderin noch SL der Kampagne ist
++        sl = db.scalar(select(Member).where(Member.campaign_id == campaignId,
++                                            Member.user_id == x.requested_by_user_id, Member.role == "gm",
++                                            Member.left_at.is_(None)).limit(1)) if x.requested_by_user_id else None
++        if sl is None:
++            raise errors.not_found("export")
+     else:
+         user = current_user(creds, db)
+         _nur_sl(db, campaignId, user)
+@@ -92,11 +99,10 @@ def get_import(importId: str, user: User = Depends(current_user), db: Session =
+ async def put_import_chunk(importId: str, index: int, request: Request,
+                            x_chunk_sha256: str | None = Header(default=None),
+                            user: User = Depends(current_user), db: Session = Depends(get_db)):
++    from app.koerper import lesen
++
+     imp = umzug.laden(db, importId, user)
+-    laenge = request.headers.get("content-length")
+-    if laenge and laenge.isdigit() and int(laenge) > imp.chunk_size:
+-        raise errors.ApiError(413, "payload_too_large")
+-    umzug.teil_speichern(imp, index, await request.body(), x_chunk_sha256)
++    umzug.teil_speichern(imp, index, await lesen(request, imp.chunk_size), x_chunk_sha256)
+     return Response(status_code=204)
+ 
+ 
+diff --git a/app/routers/uploads.py b/app/routers/uploads.py
+index 44d1290..63a5b8f 100644
+--- a/app/routers/uploads.py
++++ b/app/routers/uploads.py
+@@ -154,9 +154,9 @@ async def put_chunk(
+     if index < 0 or index >= f.chunk_count:
+         raise errors.bad_request("chunk_index_invalid", index=index)
+     erwartet = _expected_size(up, f, index)
+-    data = await request.body()
+-    if len(data) > up.chunk_size:
+-        raise errors.ApiError(413, "payload_too_large")
++    from app.koerper import lesen
++
++    data = await lesen(request, up.chunk_size)
+     if len(data) != erwartet:
+         raise errors.bad_request("chunk_size_mismatch", index=index, got=len(data), expected=erwartet)
+     if x_chunk_sha256 and hashlib.sha256(data).hexdigest() != x_chunk_sha256.strip().lower():
+diff --git a/app/routers/voice_profile.py b/app/routers/voice_profile.py
+index 04e1961..c6fc1d7 100644
+--- a/app/routers/voice_profile.py
++++ b/app/routers/voice_profile.py
+@@ -44,8 +44,10 @@ def _dauer(daten: bytes) -> float | None:
+     with tempfile.NamedTemporaryFile(suffix=".audio") as f:
+         f.write(daten)
+         f.flush()
+-        res = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", f.name],
+-                             capture_output=True, text=True, timeout=20)
++        from app.audio import EINGABE
++
++        res = subprocess.run(["ffprobe", "-v", "error", *EINGABE, "-show_entries", "format=duration", "-of", "csv=p=0",
++                              f.name], capture_output=True, text=True, timeout=20)
+     try:
+         return float(res.stdout.strip())
+     except ValueError:
+diff --git a/app/services.py b/app/services.py
+index 9ca4bfe..3c46970 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -225,7 +225,8 @@ _WORDS = [
+ 
+ def new_invite_code(db: Session) -> str:
+     for _ in range(50):
+-        code = f"{secrets.choice(_WORDS)}-{secrets.randbelow(10000):04d}"
++        # Wort + 8 Ziffern (≈ 31 Bit); passt zum bisherigen Muster „WORT-Ziffern“ der App
++        code = f"{secrets.choice(_WORDS)}-{secrets.randbelow(10**8):08d}"
+         if db.get(Invite, code) is None:
+             return code
+     raise RuntimeError("Kein freier Einladungscode gefunden")
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 0c90cd3..f147bed 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -777,7 +777,7 @@ class Ablauf:
+         bibel = "\n".join(eintrag(e) for e in ein["bibel"])
+         geheim = "\n".join(eintrag(e) for e in ein["geheim"])
+         nutzer = (f"{_kopf(ein)}\n\nBibel (für Spieler sichtbar; gmNotes sind geheim):\n{bibel or '(leer)'}"
+-                  f"\n\nGeheime Einträge (nur Spielleitung):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
++                  f"\n\nGeheime Einträge (nur Spielleitung oder nur einzelne Spieler kennen sie):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
+         system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE)))
+         self._schritt("proposals")
+         d = self.zaehler.aufruf(self.klient, system, nutzer)
+diff --git a/app/unterlagen.py b/app/unterlagen.py
+index 1993d37..fea4dce 100644
+--- a/app/unterlagen.py
++++ b/app/unterlagen.py
+@@ -251,7 +251,9 @@ def eingabe(db: Session, doc: CampaignDocument) -> dict:
+     Kontext“). Vorschläge und Unterlagen sieht nur die SL."""
+     c = db.get(Campaign, doc.campaign_id)
+     bibel = [{"id": e.id, "typ": e.type, "name": e.name, "zusammenfassung": e.summary or "",
+-              "gm_notes": e.gm_notes or None, "sichtbarkeit": e.visibility}
++              "gm_notes": e.gm_notes or None,
++              # teilweise verborgen = nicht allgemein bekannt („Wer weiß was“) → im Aufruf als geheim
++              "sichtbarkeit": "teilweise" if e.visibility == "public" and e.hidden_member_ids else e.visibility}
+              for e in db.scalars(select(Entry).where(Entry.campaign_id == c.id).order_by(Entry.name))]
+     return {"sprache": c.language, "kampagne": c.title, "system": c.system, "system_name": c.system_name,
+             "welt": c.world_info, "art": doc.kind, "titel": doc.title, "abschnitte": text_laden(doc.id),
+@@ -284,7 +286,7 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
+               kosten_cent: int = 0) -> None:
+     """Vorschläge anlegen – mit den festen Regeln zur Trennung von SL- und Spielerwissen."""
+     from app.sprachmodell import dokument_pruefen
+-    from app.zusammenfassung import _geheimes_im_detail
++    from app.zusammenfassung import _geheimes_im_detail, geheime_bibeltexte
+ 
+     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == doc.campaign_id))}
+     # pc-Einträge (0.4.7) pflegt die App – keine Vorschläge dafür, auch nicht als neuer Eintrag gleichen Namens
+@@ -292,7 +294,11 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
+     vorschlaege = [v for v in dokument_pruefen(d.get("proposals") or [],
+                                                {i: e.name for i, e in eintraege.items() if e.type != "pc"})
+                    if v["title"].casefold() not in spieler]
++    # als geheim markierte Absätze der Unterlage und – außer bei Handouts, die die SL ohnehin zeigt – was in der
++    # Bibel nicht alle Spieler kennen
+     markiert = geheime_abschnitte(text_laden(doc.id))
++    if doc.kind != "handout":
++        markiert += geheime_bibeltexte(eintraege.values())
+     db.execute(delete(Proposal).where(Proposal.document_id == doc.id))
+     for pos, v in enumerate(vorschlaege):
+         detail, gm_notes = v["detail"], v["gmNotes"]
+diff --git a/app/verwaltung/assistent.py b/app/verwaltung/assistent.py
+index cb6bc37..79a41fc 100644
+--- a/app/verwaltung/assistent.py
++++ b/app/verwaltung/assistent.py
+@@ -8,7 +8,6 @@ Jeder Schritt lässt sich überspringen und später wieder aufrufen; die Übersi
+ """
+ from __future__ import annotations
+ 
+-import time
+ 
+ from fastapi import APIRouter, Depends, Form, Request
+ from fastapi.responses import HTMLResponse, RedirectResponse
+@@ -20,7 +19,7 @@ from app.db import get_db, utcnow
+ from app.einstellungen import angaben, extern_konfig, llm_konfig, meta_lesen, meta_schreiben, speichern
+ from app.models import Organization, OrgMember, User, Worker
+ from app.verwaltung.router import (
+-    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _fehlversuche, _gesperrt, _online_grenze,
++    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _fehlversuch, _gesperrt, _online_grenze,
+     _seite, csrf_pruefen, sitzung, tr, verwalter,
+ )
+ 
+@@ -90,11 +89,11 @@ def einrichtung_abschliessen(request: Request, code: str = Form(""), username: s
+     if alt is not None:
+         csrf_pruefen(request, csrf)
+     else:
+-        schluessel_ = f"einrichtung|{request.client.host if request.client else '?'}"
+-        if _gesperrt(schluessel_):
++        adresse_ = request.client.host if request.client else "?"
++        if _gesperrt(adresse_, "(einrichtung)"):
+             return einrichtung_seite(request, "", db, _("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen."))
+         if not einrichtung.code_pruefen(db, code):
+-            _fehlversuche[schluessel_].append(time.monotonic())
++            _fehlversuch(adresse_, "(einrichtung)")
+             antwort = einrichtung_seite(request, code, db)
+             antwort.status_code = 400
+             return antwort
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 3499533..63b457c 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -199,6 +199,8 @@ EN: dict[str, str] = {
+     "Limit ändern": "Change limit",
+     "Limit: {betrag} €": "Limit: €{betrag}",
+     "Link verwenden": "Use link",
++    "Ein verbundener lokaler Server bekommt die Aufnahmen aller Kampagnen dieses Servers. Verbinde nur PCs, denen du vertraust.":
++        "A connected local server receives the recordings of all campaigns on this server. Only connect PCs you trust.",
+     "Lokalen Server verbinden": "Connect local server",
+     "Lokaler Server": "Local server",
+     "Lokaler Server, Cloud als Ausweichlösung": "Local server, cloud as fallback",
+@@ -309,8 +311,8 @@ EN: dict[str, str] = {
+     "Passwort": "Password",
+     "Verwaltung von {name} · {betreiber}": "Administration of {name} · {betreiber}",
+     "Ersteinrichtung": "Initial setup",
+-    "Ersteinrichtung: Benutzername admin, Passwort admin. Danach legst du deinen eigenen Verwalter an, und dieses Konto wird gelöscht.":
+-        "Initial setup: username admin, password admin. You will then create your own administrator, and this account will be deleted.",
++    "Es gibt noch ein Konto aus der Ersteinrichtung. Melde dich damit an und lege deinen eigenen Verwalter an – danach wird es gelöscht.":
++        "There is still an account from the initial setup. Sign in with it and create your own administrator – it will be deleted afterwards.",
+     "Es gibt noch kein Konto mit Verwalter-Recht. Im Ubuntu-Fenster anlegen mit":
+         "There is no administrator account yet. Create one in the Ubuntu window with",
+     "oder ein bestehendes Konto freischalten mit": "or grant an existing account access with",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 02d09ba..6698a2c 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -14,7 +14,6 @@ import json
+ import os
+ import secrets
+ import time
+-from collections import defaultdict
+ from datetime import timedelta
+ from pathlib import Path
+ from urllib.parse import urlsplit
+@@ -31,7 +30,7 @@ from sqlalchemy.orm import Session
+ from app import errors, queue
+ from app.config import get_settings
+ from app.db import get_db, server_id, utcnow
+-from app.einstellungen import angaben, meta_schreiben, speichern
++from app.einstellungen import angaben, meta_lesen, meta_schreiben, speichern
+ from app.models import (
+     CampaignDocument,
+     AuthMethod, Campaign, GameSession, Job, Member, Organization, OrgMember, User, Worker,
+@@ -108,14 +107,22 @@ class NichtAngemeldet(Exception):
+     pass
+ 
+ 
+-_fehlversuche: dict[str, list[float]] = defaultdict(list)
+-SPERRE_VERSUCHE, SPERRE_SEKUNDEN = 5, 300
++SPERRE_VERSUCHE, SPERRE_SEKUNDEN = 5, 300   # je Name (über alle Adressen)
++SPERRE_ADRESSE = 20                          # je Adresse (über alle Namen)
+ 
+ 
+-def _gesperrt(schluessel: str) -> bool:
+-    jetzt = time.monotonic()
+-    _fehlversuche[schluessel] = [t for t in _fehlversuche[schluessel] if jetzt - t < SPERRE_SEKUNDEN]
+-    return len(_fehlversuche[schluessel]) >= SPERRE_VERSUCHE
++def _gesperrt(adresse: str, name: str) -> bool:
++    from app.begrenzung import ZAEHLER
++
++    return (ZAEHLER.voll(f"verw-name:{name}", SPERRE_VERSUCHE, SPERRE_SEKUNDEN)
++            or ZAEHLER.voll(f"verw-adr:{adresse}", SPERRE_ADRESSE, SPERRE_SEKUNDEN))
++
++
++def _fehlversuch(adresse: str, name: str) -> None:
++    from app.begrenzung import ZAEHLER
++
++    ZAEHLER.zaehlen(f"verw-name:{name}", SPERRE_SEKUNDEN)
++    ZAEHLER.zaehlen(f"verw-adr:{adresse}", SPERRE_SEKUNDEN)
+ 
+ 
+ def _ist_verwalter(db: Session, user: User) -> bool:
+@@ -134,6 +141,12 @@ def _cookie_wert(db: Session, user: User) -> str:
+                       get_settings().jwt_secret, algorithm="HS256")
+ 
+ 
++def _zu_leicht(passwort: str, *namen: str) -> bool:
++    from app.konto import passwort_zu_schwach
++
++    return passwort_zu_schwach(passwort, *namen)
++
++
+ def _csrf(cookie: str) -> str:
+     return hmac.new(get_settings().jwt_secret.encode(), b"csrf:" + cookie.encode(), hashlib.sha256).hexdigest()[:40]
+ 
+@@ -154,6 +167,9 @@ def sitzung(request: Request, db: Session = Depends(get_db)) -> User:
+     user = db.get(User, daten.get("sub"))
+     if user is None or user.token_version != daten.get("tv") or not _ist_verwalter(db, user):
+         raise NichtAngemeldet()
++    abgemeldet = meta_lesen(db, f"verwaltung.abgemeldet.{user.id}")
++    if abgemeldet and abgemeldet.isdigit() and int(daten.get("iat") or 0) < int(abgemeldet):
++        raise NichtAngemeldet()  # nach dem Abmelden gilt keine ältere Sitzung mehr (auch nicht auf anderen Geräten)
+     request.state.csrf = _csrf(wert)
+     return user
+ 
+@@ -203,22 +219,24 @@ def anmelden_seite(request: Request, db: Session = Depends(get_db)):
+ @router.post("/anmelden")
+ def anmelden(request: Request, username: str = Form(""), password: str = Form(""), db: Session = Depends(get_db)):
+     name = username.strip().lower()
+-    schluessel = f"{request.client.host if request.client else '?'}|{name}"
++    adresse = request.client.host if request.client else "?"
+     fehler = None
+-    if _gesperrt(schluessel):
++    if _gesperrt(adresse, name):
+         fehler = tr(request)("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen.")
+     else:
+         user = db.scalar(select(User).where(User.username == name))
+         methode = user and db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id,
+                                                              AuthMethod.kind == "password"))
+         if not (methode and verify_password(password, methode.secret)):
+-            _fehlversuche[schluessel].append(time.monotonic())
++            _fehlversuch(adresse, name)
+             fehler = tr(request)("Benutzername oder Passwort stimmt nicht.")
+         elif not _ist_verwalter(db, user):
+             fehler = tr(request)("Dieses Konto hat kein Verwalter-Recht. Freischalten mit: uv run chronik admin -u {name}",
+                                  name=name)
+         else:
+-            _fehlversuche.pop(schluessel, None)
++            from app.begrenzung import ZAEHLER
++
++            ZAEHLER.loeschen(f"verw-name:{name}")
+             antwort = _zurueck("/einrichtung" if user.setup_account else "/")
+             antwort.set_cookie(COOKIE, _cookie_wert(db, user), max_age=SITZUNG_STUNDEN * 3600, httponly=True,
+                                samesite="strict", secure=request.url.scheme == "https", path="/verwaltung")
+@@ -229,7 +247,9 @@ def anmelden(request: Request, username: str = Form(""), password: str = Form(""
+ 
+ 
+ @router.post("/abmelden", dependencies=[Depends(csrf_pruefen)])
+-def abmelden(user: User = Depends(sitzung)):
++def abmelden(user: User = Depends(sitzung), db: Session = Depends(get_db)):
++    meta_schreiben(db, f"verwaltung.abgemeldet.{user.id}", str(int(time.time())))
++    db.commit()
+     antwort = RedirectResponse("/verwaltung/anmelden?ok=abgemeldet", status_code=303)
+     antwort.delete_cookie(COOKIE, path="/verwaltung")
+     return antwort
+@@ -315,6 +335,8 @@ def konto_anlegen(request: Request, username: str = Form(""), display_name: str
+         return _konten_fehler(request, user, db, tr(request)("Bitte einen Anzeigenamen angeben."))
+     if len(password) < MIN_PASSWORT:
+         return _konten_fehler(request, user, db, tr(request)("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT))
++    if _zu_leicht(password, name, display_name):
++        return _konten_fehler(request, user, db, tr(request)("Dieses Passwort ist zu leicht zu erraten."))
+     if db.scalar(select(User).where(User.username == name)):
+         return _konten_fehler(request, user, db, tr(request)("Den Benutzer „{name}“ gibt es schon.", name=name))
+     _neues_konto(db, name, display_name.strip()[:128], password, admin=bool(admin))
+@@ -330,6 +352,8 @@ def passwort_setzen(request: Request, user_id: str, password: str = Form(""), us
+         raise errors.not_found()
+     if len(password) < MIN_PASSWORT:
+         return _konten_fehler(request, user, db, tr(request)("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT))
++    if _zu_leicht(password, ziel.username, ziel.display_name):
++        return _konten_fehler(request, user, db, tr(request)("Dieses Passwort ist zu leicht zu erraten."))
+     from app import passwortlink
+ 
+     passwortlink.passwort_setzen(db, ziel, password)
+@@ -1031,6 +1055,9 @@ def qr_bild(text: str) -> str:
+     return segno.make(text, error="m").svg_data_uri(scale=6, border=3, dark="#2A2118", light="#FBF6EA")
+ 
+ 
++EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER = 30, 15 * 60  # falsche Codes je Adresse
++
++
+ @seiten.get("/einladung/{code}", response_class=HTMLResponse)
+ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
+     """Landeseite eines Einladungslinks für Leute ohne App. Zeigt keinen Kampagnentitel (die Seite ist öffentlich)."""
+@@ -1042,8 +1069,15 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
+     from app import webapp
+     from app.einstellungen import oeffentliche_adresse
+ 
++    from app.begrenzung import ZAEHLER
++
+     code = normalize_invite_code(code)[:32]
+-    einladung = db.get(Invite, code)
++    adresse = request.client.host if request.client else "?"
++    einladung = None
++    if not ZAEHLER.voll(f"einladung-adr:{adresse}", EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER):
++        einladung = db.get(Invite, code)
++        if einladung is None:
++            ZAEHLER.zaehlen(f"einladung-adr:{adresse}", EINLADUNG_FENSTER)
+     gueltig = einladung is not None and einladung.expires_at > utcnow()
+     link = str(request.base_url).rstrip("/") + f"/einladung/{code}"
+     a = angaben(db)
+@@ -1086,6 +1120,8 @@ def passwort_seite_setzen(token: str, request: Request, password: str = Form("")
+     fehler = ""
+     if len(password) < MIN_PASSWORT:
+         fehler = _("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT)
++    elif _zu_leicht(password, ziel.username, ziel.display_name):
++        fehler = _("Dieses Passwort ist zu leicht zu erraten.")
+     elif password != password2:
+         fehler = _("Die beiden Passwörter stimmen nicht überein.")
+     if fehler:
+@@ -1119,6 +1155,18 @@ SICHERHEITS_KOPFZEILEN = {
+     "X-Frame-Options": "DENY",
+ }
+ 
++# Web-App unter /app/ (gleiche Herkunft wie /verwaltung): nur eigene Skripte, keine Einbettung. Verbindungen und
++# Bilder auch zu anderen Taleward-Servern (die App kann mehrere verbinden), Stil-Attribute von React erlaubt.
++WEBAPP_KOPFZEILEN = {
++    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
++                               "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; "
++                               "connect-src 'self' https: http://localhost:* http://127.0.0.1:*; "
++                               "font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'; "
++                               "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
++    "X-Frame-Options": "DENY",
++}
++HSTS = "max-age=31536000"
++
+ 
+ def einbinden(app: FastAPI) -> None:
+     from app.verwaltung import anmeldung, assistent, uebergabe
+@@ -1152,6 +1200,11 @@ def einbinden(app: FastAPI) -> None:
+         elif pfad.startswith(("/verwaltung", "/einladung", "/datenschutz", "/passwort", "/konto/")):
+             for k, v in SICHERHEITS_KOPFZEILEN.items():
+                 antwort.headers.setdefault(k, v)
++        elif pfad == "/app" or pfad.startswith("/app/"):
++            for k, v in WEBAPP_KOPFZEILEN.items():
++                antwort.headers.setdefault(k, v)
++        if request.url.scheme == "https":  # hinter Caddy (X-Forwarded-Proto); im Heimnetz ohne TLS nicht
++            antwort.headers.setdefault("Strict-Transport-Security", HSTS)
+         return antwort
+ 
+     @app.get("/", include_in_schema=False)
+diff --git a/app/verwaltung/templates/anmelden.html b/app/verwaltung/templates/anmelden.html
+index 2e49abb..f7cce47 100644
+--- a/app/verwaltung/templates/anmelden.html
++++ b/app/verwaltung/templates/anmelden.html
+@@ -12,7 +12,7 @@
+     </form>
+   </div>
+   {% if ersteinrichtung %}
+-  <div class="meldung">{{ _("Ersteinrichtung: Benutzername admin, Passwort admin. Danach legst du deinen eigenen Verwalter an, und dieses Konto wird gelöscht.") }}</div>
++  <div class="meldung">{{ _("Es gibt noch ein Konto aus der Ersteinrichtung. Melde dich damit an und lege deinen eigenen Verwalter an – danach wird es gelöscht.") }}</div>
+   {% endif %}
+   {% if kein_verwalter %}
+   <p class="hilfe">{{ _("Es gibt noch kein Konto mit Verwalter-Recht. Im Ubuntu-Fenster anlegen mit") }}
+diff --git a/app/verwaltung/templates/assistent.html b/app/verwaltung/templates/assistent.html
+index 55bd8bb..b84da19 100644
+--- a/app/verwaltung/templates/assistent.html
++++ b/app/verwaltung/templates/assistent.html
+@@ -87,6 +87,7 @@
+   <p>{{ _("Die Worker-App richtet alles Nötige selbst ein und passt sich dem PC an: am schnellsten mit einer NVIDIA-Grafikkarte, sonst langsamer mit dem Prozessor.") }}
+     <a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
+     <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
++  <p class="hilfe">{{ _("Ein verbundener lokaler Server bekommt die Aufnahmen aller Kampagnen dieses Servers. Verbinde nur PCs, denen du vertraust.") }}</p>
+   {% if koppel %}
+   <p>{{ _("In der Worker-App eintragen:") }}</p>
+   <dl class="koppeldaten">
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 16452fa..50fc3a9 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -179,6 +179,7 @@
+   <p>{{ _("Die Worker-App richtet alles Nötige selbst ein und passt sich dem PC an: am schnellsten mit einer NVIDIA-Grafikkarte, sonst langsamer mit dem Prozessor.") }}
+     <a href="https://github.com/Tinkerworkss/taleward-worker/releases/latest/download/TalewardWorker-Setup.exe">{{ _("Für Windows herunterladen") }}</a> ·
+     <a href="https://github.com/Tinkerworkss/taleward-worker#linux">{{ _("Linux") }}</a></p>
++  <p class="hilfe">{{ _("Ein verbundener lokaler Server bekommt die Aufnahmen aller Kampagnen dieses Servers. Verbinde nur PCs, denen du vertraust.") }}</p>
+   {% if koppel %}
+   <p>{{ _("In der Worker-App eintragen:") }}</p>
+   <dl class="koppeldaten">
+diff --git a/app/worker_prozess.py b/app/worker_prozess.py
+index 35715d6..dde2444 100644
+--- a/app/worker_prozess.py
++++ b/app/worker_prozess.py
+@@ -226,6 +226,25 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
+ 
+ 
+ # ---------------------------------------------------------------- Worker
++def auftrag_pruefen(auftrag: dict) -> None:
++    """Was vom Server kommt, wird zu Dateinamen und Abrufen: nur einfache Kennungen (UUID oder „stimme“), ganze
++    Zahlen und Pfade dieses Servers."""
++    import re
++
++    def nein(was: str):
++        raise audio.AudioFehler("worker_rejected", f"Auftrag abgelehnt: ungültige Angabe ({was}).", False)
++
++    for f in auftrag.get("files") or []:
++        if not isinstance(f.get("fileId"), str) or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", f["fileId"]):
++            nein("fileId")
++        if not isinstance(f.get("position"), int) or isinstance(f.get("position"), bool) or f["position"] < 0:
++            nein("position")
++        for c in f.get("chunks") or []:
++            url = c.get("url")
++            if not isinstance(url, str) or not url.startswith("/worker/v1/") or "//" in url or "\\" in url:
++                nein("url")
++
++
+ class WorkerProzess:
+     def __init__(self, server: str, token: str, arbeitsordner: Path,
+                  verarbeite: Callable[[dict, list[Path], Path, Fortschritt], dict],
+@@ -298,6 +317,7 @@ class WorkerProzess:
+             self.melden("server_pausiert" if an else "server_fortgesetzt")
+ 
+     def herunterladen(self, auftrag: dict) -> list[Path]:
++        auftrag_pruefen(auftrag)
+         dateien = []
+         for f in sorted(auftrag["files"], key=lambda x: x["position"]):
+             ziel = self.arbeit / f"{f['position']:04d}-{f['fileId']}"
+diff --git a/app/zusammenfassung.py b/app/zusammenfassung.py
+index 6619cc5..e929e5f 100644
+--- a/app/zusammenfassung.py
++++ b/app/zusammenfassung.py
+@@ -157,11 +157,18 @@ def vorschlag_eingabe(db: Session, s: GameSession, basis: Eingabe) -> dict:
+     for e in db.scalars(select(Entry).where(Entry.campaign_id == s.campaign_id).order_by(Entry.updated_at.desc())):
+         eintrag = {"id": e.id, "typ": e.type, "name": e.name, "zusammenfassung": e.summary or "",
+                    "gm_notes": e.gm_notes or None}
+-        (bibel if e.visibility == "public" else geheim).append(eintrag)
++        # Teilweise verborgene Einträge („Wer weiß was“) nicht als allgemein bekannt ausgeben
++        (bibel if e.visibility == "public" and not e.hidden_member_ids else geheim).append(eintrag)
+     d["bibel"], d["geheim"] = bibel, geheim
+     return d
+ 
+ 
++def geheime_bibeltexte(eintraege) -> list[str]:
++    """Texte, die nicht alle Spieler kennen: gmNotes, Zusammenfassungen geheimer und teilweise verborgener Einträge."""
++    return [t for e in eintraege for t in (e.gm_notes or "",
++                                           e.summary if e.visibility != "public" or e.hidden_member_ids else "") if t]
++
++
+ # ---------------------------------------------------------------- Ergebnis
+ @dataclass
+ class Vorschlag:
+@@ -345,8 +352,7 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
+                  open_threads=json.dumps([f.strip() for f in erg.offene_faeden if f.strip()], ensure_ascii=False),
+                  model=erg.modell, review=pruefteil.als_json(pruefteil.bauen(erg.pruefung, text, stellen, sprache))))
+     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == s.campaign_id))}
+-    geheime_texte = [t for e in eintraege.values() for t in (e.gm_notes or "",
+-                                                              e.summary if e.visibility != "public" else "") if t]
++    geheime_texte = geheime_bibeltexte(eintraege.values())
+     # Qualitätsprüfung Stufe 1: Belege gegen das Transkript prüfen (erfundene Zitate fallen weg)
+     transkript = stellen.woerter
+     ohne_beleg = 0
+diff --git a/deploy/Caddyfile b/deploy/Caddyfile
+index c7d0efa..2c6da25 100644
+--- a/deploy/Caddyfile
++++ b/deploy/Caddyfile
+@@ -5,5 +5,8 @@
+ 
+ {$TALEWARD_DOMAIN} {
+ 	encode zstd gzip
++	request_body {
++		max_size 64MB
++	}
+ 	reverse_proxy server:8000
+ }
+diff --git a/deploy/aktualisieren.sh b/deploy/aktualisieren.sh
+index eb571f1..364b9e9 100755
+--- a/deploy/aktualisieren.sh
++++ b/deploy/aktualisieren.sh
+@@ -19,6 +19,7 @@ ORDNER="$ZIEL/daten/aktualisierung"
+ STATUS="$ORDNER/server-status.json"
+ cd "$ZIEL" || exit 1
+ mkdir -p "$ORDNER"
++BAULOG=$(mktemp /tmp/taleward-bau.XXXXXX) || exit 1
+ 
+ jetzt=0
+ [ "${1:-}" = "--jetzt" ] && jetzt=1
+@@ -32,10 +33,15 @@ fi
+ rm -f "$ORDNER/server-jetzt"
+ 
+ melden() {  # ergebnis, von, nach, meldung
++  # Erst in einer neuen Datei im Ordner von root schreiben, dann hinüberschieben: Der Ordner gehört dem Container,
++  # root folgt dort keinem Verweis und ändert keine Rechte rekursiv.
++  local tmp
++  tmp=$(mktemp "$ZIEL/.server-status.XXXXXX") || return 0
+   printf '{"zeit": "%s", "ergebnis": "%s", "von": "%s", "nach": "%s", "meldung": "%s"}\n' \
+-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "${4//\"/\'}" > "$STATUS.tmp"
+-  mv "$STATUS.tmp" "$STATUS"
+-  chown -R 1000:1000 "$ORDNER" 2>/dev/null || true
++    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "${4//\"/\'}" > "$tmp"
++  chmod 644 "$tmp"
++  chown 1000:1000 "$tmp" 2>/dev/null || true
++  if [ -d "$ORDNER" ] && [ ! -L "$ORDNER" ]; then mv -f "$tmp" "$STATUS"; else rm -f "$tmp"; fi
+   echo "[taleward] $1: $2 → $3 $4"
+ }
+ 
+@@ -82,8 +88,8 @@ version_setzen "$NEU"
+ # Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
+ # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
+ # Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
+-if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
+-   && { docker compose pull --ignore-buildable --quiet >>/tmp/taleward-bau.log 2>&1 || true; } \
++if docker compose build --pull server >"$BAULOG" 2>&1 && docker compose build >>"$BAULOG" 2>&1 \
++   && { docker compose pull --ignore-buildable --quiet >>"$BAULOG" 2>&1 || true; } \
+    && docker compose up -d && gesund; then
+   melden "aktualisiert" "$ALT" "$NEU" ""
+   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
+diff --git a/pyproject.toml b/pyproject.toml
+index 007de2d..20f92e6 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.36"
++version = "0.4.37"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 0ed0017..c2a9d25 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -22,7 +22,6 @@ def client(tmp_path, monkeypatch):
+     monkeypatch.setenv("MAINTENANCE_INTERVAL_SECONDS", "0")  # Wartung rufen die Tests selbst auf
+     monkeypatch.setenv("SUMMARIZER_INTERVAL_SECONDS", "0")  # Zusammenfassen ebenso
+     monkeypatch.setenv("LOCAL_WORKER_AUTOSTART", "false")
+-    monkeypatch.setenv("CREATE_SETUP_ACCOUNT", "false")
+     monkeypatch.setenv("EXTERNAL_INTERVAL_SECONDS", "0")
+     monkeypatch.delenv("EXTERNAL_TRANSCRIPTION", raising=False)
+     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+@@ -35,14 +34,9 @@ def client(tmp_path, monkeypatch):
+     from app.einstellungen import mindestversion_vergessen
+ 
+     mindestversion_vergessen()  # Zwischenspeicher der App-Mindestversion gehört zur alten Datenbank
+-    from app.konto import versuche_vergessen
++    from app.begrenzung import ZAEHLER
+ 
+-    versuche_vergessen()  # Begrenzung der Registrierungsversuche je Adresse
+-    from app import koppeln
+-    from app.verwaltung import router as verwaltung_router
+-
+-    koppeln.versuche_vergessen()
+-    verwaltung_router._fehlversuche.clear()
++    ZAEHLER.vergessen()  # Begrenzung von Anmelde-, Registrierungs-, Kopplungs- und Einladungsversuchen
+     from app.main import create_app
+ 
+     with ContractClient(create_app(), base_url="http://testserver") as c:
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 2824b93..e92f7dd 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -130,7 +130,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.36"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.37"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_anmeldung.py b/tests/test_anmeldung.py
+index b737527..7d7e038 100644
+--- a/tests/test_anmeldung.py
++++ b/tests/test_anmeldung.py
+@@ -28,6 +28,7 @@ def post(monkeypatch):
+ 
+     def einrichten(dbs):
+         meta_schreiben(dbs, "melden.smtp_host", "smtp.example.org")
++        meta_schreiben(dbs, "angabe.public_url", "https://chronik.example.org")  # Links in Mails nur damit
+         dbs.commit()
+ 
+     gesendet.einrichten = einrichten
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index ef5e0a2..4bd8c75 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.36"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.37"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_box.py b/tests/test_box.py
+index b8d66ea..357dbf3 100644
+--- a/tests/test_box.py
++++ b/tests/test_box.py
+@@ -22,6 +22,10 @@ def test_heimnetz_ohne_code_nur_wenn_eingeschaltet_und_privat(monkeypatch):
+         assert heimnetz_ohne_code(_anfrage(privat)), privat
+     for fremd in ("8.8.8.8", "2a00:1450::1", "testclient", None):
+         assert not heimnetz_ohne_code(_anfrage(fremd)), fremd
++    from app import einrichtung
++
++    monkeypatch.setattr(einrichtung, "_GESTARTET", einrichtung._GESTARTET - einrichtung.HEIMNETZ_FRIST_S - 1)
++    assert not heimnetz_ohne_code(_anfrage("192.168.178.20"))  # 30 Minuten nach dem Start nur noch mit Code
+     config.get_settings.cache_clear()
+ 
+ 
+diff --git a/tests/test_eingaben_pruefen.py b/tests/test_eingaben_pruefen.py
+new file mode 100644
+index 0000000..562b56e
+--- /dev/null
++++ b/tests/test_eingaben_pruefen.py
+@@ -0,0 +1,265 @@
++"""Eingaben und Grenzen (Server 0.4.37): Modell-Downloads, Aufträge, Anfragegrößen, Audioformate, Wissen einzelner,
++Chronik von Ehemaligen, Links in Mails, Export-Schlüssel, Versuchsgrenzen, Abmelden."""
++import re
++import shutil
++
++import pytest
++from fastapi.testclient import TestClient
++
++API = "/api/v1"
++
++
++# ---------------------------------------------------------------- Modell-Download
++@pytest.mark.parametrize("pfad", ["C:/x.bat", "C:x", "/x", "a/../../x", "a\\b", "..", "a//b", "", "a:b", "./x"])
++def test_modellpfade_abgelehnt(pfad):
++    from app.modelle import _sicher
++
++    assert not _sicher(pfad)
++
++
++def test_modellpfade_erlaubt():
++    from app.modelle import _sicher, commit_ok
++
++    assert _sicher("config.yaml") and _sicher("embedding/pytorch_model.bin")
++    assert commit_ok("a" * 40) and not commit_ok("main") and not commit_ok("../../x") and not commit_ok("A" * 40)
++
++
++def test_fremde_fassung_loescht_nichts(tmp_path, monkeypatch):
++    from app import config, modelle
++
++    monkeypatch.setenv("DATA_DIR", str(tmp_path / "daten"))
++    config.get_settings.cache_clear()
++    opfer = tmp_path / "daten" / "wichtig"
++    opfer.mkdir(parents=True)
++    (opfer / "datei.txt").write_text("bleibt")
++
++    class Quelle:
++        def verzeichnis(self, repo):
++            return {"fassung": "../../wichtig", "dateien": []}
++
++    with pytest.raises(modelle.ModellFehler):
++        modelle.vom_server("org/modell", Quelle())
++    assert (opfer / "datei.txt").read_text() == "bleibt"
++
++    class Quelle2:
++        def verzeichnis(self, repo):
++            return {"fassung": "b" * 40, "dateien": [{"pfad": "C:/Users/x/a.bat", "sha256": "0"}]}
++
++        def laden(self, *a):
++            raise AssertionError("darf nicht laden")
++
++    with pytest.raises(modelle.ModellFehler):
++        modelle.vom_server("org/modell", Quelle2())
++    config.get_settings.cache_clear()
++
++
++# ---------------------------------------------------------------- Aufträge an den Worker
++@pytest.mark.parametrize("datei", [
++    {"fileId": "../x", "position": 0, "chunks": []},
++    {"fileId": "a/b", "position": 0, "chunks": []},
++    {"fileId": "f1", "position": "0", "chunks": []},
++    {"fileId": "f1", "position": 0, "chunks": [{"url": "https://anderswo.example/x"}]},
++    {"fileId": "f1", "position": 0, "chunks": [{"url": "//anderswo.example/worker/v1/x"}]},
++])
++def test_auftrag_mit_fremden_angaben_abgelehnt(datei):
++    from app.audio import AudioFehler
++    from app.worker_prozess import auftrag_pruefen
++
++    with pytest.raises(AudioFehler):
++        auftrag_pruefen({"files": [datei]})
++
++
++def test_auftrag_normal_angenommen():
++    from app.worker_prozess import auftrag_pruefen
++
++    auftrag_pruefen({"files": [{"fileId": "0f8fad5b-d9cb-469f-a165-70867728950e", "position": 0,
++                                "chunks": [{"url": "/worker/v1/jobs/j/files/f/chunks/0"}]},
++                               {"fileId": "stimme", "position": 1, "chunks": []}]})
++
++
++# ---------------------------------------------------------------- Anfragegrößen
++def test_grosser_teil_ohne_laenge_wird_abgewiesen(client, world):
++    from tests.test_step2a import neue_session
++
++    w = world
++    s = neue_session(client, w)
++    up = client.post(f"{API}/sessions/{s['id']}/uploads", headers=w["gm"], json={
++        "source": "table", "files": [{"fileName": "a.m4a", "sizeBytes": 20 * 1024 * 1024, "mimeType": "audio/mp4"}]
++    }).json()
++    datei = up["files"][0]["fileId"]
++
++    def strom():
++        for _ in range(8):
++            yield b"x" * (1024 * 1024)  # 8 MB, Teile sind höchstens 5 MB
++
++    r = client.put(f"{API}/uploads/{up['uploadId']}/files/{datei}/chunks/0", content=strom(),
++                   headers={**w["gm"], "Content-Type": "application/octet-stream"})
++    assert r.status_code == 413
++
++
++def test_obergrenze_jeder_anfrage():
++    from fastapi import FastAPI, Request
++
++    from app.koerper import Grenze
++
++    app = FastAPI()
++
++    @app.post("/x")
++    async def x(request: Request):
++        return {"n": len(await request.body())}
++
++    app.add_middleware(Grenze, max_bytes=1000)
++    c = TestClient(app)
++    assert c.post("/x", content=b"a" * 1000).json() == {"n": 1000}
++    r = c.post("/x", content=b"a" * 1001)
++    assert r.status_code == 413 and r.json()["code"] == "payload_too_large"
++    r = c.post("/x", content=(b"a" * 400 for _ in range(4)))  # ohne Content-Length
++    assert r.status_code == 413
++
++
++def test_caddy_begrenzt():
++    from pathlib import Path
++
++    assert "max_size" in (Path(__file__).resolve().parents[1] / "deploy" / "Caddyfile").read_text()
++
++
++# ---------------------------------------------------------------- Audioformate
++@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg fehlt")
++def test_wiedergabeliste_wird_nicht_geoeffnet(tmp_path):
++    from app import audio
++
++    datei = tmp_path / "aufnahme.audio"
++    datei.write_text("#EXTM3U\n#EXTINF:1,\nhttp://127.0.0.1:9/x.ts\n")
++    with pytest.raises(audio.AudioFehler):
++        audio.dekodieren(datei)
++    assert "-protocol_whitelist" in audio.EINGABE and "-format_whitelist" in audio.EINGABE
++
++
++# ---------------------------------------------------------------- Wissen einzelner
++def test_teilweise_verborgenes_gilt_als_geheim(client, world, dbs):
++    from app.models import Entry, GameSession
++    from app.zusammenfassung import eingabe_bauen, geheime_bibeltexte, vorschlag_eingabe
++
++    w = world
++    client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Der Spitzel", "summary": "NUR-FUER-EINIGE", "visibility": "public",
++        "hiddenFromMemberIds": [w["pl_member"]]})
++    client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "location", "name": "Markt", "summary": "Laut.", "visibility": "public"})
++    from tests.test_step2a import neue_session
++
++    s = neue_session(client, w)
++    sitzung = dbs.get(GameSession, s["id"])
++    ein = vorschlag_eingabe(dbs, sitzung, eingabe_bauen(dbs, sitzung))
++    assert {e["name"] for e in ein["bibel"]} == {"Markt"} | ({"Mira"} & {e["name"] for e in ein["bibel"]})
++    assert "Der Spitzel" in {e["name"] for e in ein["geheim"]}
++    assert "NUR-FUER-EINIGE" in geheime_bibeltexte(dbs.query(Entry).all())
++
++
++# ---------------------------------------------------------------- Chronik nach dem Verlassen
++def test_chronik_ehemaliger_ohne_spaeteres(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/members/me/chronicle"
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["gm"])
++    client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Miras Verfolger", "summary": "Jagt Mira.", "visibility": "public"})
++    namen = {m["name"] for m in client.get(url, headers=w["pl"]).json()["mentions"]}
++    assert "Miras Verfolger" not in namen
++
++
++# ---------------------------------------------------------------- Links in Mails
++def test_ohne_oeffentliche_adresse_keine_mail(client, world, dbs, monkeypatch):
++    from app import mail
++    from app.einstellungen import meta_schreiben
++    from app.models import User
++
++    gesendet = []
++    monkeypatch.setattr(mail, "senden", lambda db, an, betreff, text: gesendet.append(text))
++    meta_schreiben(dbs, "melden.smtp_host", "smtp.example.org")
++    ben = dbs.query(User).filter_by(username="ben").one()
++    ben.email = "ben@example.org"
++    dbs.commit()
++    assert client.get(f"{API}/info").json()["passwordReset"] is False
++    r = client.post(f"{API}/auth/password-reset", json={"login": "ben"}, headers={"Host": "boese.example"})
++    assert r.status_code == 202 and gesendet == []
++    assert client.put(f"{API}/me/email", json={"email": "ben2@example.org"}, headers=w_pl(client)).status_code == 503
++
++
++def w_pl(client):
++    r = client.post(f"{API}/auth/login", json={"username": "ben", "password": "geheim123"})
++    return {"Authorization": f"Bearer {r.json()['accessToken']}"}
++
++
++# ---------------------------------------------------------------- Einladungen und Anmelden
++def test_einladungscode_lang_genug(client, world):
++    w = world
++    code = client.post(f"{API}/campaigns/{w['cid']}/invites", headers=w["gm"]).json()["code"]
++    assert re.fullmatch(r"[A-Z]+-\d{8}", code)
++
++
++def test_falsche_einladungscodes_werden_gebremst(client, world):
++    w = world
++    for i in range(10):
++        r = client.post(f"{API}/campaigns/join", json={"code": f"RABE-{i:08d}"}, headers=w["out"])
++        assert r.status_code == 404
++    r = client.post(f"{API}/campaigns/join", json={"code": "RABE-99999999"}, headers=w["out"])
++    assert r.status_code == 409 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9
++
++
++def test_falsche_passwoerter_werden_gebremst(client, make_user):
++    make_user("dora")
++    for _ in range(10):
++        assert client.post(f"{API}/auth/login", json={"username": "dora", "password": "falsch"}).status_code == 401
++    r = client.post(f"{API}/auth/login", json={"username": "dora", "password": "geheim123"})
++    assert r.status_code == 401 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9  # auch das richtige Passwort wartet, bis das Fenster abgelaufen ist
++
++
++def test_versuchszaehler_wachsen_nicht_unbegrenzt(monkeypatch):
++    from app import begrenzung
++
++    monkeypatch.setattr(begrenzung, "MAX_SCHLUESSEL", 100)
++    z = begrenzung.Zaehler()
++    for i in range(1000):
++        z.zaehlen(f"k{i}", 60)
++    assert len(z._daten) == 100
++
++
++# ---------------------------------------------------------------- Abmelden der Verwaltung
++def test_abmelden_macht_alte_sitzung_ungueltig(client, dbs):
++    import time
++
++    from app.cli import _neues_konto
++
++    _neues_konto(dbs, "chef", "Chefin", "geheim123", admin=True)
++    dbs.commit()
++    client.post("/verwaltung/anmelden", data={"username": "chef", "password": "geheim123"}, follow_redirects=False)
++    alt = dict(client.cookies)
++    csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', client.get("/verwaltung/").text).group(1)
++    time.sleep(1.1)
++    client.post("/verwaltung/abmelden", data={"csrf": csrf}, follow_redirects=False)
++    client.cookies.clear()
++    for k, v in alt.items():
++        client.cookies.set(k, v, path="/verwaltung")
++    assert client.get("/verwaltung/", follow_redirects=False).status_code == 303
++
++
++def test_leichtes_passwort_in_der_verwaltung_abgelehnt(client, dbs):
++    from app.cli import _neues_konto
++
++    _neues_konto(dbs, "chef", "Chefin", "geheim123", admin=True)
++    dbs.commit()
++    client.post("/verwaltung/anmelden", data={"username": "chef", "password": "geheim123"}, follow_redirects=False)
++    csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', client.get("/verwaltung/").text).group(1)
++    r = client.post("/verwaltung/konten", data={"csrf": csrf, "username": "lilio", "display_name": "Lilio",
++                                                "password": "passwort1"})
++    assert "zu leicht" in r.text
++
++
++# ---------------------------------------------------------------- Kopfzeilen
++def test_web_app_mit_csp_und_hsts(client):
++    r = client.get("/app/")
++    assert "script-src 'self'" in r.headers["content-security-policy"]
++    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
++    assert "strict-transport-security" not in r.headers  # http (Heimnetz)
++    r = TestClient.get(client, "https://testserver/verwaltung/anmelden")
++    assert r.headers["strict-transport-security"].startswith("max-age=")
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 12dd89b..2f51199 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.36"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.37"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 93835fc..1457beb 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.36"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.37"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/tests/test_worker_netz.py b/tests/test_worker_netz.py
+index 142c8c5..35c427f 100644
+--- a/tests/test_worker_netz.py
++++ b/tests/test_worker_netz.py
+@@ -28,7 +28,7 @@ def test_teil_wird_nach_netzfehler_erneut_geladen(tmp_path, monkeypatch):
+     k = _knecht(antwort, tmp_path)
+     monkeypatch.setattr(k._stop, "wait", lambda s: False)
+     dateien = k.herunterladen({"files": [{"position": 1, "fileId": "f1",
+-                                          "chunks": [{"index": 0, "url": "http://server/c/0", "sizeBytes": 4}]}]})
++                                          "chunks": [{"index": 0, "url": "/worker/v1/jobs/j/files/f1/chunks/0", "sizeBytes": 4}]}]})
+     assert versuche["n"] == 3 and Path(dateien[0]).read_bytes() == b"abcd"
+ 
+ 
+@@ -39,7 +39,7 @@ def test_teil_gibt_nach_vier_versuchen_auf(tmp_path, monkeypatch):
+     k = _knecht(antwort, tmp_path)
+     monkeypatch.setattr(k._stop, "wait", lambda s: False)
+     with pytest.raises(httpx.ReadTimeout):
+-        k._teil_laden({"index": 0, "url": "http://server/c/0", "sizeBytes": 4})
++        k._teil_laden({"index": 0, "url": "/worker/v1/jobs/j/files/f1/chunks/0", "sizeBytes": 4})
+ 
+ 
+ def test_409_und_404_werden_nicht_wiederholt(tmp_path, monkeypatch):
+diff --git a/uv.lock b/uv.lock
+index 74d92a4..eaf8cbb 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.36"
++version = "0.4.37"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
