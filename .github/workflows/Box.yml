@@ -11,24 +11,29 @@ on:
     workflows: ["Fassung markieren"]
     types: [completed]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   box:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Fassung bestimmen
         id: f
         env:
           GH_TOKEN: ${{ github.token }}
+          EINGABE: ${{ inputs.fassung }}
         run: |
-          V="${{ github.event.inputs.fassung }}"
+          set -euo pipefail
+          V="${EINGABE:-}"
           [ -n "$V" ] || V=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          printf '%s' "$V" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Ungültige Fassung: $V"; exit 1; }
           echo "v=$V" >> "$GITHUB_OUTPUT"
           git checkout -q "$V"
           if [ ! -f box/bauen.sh ]; then
@@ -40,16 +45,18 @@ jobs:
           fi
       - name: Abbild bauen
         if: steps.f.outputs.weiter == '1'
+        env:
+          V: ${{ steps.f.outputs.v }}
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q parted e2fsprogs zstd xz-utils
-          sudo bash box/bauen.sh "${{ steps.f.outputs.v }}" ausgabe
+          sudo bash box/bauen.sh "$V" ausgabe
       - name: Veröffentlichen
         if: steps.f.outputs.weiter == '1'
         env:
           GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.f.outputs.v }}
         run: |
-          V="${{ steps.f.outputs.v }}"
           gh release create "box-$V" --target "$(git rev-parse HEAD)" --title "Taleward-Box $V" \
             --notes-file ausgabe/HINWEISE.md \
             ausgabe/Taleward-Box-*.img.xz ausgabe/Taleward-Box-*.img.xz.sha256 ausgabe/taleward-box.json
