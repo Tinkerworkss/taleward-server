@@ -1,0 +1,275 @@
+From f3a76bdbaf341a4fe1957fb2877b6d39512c7528 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 23:08:31 +0200
+Subject: [PATCH] Szenennotizen ohne Luecken (Server 0.4.42)
+
+Bricht die Antwort fuer einen Abschnitt ab oder enden die Notizen lange vor
+dem Abschnittsende, wird der nicht abgedeckte Rest eigens nachgeholt.
+Hoechstens 15 Notizen je Abschnitt, Wuerfe und Werte fliegen heraus, die
+Spielleitung gilt nicht als Figur.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 60 ++++++++++++++++++++++++++++++------
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_szenennotizen.py  | 52 +++++++++++++++++++++++++++++--
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 8 files changed, 107 insertions(+), 17 deletions(-)
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 755a701..12a1c34 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -32,4 +32,5 @@ ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
+ NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
+ BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
++NOTIZEN_HOECHSTENS = 15  # je Abschnitt; mehr sprengt die Antwortlänge, und das Ende des Abschnitts geht verloren
+ TEIL_TOKEN = 2000  # lange Runden: so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
+ ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
+@@ -384,4 +385,17 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
+ 
+ 
++_ZEIT_VORN = re.compile(r"^\s*\[(\d{1,2}(?::\d{2}){1,2})\]")
++_REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|Probe\b|Proben\b|Qualitätsstufe|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*"
++                     r"|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|Initiative|erleichtert um|erschwert um"
++                     r"|\d+\s?[wW]\d+|[wW]20\b|Schicksalsmarker|Spielleitung (?:verlangt|fordert|erlaubt|bittet)"
++                     r"|Gewinnspiel|Pause)\b")
++ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
++
++
++def _zeit_vorn(zeile: str) -> float | None:
++    m = _ZEIT_VORN.match(zeile)
++    return zeit_lesen(m.group(1)) if m else None
++
++
+ def woerter(ein: dict) -> str:
+     """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
+@@ -432,8 +446,14 @@ Anführungszeichen.
+ Fragen.
+ Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
+-nicht getan. Lieber eine Notiz mehr als eine zu wenig – etwa eine je ein bis zwei Minuten Spielgeschehen.
++nicht getan.
++Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über seine Dauer verteilt – bis zur letzten \
++Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder lässt sie weg, damit Platz für das \
++Ende des Abschnitts bleibt.
+ Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
+-Lass Regelfragen, Würfelwürfe, Werte, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche Witze markierst \
+-du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
++Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
++einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
++Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
++des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
++„Bisher“, ist das nur zur Orientierung – nicht wiederholen.
+ Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
+ 
+@@ -444,5 +464,6 @@ Reihenfolge des Geschehens.
+ flieht, wer wem was gibt oder verspricht, welche Abmachungen gelten. Erscheinungen und Visionen mit ihrer Botschaft.
+ - Orte und Nichtspielercharaktere mit ihren Namen. Verletzt ist nicht tot, angedroht ist nicht geschehen.
+-- Nichts aus anderen Teilen, nichts erfinden, keine Regeln oder Würfe.
++- Nichts aus anderen Teilen, nichts erfinden, keine Regeln, Würfe oder Punkte. Die Spielleitung ist keine Figur – \
++nenne die Nichtspielercharaktere, für die sie spricht.
+ Antworte nur mit JSON: {"zusammenfassung": "…"}. Sprache: {sprache}."""
+ 
+@@ -456,6 +477,7 @@ Absätze durch Leerzeilen getrennt.
+ weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
+ geschehen; wer etwas wofür gibt, steht so in der Grundlage.
+-- Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung, Regeln, Würfe und \
+-Gespräche außerhalb des Spiels kommen nicht vor.
++- Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
++Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung. Regeln, Würfe, Punkte und Gespräche außerhalb des \
++Spiels kommen nicht vor.
+ - Offensichtliche Witze sind kein Spielgeschehen.
+ - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
+@@ -641,4 +663,6 @@ def _json(antwort: Antwort, retten: bool = False) -> dict:
+         if wert is None and retten:
+             wert = json_retten(text)
++            if isinstance(wert, dict):
++                wert["_gerettet"] = True  # abgeschnitten – der Aufrufer weiß dann, dass das Ende fehlt
+         if wert is None:
+             raise AntwortFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
+@@ -761,5 +785,5 @@ class Ablauf:
+             return "Transkript", text
+         kopf = _kopf(ein)
+-        system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
++        system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(NOTIZEN_HOECHSTENS))
+         self._schritt("notes")
+         # Notizen sind kürzer als ihr Abschnitt, aber nicht beliebig: Die Antwort darf höchstens ANTWORT_HOECHSTENS
+@@ -785,5 +809,6 @@ class Ablauf:
+     def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
+         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
+-        (höchstens zweimal) – kleine Modelle verlieren sich eher in langen Abschnitten."""
++        (höchstens zweimal). Bricht die Antwort ab oder enden die Notizen lange vor dem Abschnittsende, bekommt der
++        nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an denen das Modell aufgab."""
+         try:
+             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+@@ -795,9 +820,26 @@ class Ablauf:
+             return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
+                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
++        gerettet = bool(d.pop("_gerettet", False))
+         notizen = []
+         for n in d.get("notizen") or []:
+             n = str(n).strip()
+-            if n and (not notizen or n != notizen[-1]):  # Schleifen ergeben gleiche Zeilen hintereinander
++            if not n or _REGELN.search(n):
++                continue  # Würfe und Werte gehören nicht in die Geschichte
++            if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
+                 notizen.append(n)
++        if gerettet and notizen:
++            notizen.pop()  # die letzte Notiz einer abgeschnittenen Antwort ist meist selbst unvollständig
++        # Deckt das Ergebnis den Abschnitt ab? Zeit der letzten Notiz gegen die Zeit der letzten Zeile.
++        zeiten = [t for t in (_zeit_vorn(z) for z in zeilen) if t is not None]
++        bis = max((t for t in (_zeit_vorn(n) for n in notizen) if t is not None), default=None)
++        if zeiten and tiefe < 3 and (gerettet or bis is None or bis < zeiten[0] + ABDECKUNG * (zeiten[-1] - zeiten[0])):
++            ab = 0 if bis is None else next((i for i, z in enumerate(zeilen)
++                                              if (_zeit_vorn(z) or 0) > bis), len(zeilen))
++            if gerettet and bis is None:
++                ab = len(zeilen) // 2
++            rest = zeilen[ab:]
++            if 8 <= len(rest) < len(zeilen):
++                log.info("Szenennotizen: Rest des Abschnitts (%d Zeilen) wird nachgeholt", len(rest))
++                notizen += self._notizen(system, vorspann, rest, tiefe + 1)
+         return notizen
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 3a23dc6..239f22b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.41"
++version = "0.4.42"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index e883e5b..cfc7fb0 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.41"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.42"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 54d9532..553a5b1 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.41"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.42"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index e68606f..045ec00 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.41"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.42"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index cfe79c0..d69995f 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -20,5 +20,5 @@ def test_recap_wird_nicht_gerettet():
+     with pytest.raises(AntwortFehler):
+         _json(Antwort('{"title": "Kapitel 1", "text": "Die Gruppe ritt nach'))
+-    assert _json(Antwort('{"notizen": ["a", "b'), retten=True) == {"notizen": ["a"]}
++    assert _json(Antwort('{"notizen": ["a", "b'), retten=True) == {"notizen": ["a"], "_gerettet": True}
+ 
+ 
+@@ -108,5 +108,6 @@ def test_notizen_bekommen_die_vorgeschichte():
+         def chat(self, system, nutzer):
+             self.nutzer.append(nutzer)
+-            return Antwort(json.dumps({"notizen": [f"[0:{len(self.nutzer):02d}] Notiz {len(self.nutzer)}-{j}"
++            letzte = nutzer.rstrip().rsplit("\n", 1)[-1].split("]")[0].strip("[")  # Zeit der letzten Zeile
++            return Antwort(json.dumps({"notizen": [f"[{letzte}] Notiz {len(self.nutzer)}-{j}"
+                                                    for j in range(10)]}), 1, 1)
+ 
+@@ -179,2 +180,49 @@ def test_kurze_runde_ohne_teile():
+     Ablauf(k).ausfuehren(ein, ein)
+     assert not any("4 bis 8 Sätzen" in s for s in k.systeme)
++
++
++def test_abgeschnittene_notizen_rest_wird_nachgeholt():
++    """Bricht die Antwort ab (Längengrenze), fehlt das Ende des Abschnitts – es wird eigens nachgeholt."""
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.nutzer = []
++
++        def chat(self, system, nutzer):
++            self.nutzer.append(nutzer)
++            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
++            if len(self.nutzer) == 1:  # erster Aufruf: nur die erste Hälfte, dann abgeschnitten
++                halbe = zeilen[: len(zeilen) // 2]
++                text = json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in halbe]})
++                return Antwort(text[:-8], 1, 1)
++            return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Notiz zu {z.split(' ')[0]}" for z in zeilen[::3]]}), 1, 1)
++
++    k = Klient()
++    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=50000)
++    _, text = ablauf.grundlage(_ein(300), lambda _p: None)
++    # Abschnitt 1 abgeschnitten → sein Rest wird nachgeholt; danach Abschnitt 2 normal: ein Aufruf mehr als Abschnitte
++    abschnitte = k.nutzer[0].split("Abschnitt 1 von ")[1].split(" ")[0]
++    assert len(k.nutzer) == int(abschnitte) + 1
++    assert "[1:39:40]" in text  # das Ende der Runde (Zeile 299 × 20 s) ist in den Notizen
++    erste_zeiten = [int(z.split(":")[0].strip("[")) for z in text.split("\n")[:3]]
++    assert erste_zeiten == sorted(erste_zeiten)  # Reihenfolge bleibt
++
++
++def test_notizen_mit_regeln_fliegen_raus():
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def chat(self, system, nutzer):
++            return Antwort(json.dumps({"notizen": [
++                "[0:00] Alle verlieren 8 Lebenspunkte wegen Folter.",
++                "[0:30] Spielleitung fordert eine Probe auf Klettern.",
++                "[1:00] Orasilas verbindet Pipo notdürftig.",
++                "[99:00] Die Gruppe erreicht den Fringlasshof."]}), 1, 1)
++
++    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
++    assert "Pipo" in text and "Fringlasshof" in text and "Lebenspunkte" not in text and "Probe" not in text
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 62eeb8d..799d5c5 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.41"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.42"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index bad3f74..3729b3c 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.41"
++version = "0.4.42"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
