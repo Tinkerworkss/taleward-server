@@ -44,8 +44,10 @@ def _dauer(daten: bytes) -> float | None:
     with tempfile.NamedTemporaryFile(suffix=".audio") as f:
         f.write(daten)
         f.flush()
-        res = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", f.name],
-                             capture_output=True, text=True, timeout=20)
+        from app.audio import EINGABE
+
+        res = subprocess.run(["ffprobe", "-v", "error", *EINGABE, "-show_entries", "format=duration", "-of", "csv=p=0",
+                              f.name], capture_output=True, text=True, timeout=20)
     try:
         return float(res.stdout.strip())
     except ValueError:

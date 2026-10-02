@@ -19,6 +19,7 @@ ORDNER="$ZIEL/daten/aktualisierung"
 STATUS="$ORDNER/server-status.json"
 cd "$ZIEL" || exit 1
 mkdir -p "$ORDNER"
+BAULOG=$(mktemp /tmp/taleward-bau.XXXXXX) || exit 1
 
 jetzt=0
 [ "${1:-}" = "--jetzt" ] && jetzt=1
@@ -32,10 +33,15 @@ fi
 rm -f "$ORDNER/server-jetzt"
 
 melden() {  # ergebnis, von, nach, meldung
+  # Erst in einer neuen Datei im Ordner von root schreiben, dann hinüberschieben: Der Ordner gehört dem Container,
+  # root folgt dort keinem Verweis und ändert keine Rechte rekursiv.
+  local tmp
+  tmp=$(mktemp "$ZIEL/.server-status.XXXXXX") || return 0
   printf '{"zeit": "%s", "ergebnis": "%s", "von": "%s", "nach": "%s", "meldung": "%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "${4//\"/\'}" > "$STATUS.tmp"
-  mv "$STATUS.tmp" "$STATUS"
-  chown -R 1000:1000 "$ORDNER" 2>/dev/null || true
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "${4//\"/\'}" > "$tmp"
+  chmod 644 "$tmp"
+  chown 1000:1000 "$tmp" 2>/dev/null || true
+  if [ -d "$ORDNER" ] && [ ! -L "$ORDNER" ]; then mv -f "$tmp" "$STATUS"; else rm -f "$tmp"; fi
   echo "[taleward] $1: $2 → $3 $4"
 }
 
@@ -82,8 +88,8 @@ version_setzen "$NEU"
 # Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
 # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
 # Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
-if docker compose build --pull server >/tmp/taleward-bau.log 2>&1 && docker compose build >>/tmp/taleward-bau.log 2>&1 \
-   && { docker compose pull --ignore-buildable --quiet >>/tmp/taleward-bau.log 2>&1 || true; } \
+if docker compose build --pull server >"$BAULOG" 2>&1 && docker compose build >>"$BAULOG" 2>&1 \
+   && { docker compose pull --ignore-buildable --quiet >>"$BAULOG" 2>&1 || true; } \
    && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""
   # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –

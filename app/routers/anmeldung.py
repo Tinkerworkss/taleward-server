@@ -8,9 +8,6 @@ from __future__ import annotations
 import hmac
 import logging
 import re
-import threading
-import time
-from collections import defaultdict, deque
 from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
@@ -21,7 +18,7 @@ from sqlalchemy.orm import Session
 from app import anmeldedienste, einmal, errors, mail, schemas
 from app.access import current_user
 from app.db import get_db, server_id, utcnow
-from app.einstellungen import oeffentliche_adresse
+from app.einstellungen import mail_adresse, oeffentliche_adresse
 from app.models import AuthMethod, User
 from app.security import create_token, token_jti, verify_password
 from app.services import user_out
@@ -35,25 +32,16 @@ EMAIL_GUELTIG = timedelta(hours=24)
 RESET_GUELTIG = timedelta(hours=1)
 
 # ---------------------------------------------------------------- Begrenzung
-_sperre = threading.Lock()
-_zaehler: dict[str, deque] = defaultdict(deque)
-
-
 def _zu_viele(schluessel: str, anzahl: int, fenster: float) -> bool:
-    jetzt = time.monotonic()
-    with _sperre:
-        q = _zaehler[schluessel]
-        while q and q[0] < jetzt - fenster:
-            q.popleft()
-        if len(q) >= anzahl:
-            return True
-        q.append(jetzt)
-        return False
+    from app.begrenzung import ZAEHLER
+
+    return not ZAEHLER.versuch(schluessel, anzahl, fenster)
 
 
 def versuche_vergessen() -> None:
-    with _sperre:
-        _zaehler.clear()
+    from app.begrenzung import ZAEHLER
+
+    ZAEHLER.vergessen()
 
 
 def _adresse(request: Request) -> str:
@@ -85,11 +73,12 @@ def passwort_vergessen(body: schemas.PasswordResetRequest, request: Request, hin
     if _zu_viele(f"reset:{_adresse(request)}", 10, 15 * 60):
         raise errors.ApiError(429, "too_many_requests")
     login = (body.login or "").strip().lower()
-    if login and mail.kann_senden(db):
+    basis = mail_adresse(db)
+    if login and basis and mail.kann_senden(db):
         feld = User.email if "@" in login else User.username
         u = db.scalar(select(User).where(feld == login))
         if u is not None and u.email and not u.setup_account and not _zu_viele(f"reset-konto:{u.id}", 3, 3600):
-            hintergrund.add_task(_reset_senden, u.id, errors.sprache(request), oeffentliche_adresse(db, request))
+            hintergrund.add_task(_reset_senden, u.id, errors.sprache(request), basis)
     return Response(status_code=202)
 
 
@@ -103,7 +92,8 @@ def email_eintragen(body: schemas.EmailRequest, request: Request, user: User = D
     anderer = db.scalar(select(User).where(User.email == adresse, User.id != user.id))
     if anderer is not None:
         raise errors.conflict("email_taken")
-    if not mail.kann_senden(db):
+    basis = mail_adresse(db)
+    if not mail.kann_senden(db) or not basis:
         raise errors.ApiError(503, "mail_unavailable")
     if _zu_viele(f"email:{user.id}", 5, 3600):
         raise errors.ApiError(429, "too_many_requests")
@@ -111,7 +101,7 @@ def email_eintragen(body: schemas.EmailRequest, request: Request, user: User = D
     wert = einmal.erzeugen(db, "email_bestaetigen", EMAIL_GUELTIG, user_id=user.id, email=adresse)
     user.email_pending = adresse
     betreff, text = mail.text(db, "bestaetigen", errors.sprache(request), name=user.display_name,
-                              benutzer=user.username, link=f"{oeffentliche_adresse(db, request)}/konto/email/{wert}")
+                              benutzer=user.username, link=f"{basis}/konto/email/{wert}")
     try:
         mail.senden(db, adresse, betreff, text)
     except mail.MailFehler:
@@ -230,6 +220,8 @@ def dienst_start(provider: str, request: Request, challenge: str = "", purpose: 
                  db: Session = Depends(get_db)):
     from app import webapp
 
+    if _zu_viele(f"oidc-start:{_adresse(request)}", 30, 15 * 60):  # jeder Aufruf legt einen Datensatz an
+        return RedirectResponse("taleward://auth?error=too_many_requests", status_code=302)
     basis = oeffentliche_adresse(db, request)
     rueckweg = "taleward://auth"
     if returnTo:

@@ -14,9 +14,6 @@ from __future__ import annotations
 
 import re
 import shutil
-import threading
-import time
-from collections import defaultdict, deque
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,8 +35,6 @@ LEICHT = {"passwort", "password", "12345678", "123456789", "1234567890", "qwertz
 
 # Begrenzung: höchstens so viele Registrierungsversuche je Adresse im Zeitfenster
 MAX_VERSUCHE, FENSTER = 10, 15 * 60
-_versuche: dict[str, deque] = defaultdict(deque)
-_sperre = threading.Lock()
 
 
 def registrierung(db: Session) -> str:
@@ -50,19 +45,16 @@ def registrierung(db: Session) -> str:
 
 
 def _begrenzen(adresse: str) -> None:
-    jetzt = time.monotonic()
-    with _sperre:
-        q = _versuche[adresse]
-        while q and q[0] < jetzt - FENSTER:
-            q.popleft()
-        if len(q) >= MAX_VERSUCHE:
-            raise errors.ApiError(429, "too_many_requests")
-        q.append(jetzt)
+    from app.begrenzung import ZAEHLER
+
+    if not ZAEHLER.versuch(f"registrieren:{adresse}", MAX_VERSUCHE, FENSTER):
+        raise errors.ApiError(429, "too_many_requests")
 
 
 def versuche_vergessen() -> None:
-    with _sperre:
-        _versuche.clear()
+    from app.begrenzung import ZAEHLER
+
+    ZAEHLER.vergessen()
 
 
 def passwort_zu_schwach(passwort: str, *namen: str) -> bool:

@@ -152,6 +152,10 @@ def create_app() -> FastAPI:
     from app.versionen import pruefen
 
     app.add_middleware(BaseHTTPMiddleware, dispatch=pruefen)
+    from app.koerper import Grenze
+
+    # Obergrenze für jede Anfrage (auch Multipart und chunked), größer als jedes erlaubte Teil
+    app.add_middleware(Grenze, max_bytes=max(settings.max_body_bytes, settings.chunk_size_bytes + 1024 * 1024))
     class TalewardCORS(CORSMiddleware):
         """Erlaubte Herkünfte ändern sich zur Laufzeit (Verwaltung: zentrale Web-App, öffentliche Adresse)."""
 

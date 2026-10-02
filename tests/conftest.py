@@ -22,7 +22,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTENANCE_INTERVAL_SECONDS", "0")  # Wartung rufen die Tests selbst auf
     monkeypatch.setenv("SUMMARIZER_INTERVAL_SECONDS", "0")  # Zusammenfassen ebenso
     monkeypatch.setenv("LOCAL_WORKER_AUTOSTART", "false")
-    monkeypatch.setenv("CREATE_SETUP_ACCOUNT", "false")
     monkeypatch.setenv("EXTERNAL_INTERVAL_SECONDS", "0")
     monkeypatch.delenv("EXTERNAL_TRANSCRIPTION", raising=False)
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
@@ -35,14 +34,9 @@ def client(tmp_path, monkeypatch):
     from app.einstellungen import mindestversion_vergessen
 
     mindestversion_vergessen()  # Zwischenspeicher der App-Mindestversion gehört zur alten Datenbank
-    from app.konto import versuche_vergessen
+    from app.begrenzung import ZAEHLER
 
-    versuche_vergessen()  # Begrenzung der Registrierungsversuche je Adresse
-    from app import koppeln
-    from app.verwaltung import router as verwaltung_router
-
-    koppeln.versuche_vergessen()
-    verwaltung_router._fehlversuche.clear()
+    ZAEHLER.vergessen()  # Begrenzung von Anmelde-, Registrierungs-, Kopplungs- und Einladungsversuchen
     from app.main import create_app
 
     with ContractClient(create_app(), base_url="http://testserver") as c:

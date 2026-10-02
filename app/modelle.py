@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -168,11 +169,33 @@ class ServerQuelle:
         return h.hexdigest()
 
 
-def _sicher(pfad: str) -> bool:
-    from pathlib import PurePosixPath
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_PFADZEICHEN = re.compile(r"^[A-Za-z0-9._/-]+$")
 
-    p = PurePosixPath(pfad)
-    return bool(pfad) and not p.is_absolute() and ".." not in p.parts and "\\" not in pfad
+
+def commit_ok(fassung) -> bool:
+    """Eine Fassung ist ein 40-stelliger Git-Commit – nie ein Name wie „main“ oder ein Pfad."""
+    return isinstance(fassung, str) and bool(_COMMIT.match(fassung))
+
+
+def _sicher(pfad) -> bool:
+    """Relativer Pfad innerhalb des Modellordners – unter Linux und Windows (keine Laufwerke, kein „..“)."""
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    if not isinstance(pfad, str) or not _PFADZEICHEN.match(pfad):
+        return False
+    w = PureWindowsPath(pfad)
+    if PurePosixPath(pfad).is_absolute() or w.is_absolute() or w.drive or w.anchor:
+        return False
+    return all(t not in ("", ".", "..") for t in pfad.split("/"))
+
+
+def _innerhalb(wurzel: Path, ziel: Path) -> bool:
+    try:
+        ziel.resolve().relative_to(wurzel.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
@@ -197,7 +220,9 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
         raise ModellFehler(f"Server nicht erreichbar, um das Modell {repo} zu laden ({type(e).__name__}).") from e
     if v is None:
         return None
-    fassung = v["fassung"]
+    fassung = v.get("fassung")
+    if not commit_ok(fassung):
+        raise ModellFehler(f"Modell {repo}: Der Server nennt keine gültige Fassung.")
     fest = FASSUNGEN.get(repo)
     if fest and fest != fassung:
         raise ModellFehler(f"Modell {repo}: Der Server hat Fassung {fassung[:12]}, dieser Worker erwartet "
@@ -210,8 +235,8 @@ def vom_server(repo: str, quelle: ServerQuelle) -> Bereit | None:
         shutil.rmtree(tmp, ignore_errors=True)
         try:
             for d in v["dateien"]:
-                if not _sicher(d["pfad"]):
-                    raise ModellFehler(f"Unerwarteter Pfad im Modellverzeichnis: {d['pfad']}")
+                if not _sicher(d.get("pfad")) or not _innerhalb(tmp, tmp / d["pfad"]):
+                    raise ModellFehler(f"Unerwarteter Pfad im Modellverzeichnis: {str(d.get('pfad'))[:100]}")
                 if quelle.laden(repo, fassung, d["pfad"], tmp / d["pfad"]) != d["sha256"]:
                     raise ModellFehler(f"Prüfsumme stimmt nicht: {d['pfad']} – bitte erneut versuchen.")
             (tmp / ".vollstaendig").write_text(fassung, encoding="utf-8")
@@ -229,7 +254,7 @@ def _vorhanden(repo: str) -> Bereit | None:
     from app.config import get_settings
 
     fassung = gemerkt().get(repo)
-    if not fassung:
+    if not commit_ok(fassung):
         return None
     ordner = get_settings().data_dir / "modelle" / repo.replace("/", "__") / fassung
     if not (ordner / ".vollstaendig").exists():

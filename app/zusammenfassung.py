@@ -157,9 +157,16 @@ def vorschlag_eingabe(db: Session, s: GameSession, basis: Eingabe) -> dict:
     for e in db.scalars(select(Entry).where(Entry.campaign_id == s.campaign_id).order_by(Entry.updated_at.desc())):
         eintrag = {"id": e.id, "typ": e.type, "name": e.name, "zusammenfassung": e.summary or "",
                    "gm_notes": e.gm_notes or None}
-        (bibel if e.visibility == "public" else geheim).append(eintrag)
+        # Teilweise verborgene Einträge („Wer weiß was“) nicht als allgemein bekannt ausgeben
+        (bibel if e.visibility == "public" and not e.hidden_member_ids else geheim).append(eintrag)
     d["bibel"], d["geheim"] = bibel, geheim
     return d
+
+
+def geheime_bibeltexte(eintraege) -> list[str]:
+    """Texte, die nicht alle Spieler kennen: gmNotes, Zusammenfassungen geheimer und teilweise verborgener Einträge."""
+    return [t for e in eintraege for t in (e.gm_notes or "",
+                                           e.summary if e.visibility != "public" or e.hidden_member_ids else "") if t]
 
 
 # ---------------------------------------------------------------- Ergebnis
@@ -345,8 +352,7 @@ def speichern(db: Session, s: GameSession, erg: Ergebnis, rechenzeit: float, eng
                  open_threads=json.dumps([f.strip() for f in erg.offene_faeden if f.strip()], ensure_ascii=False),
                  model=erg.modell, review=pruefteil.als_json(pruefteil.bauen(erg.pruefung, text, stellen, sprache))))
     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == s.campaign_id))}
-    geheime_texte = [t for e in eintraege.values() for t in (e.gm_notes or "",
-                                                              e.summary if e.visibility != "public" else "") if t]
+    geheime_texte = geheime_bibeltexte(eintraege.values())
     # Qualitätsprüfung Stufe 1: Belege gegen das Transkript prüfen (erfundene Zitate fallen weg)
     transkript = stellen.woerter
     ohne_beleg = 0

@@ -199,6 +199,8 @@ EN: dict[str, str] = {
     "Limit ändern": "Change limit",
     "Limit: {betrag} €": "Limit: €{betrag}",
     "Link verwenden": "Use link",
+    "Ein verbundener lokaler Server bekommt die Aufnahmen aller Kampagnen dieses Servers. Verbinde nur PCs, denen du vertraust.":
+        "A connected local server receives the recordings of all campaigns on this server. Only connect PCs you trust.",
     "Lokalen Server verbinden": "Connect local server",
     "Lokaler Server": "Local server",
     "Lokaler Server, Cloud als Ausweichlösung": "Local server, cloud as fallback",
@@ -309,8 +311,8 @@ EN: dict[str, str] = {
     "Passwort": "Password",
     "Verwaltung von {name} · {betreiber}": "Administration of {name} · {betreiber}",
     "Ersteinrichtung": "Initial setup",
-    "Ersteinrichtung: Benutzername admin, Passwort admin. Danach legst du deinen eigenen Verwalter an, und dieses Konto wird gelöscht.":
-        "Initial setup: username admin, password admin. You will then create your own administrator, and this account will be deleted.",
+    "Es gibt noch ein Konto aus der Ersteinrichtung. Melde dich damit an und lege deinen eigenen Verwalter an – danach wird es gelöscht.":
+        "There is still an account from the initial setup. Sign in with it and create your own administrator – it will be deleted afterwards.",
     "Es gibt noch kein Konto mit Verwalter-Recht. Im Ubuntu-Fenster anlegen mit":
         "There is no administrator account yet. Create one in the Ubuntu window with",
     "oder ein bestehendes Konto freischalten mit": "or grant an existing account access with",

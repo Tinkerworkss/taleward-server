@@ -28,7 +28,7 @@ def test_teil_wird_nach_netzfehler_erneut_geladen(tmp_path, monkeypatch):
     k = _knecht(antwort, tmp_path)
     monkeypatch.setattr(k._stop, "wait", lambda s: False)
     dateien = k.herunterladen({"files": [{"position": 1, "fileId": "f1",
-                                          "chunks": [{"index": 0, "url": "http://server/c/0", "sizeBytes": 4}]}]})
+                                          "chunks": [{"index": 0, "url": "/worker/v1/jobs/j/files/f1/chunks/0", "sizeBytes": 4}]}]})
     assert versuche["n"] == 3 and Path(dateien[0]).read_bytes() == b"abcd"
 
 
@@ -39,7 +39,7 @@ def test_teil_gibt_nach_vier_versuchen_auf(tmp_path, monkeypatch):
     k = _knecht(antwort, tmp_path)
     monkeypatch.setattr(k._stop, "wait", lambda s: False)
     with pytest.raises(httpx.ReadTimeout):
-        k._teil_laden({"index": 0, "url": "http://server/c/0", "sizeBytes": 4})
+        k._teil_laden({"index": 0, "url": "/worker/v1/jobs/j/files/f1/chunks/0", "sizeBytes": 4})
 
 
 def test_409_und_404_werden_nicht_wiederholt(tmp_path, monkeypatch):

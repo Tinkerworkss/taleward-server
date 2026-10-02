@@ -8,7 +8,6 @@ Jeder Schritt lässt sich überspringen und später wieder aufrufen; die Übersi
 """
 from __future__ import annotations
 
-import time
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,7 +19,7 @@ from app.db import get_db, utcnow
 from app.einstellungen import angaben, extern_konfig, llm_konfig, meta_lesen, meta_schreiben, speichern
 from app.models import Organization, OrgMember, User, Worker
 from app.verwaltung.router import (
-    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _fehlversuche, _gesperrt, _online_grenze,
+    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _fehlversuch, _gesperrt, _online_grenze,
     _seite, csrf_pruefen, sitzung, tr, verwalter,
 )
 
@@ -90,11 +89,11 @@ def einrichtung_abschliessen(request: Request, code: str = Form(""), username: s
     if alt is not None:
         csrf_pruefen(request, csrf)
     else:
-        schluessel_ = f"einrichtung|{request.client.host if request.client else '?'}"
-        if _gesperrt(schluessel_):
+        adresse_ = request.client.host if request.client else "?"
+        if _gesperrt(adresse_, "(einrichtung)"):
             return einrichtung_seite(request, "", db, _("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen."))
         if not einrichtung.code_pruefen(db, code):
-            _fehlversuche[schluessel_].append(time.monotonic())
+            _fehlversuch(adresse_, "(einrichtung)")
             antwort = einrichtung_seite(request, code, db)
             antwort.status_code = 400
             return antwort

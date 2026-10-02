@@ -777,7 +777,7 @@ class Ablauf:
         bibel = "\n".join(eintrag(e) for e in ein["bibel"])
         geheim = "\n".join(eintrag(e) for e in ein["geheim"])
         nutzer = (f"{_kopf(ein)}\n\nBibel (für Spieler sichtbar; gmNotes sind geheim):\n{bibel or '(leer)'}"
-                  f"\n\nGeheime Einträge (nur Spielleitung):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
+                  f"\n\nGeheime Einträge (nur Spielleitung oder nur einzelne Spieler kennen sie):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE)))
         self._schritt("proposals")
         d = self.zaehler.aufruf(self.klient, system, nutzer)

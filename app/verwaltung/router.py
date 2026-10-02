@@ -14,7 +14,6 @@ import json
 import os
 import secrets
 import time
-from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -31,7 +30,7 @@ from sqlalchemy.orm import Session
 from app import errors, queue
 from app.config import get_settings
 from app.db import get_db, server_id, utcnow
-from app.einstellungen import angaben, meta_schreiben, speichern
+from app.einstellungen import angaben, meta_lesen, meta_schreiben, speichern
 from app.models import (
     CampaignDocument,
     AuthMethod, Campaign, GameSession, Job, Member, Organization, OrgMember, User, Worker,
@@ -108,14 +107,22 @@ class NichtAngemeldet(Exception):
     pass
 
 
-_fehlversuche: dict[str, list[float]] = defaultdict(list)
-SPERRE_VERSUCHE, SPERRE_SEKUNDEN = 5, 300
+SPERRE_VERSUCHE, SPERRE_SEKUNDEN = 5, 300   # je Name (über alle Adressen)
+SPERRE_ADRESSE = 20                          # je Adresse (über alle Namen)
 
 
-def _gesperrt(schluessel: str) -> bool:
-    jetzt = time.monotonic()
-    _fehlversuche[schluessel] = [t for t in _fehlversuche[schluessel] if jetzt - t < SPERRE_SEKUNDEN]
-    return len(_fehlversuche[schluessel]) >= SPERRE_VERSUCHE
+def _gesperrt(adresse: str, name: str) -> bool:
+    from app.begrenzung import ZAEHLER
+
+    return (ZAEHLER.voll(f"verw-name:{name}", SPERRE_VERSUCHE, SPERRE_SEKUNDEN)
+            or ZAEHLER.voll(f"verw-adr:{adresse}", SPERRE_ADRESSE, SPERRE_SEKUNDEN))
+
+
+def _fehlversuch(adresse: str, name: str) -> None:
+    from app.begrenzung import ZAEHLER
+
+    ZAEHLER.zaehlen(f"verw-name:{name}", SPERRE_SEKUNDEN)
+    ZAEHLER.zaehlen(f"verw-adr:{adresse}", SPERRE_SEKUNDEN)
 
 
 def _ist_verwalter(db: Session, user: User) -> bool:
@@ -132,6 +139,12 @@ def _cookie_wert(db: Session, user: User) -> str:
     return jwt.encode({"sub": user.id, "tv": user.token_version, "aud": _aud(db), "iat": jetzt,
                        "exp": jetzt + timedelta(hours=SITZUNG_STUNDEN), "jti": secrets.token_hex(8)},
                       get_settings().jwt_secret, algorithm="HS256")
+
+
+def _zu_leicht(passwort: str, *namen: str) -> bool:
+    from app.konto import passwort_zu_schwach
+
+    return passwort_zu_schwach(passwort, *namen)
 
 
 def _csrf(cookie: str) -> str:
@@ -154,6 +167,9 @@ def sitzung(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, daten.get("sub"))
     if user is None or user.token_version != daten.get("tv") or not _ist_verwalter(db, user):
         raise NichtAngemeldet()
+    abgemeldet = meta_lesen(db, f"verwaltung.abgemeldet.{user.id}")
+    if abgemeldet and abgemeldet.isdigit() and int(daten.get("iat") or 0) < int(abgemeldet):
+        raise NichtAngemeldet()  # nach dem Abmelden gilt keine ältere Sitzung mehr (auch nicht auf anderen Geräten)
     request.state.csrf = _csrf(wert)
     return user
 
@@ -203,22 +219,24 @@ def anmelden_seite(request: Request, db: Session = Depends(get_db)):
 @router.post("/anmelden")
 def anmelden(request: Request, username: str = Form(""), password: str = Form(""), db: Session = Depends(get_db)):
     name = username.strip().lower()
-    schluessel = f"{request.client.host if request.client else '?'}|{name}"
+    adresse = request.client.host if request.client else "?"
     fehler = None
-    if _gesperrt(schluessel):
+    if _gesperrt(adresse, name):
         fehler = tr(request)("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen.")
     else:
         user = db.scalar(select(User).where(User.username == name))
         methode = user and db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id,
                                                              AuthMethod.kind == "password"))
         if not (methode and verify_password(password, methode.secret)):
-            _fehlversuche[schluessel].append(time.monotonic())
+            _fehlversuch(adresse, name)
             fehler = tr(request)("Benutzername oder Passwort stimmt nicht.")
         elif not _ist_verwalter(db, user):
             fehler = tr(request)("Dieses Konto hat kein Verwalter-Recht. Freischalten mit: uv run chronik admin -u {name}",
                                  name=name)
         else:
-            _fehlversuche.pop(schluessel, None)
+            from app.begrenzung import ZAEHLER
+
+            ZAEHLER.loeschen(f"verw-name:{name}")
             antwort = _zurueck("/einrichtung" if user.setup_account else "/")
             antwort.set_cookie(COOKIE, _cookie_wert(db, user), max_age=SITZUNG_STUNDEN * 3600, httponly=True,
                                samesite="strict", secure=request.url.scheme == "https", path="/verwaltung")
@@ -229,7 +247,9 @@ def anmelden(request: Request, username: str = Form(""), password: str = Form(""
 
 
 @router.post("/abmelden", dependencies=[Depends(csrf_pruefen)])
-def abmelden(user: User = Depends(sitzung)):
+def abmelden(user: User = Depends(sitzung), db: Session = Depends(get_db)):
+    meta_schreiben(db, f"verwaltung.abgemeldet.{user.id}", str(int(time.time())))
+    db.commit()
     antwort = RedirectResponse("/verwaltung/anmelden?ok=abgemeldet", status_code=303)
     antwort.delete_cookie(COOKIE, path="/verwaltung")
     return antwort
@@ -315,6 +335,8 @@ def konto_anlegen(request: Request, username: str = Form(""), display_name: str 
         return _konten_fehler(request, user, db, tr(request)("Bitte einen Anzeigenamen angeben."))
     if len(password) < MIN_PASSWORT:
         return _konten_fehler(request, user, db, tr(request)("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT))
+    if _zu_leicht(password, name, display_name):
+        return _konten_fehler(request, user, db, tr(request)("Dieses Passwort ist zu leicht zu erraten."))
     if db.scalar(select(User).where(User.username == name)):
         return _konten_fehler(request, user, db, tr(request)("Den Benutzer „{name}“ gibt es schon.", name=name))
     _neues_konto(db, name, display_name.strip()[:128], password, admin=bool(admin))
@@ -330,6 +352,8 @@ def passwort_setzen(request: Request, user_id: str, password: str = Form(""), us
         raise errors.not_found()
     if len(password) < MIN_PASSWORT:
         return _konten_fehler(request, user, db, tr(request)("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT))
+    if _zu_leicht(password, ziel.username, ziel.display_name):
+        return _konten_fehler(request, user, db, tr(request)("Dieses Passwort ist zu leicht zu erraten."))
     from app import passwortlink
 
     passwortlink.passwort_setzen(db, ziel, password)
@@ -1031,6 +1055,9 @@ def qr_bild(text: str) -> str:
     return segno.make(text, error="m").svg_data_uri(scale=6, border=3, dark="#2A2118", light="#FBF6EA")
 
 
+EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER = 30, 15 * 60  # falsche Codes je Adresse
+
+
 @seiten.get("/einladung/{code}", response_class=HTMLResponse)
 def einladung(code: str, request: Request, db: Session = Depends(get_db)):
     """Landeseite eines Einladungslinks für Leute ohne App. Zeigt keinen Kampagnentitel (die Seite ist öffentlich)."""
@@ -1042,8 +1069,15 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
     from app import webapp
     from app.einstellungen import oeffentliche_adresse
 
+    from app.begrenzung import ZAEHLER
+
     code = normalize_invite_code(code)[:32]
-    einladung = db.get(Invite, code)
+    adresse = request.client.host if request.client else "?"
+    einladung = None
+    if not ZAEHLER.voll(f"einladung-adr:{adresse}", EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER):
+        einladung = db.get(Invite, code)
+        if einladung is None:
+            ZAEHLER.zaehlen(f"einladung-adr:{adresse}", EINLADUNG_FENSTER)
     gueltig = einladung is not None and einladung.expires_at > utcnow()
     link = str(request.base_url).rstrip("/") + f"/einladung/{code}"
     a = angaben(db)
@@ -1086,6 +1120,8 @@ def passwort_seite_setzen(token: str, request: Request, password: str = Form("")
     fehler = ""
     if len(password) < MIN_PASSWORT:
         fehler = _("Das Passwort braucht mindestens {n} Zeichen.", n=MIN_PASSWORT)
+    elif _zu_leicht(password, ziel.username, ziel.display_name):
+        fehler = _("Dieses Passwort ist zu leicht zu erraten.")
     elif password != password2:
         fehler = _("Die beiden Passwörter stimmen nicht überein.")
     if fehler:
@@ -1118,6 +1154,18 @@ SICHERHEITS_KOPFZEILEN = {
     "Cache-Control": "no-store",
     "X-Frame-Options": "DENY",
 }
+
+# Web-App unter /app/ (gleiche Herkunft wie /verwaltung): nur eigene Skripte, keine Einbettung. Verbindungen und
+# Bilder auch zu anderen Taleward-Servern (die App kann mehrere verbinden), Stil-Attribute von React erlaubt.
+WEBAPP_KOPFZEILEN = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; "
+                               "connect-src 'self' https: http://localhost:* http://127.0.0.1:*; "
+                               "font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'; "
+                               "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "X-Frame-Options": "DENY",
+}
+HSTS = "max-age=31536000"
 
 
 def einbinden(app: FastAPI) -> None:
@@ -1152,6 +1200,11 @@ def einbinden(app: FastAPI) -> None:
         elif pfad.startswith(("/verwaltung", "/einladung", "/datenschutz", "/passwort", "/konto/")):
             for k, v in SICHERHEITS_KOPFZEILEN.items():
                 antwort.headers.setdefault(k, v)
+        elif pfad == "/app" or pfad.startswith("/app/"):
+            for k, v in WEBAPP_KOPFZEILEN.items():
+                antwort.headers.setdefault(k, v)
+        if request.url.scheme == "https":  # hinter Caddy (X-Forwarded-Proto); im Heimnetz ohne TLS nicht
+            antwort.headers.setdefault("Strict-Transport-Security", HSTS)
         return antwort
 
     @app.get("/", include_in_schema=False)

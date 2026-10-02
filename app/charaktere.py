@@ -278,6 +278,13 @@ def chronik(db: Session, me: Member, request) -> dict:
                         .order_by(Entry.name)):
         if me.id in e.hidden_member_ids and me.role != "gm":
             continue
+        if bis is not None:
+            # Ehemalige: nur, was bis zum Austritt so stand. Später Angelegtes oder Geändertes und alles, was die SL
+            # vor einzelnen verborgen hat (Ehemalige stehen in keiner Verborgen-Liste), bleibt draußen.
+            if e.updated_at is None or e.updated_at > bis:
+                continue
+            if e.hidden_member_ids and e.origin_member_id != me.id:
+                continue
         if e.origin_member_id == me.id:
             mitgebracht.append({"originEntryId": e.origin_entry_id, "entryId": e.id, "entryType": e.type,
                                 "name": e.name, "summary": e.summary, "hidden": bool(e.hidden_member_ids),

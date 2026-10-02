@@ -56,10 +56,24 @@ def create_campaign(body: schemas.CampaignCreate, user: User = Depends(current_u
     return campaign_out(db, c, me)
 
 
+JOIN_FENSTER = 15 * 60
+JOIN_JE_KONTO, JOIN_JE_ADRESSE = 10, 30  # falsche Codes im Fenster
+
+
 @router.post("/campaigns/join", response_model=schemas.CampaignOut, response_model_exclude_unset=True)
-def join(body: schemas.JoinRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def join(body: schemas.JoinRequest, request: Request, user: User = Depends(current_user),
+         db: Session = Depends(get_db)):
+    from app.begrenzung import ZAEHLER
+
+    adresse = request.client.host if request.client else "?"
+    if ZAEHLER.voll(f"join-konto:{user.id}", JOIN_JE_KONTO, JOIN_FENSTER) or \
+            ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
+        # 409 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
+        raise errors.ApiError(409, "too_many_requests")
     inv = db.get(Invite, normalize_invite_code(body.code))
     if inv is None or inv.expires_at <= utcnow():
+        ZAEHLER.zaehlen(f"join-konto:{user.id}", JOIN_FENSTER)
+        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
         raise errors.ApiError(404, "invite_invalid")
     c = db.get(Campaign, inv.campaign_id)
     me = membership(db, c.id, user)
@@ -405,13 +419,6 @@ def delete_portrait(campaignId: str, memberId: str, user: User = Depends(current
 
 async def _koerper(request: Request, max_bytes: int) -> bytes:
     """Rohdaten lesen, aber nie mehr als erlaubt in den Speicher holen."""
-    laenge = request.headers.get("content-length")
-    if laenge and laenge.isdigit() and int(laenge) > max_bytes:
-        raise errors.ApiError(413, "image_too_large", mb=max_bytes // (1024 * 1024))
-    teile, n = [], 0
-    async for teil in request.stream():
-        n += len(teil)
-        if n > max_bytes:
-            raise errors.ApiError(413, "image_too_large", mb=max_bytes // (1024 * 1024))
-        teile.append(teil)
-    return b"".join(teile)
+    from app.koerper import lesen
+
+    return await lesen(request, max_bytes, "image_too_large", mb=max_bytes // (1024 * 1024))

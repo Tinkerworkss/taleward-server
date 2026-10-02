@@ -22,6 +22,10 @@ def test_heimnetz_ohne_code_nur_wenn_eingeschaltet_und_privat(monkeypatch):
         assert heimnetz_ohne_code(_anfrage(privat)), privat
     for fremd in ("8.8.8.8", "2a00:1450::1", "testclient", None):
         assert not heimnetz_ohne_code(_anfrage(fremd)), fremd
+    from app import einrichtung
+
+    monkeypatch.setattr(einrichtung, "_GESTARTET", einrichtung._GESTARTET - einrichtung.HEIMNETZ_FRIST_S - 1)
+    assert not heimnetz_ohne_code(_anfrage("192.168.178.20"))  # 30 Minuten nach dem Start nur noch mit Code
     config.get_settings.cache_clear()
 
 

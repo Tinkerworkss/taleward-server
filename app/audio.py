@@ -50,9 +50,15 @@ def _zeitgrenze(datei: Path) -> float:
     return 600 + 3 * mb
 
 
+# Hochgeladene Dateien nur als Audio öffnen: keine Netz-Protokolle, keine Wiedergabelisten (HLS, concat), die andere
+# Dateien oder Adressen nachladen könnten.
+FORMATE = "wav,mp3,ogg,flac,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,aac,amr,caf,aiff,w64,asf"
+EINGABE = ["-protocol_whitelist", "file,pipe", "-format_whitelist", FORMATE]
+
+
 def dekodieren(quelle: Path) -> bytes:
     """Eine Datei zu 16 kHz mono, 16 bit PCM (roh)."""
-    res = ffmpeg(["-hide_banner", "-loglevel", "error", "-i", str(quelle),
+    res = ffmpeg(["-hide_banner", "-loglevel", "error", *EINGABE, "-i", str(quelle),
                   "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
                  _zeitgrenze(quelle))
     if res.returncode != 0 or not res.stdout:
@@ -87,7 +93,7 @@ def dauer(wav: Path) -> float:
 def hoerprobe(wav: Path, start: float, laenge: float, ziel: Path) -> bytes:
     """Kurze Hörprobe als Ogg/Opus (wenige Sekunden, klein)."""
     res = ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, start):.2f}",
-                  "-t", f"{laenge:.2f}", "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)], 120)
+                  "-t", f"{laenge:.2f}", *EINGABE, "-i", str(wav), "-c:a", "libopus", "-b:a", "24k", str(ziel)], 120)
     if res.returncode != 0:
         raise AudioFehler("sample_failed", res.stderr.decode(errors="replace").strip()[-300:])
     return ziel.read_bytes()

@@ -2,12 +2,13 @@
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import errors, schemas, umzug
 from app.access import _bearer, current_user, membership, require_gm, require_member
 from app.db import get_db
-from app.models import Campaign, CampaignExport, User
+from app.models import Campaign, CampaignExport, Member, User
 from app.services import campaign_out, member_out, set_move_consent
 
 router = APIRouter(tags=["Umzug"])
@@ -64,6 +65,12 @@ def export_file(campaignId: str, exportId: str, t: str | None = Query(default=No
     if t is not None:
         if x is None or x.campaign_id != campaignId or not umzug.schluessel_passt(x.id, t):
             raise errors.not_found("export")
+        # Der Schlüssel gilt nur, solange die Anforderin noch SL der Kampagne ist
+        sl = db.scalar(select(Member).where(Member.campaign_id == campaignId,
+                                            Member.user_id == x.requested_by_user_id, Member.role == "gm",
+                                            Member.left_at.is_(None)).limit(1)) if x.requested_by_user_id else None
+        if sl is None:
+            raise errors.not_found("export")
     else:
         user = current_user(creds, db)
         _nur_sl(db, campaignId, user)
@@ -92,11 +99,10 @@ def get_import(importId: str, user: User = Depends(current_user), db: Session = 
 async def put_import_chunk(importId: str, index: int, request: Request,
                            x_chunk_sha256: str | None = Header(default=None),
                            user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.koerper import lesen
+
     imp = umzug.laden(db, importId, user)
-    laenge = request.headers.get("content-length")
-    if laenge and laenge.isdigit() and int(laenge) > imp.chunk_size:
-        raise errors.ApiError(413, "payload_too_large")
-    umzug.teil_speichern(imp, index, await request.body(), x_chunk_sha256)
+    umzug.teil_speichern(imp, index, await lesen(request, imp.chunk_size), x_chunk_sha256)
     return Response(status_code=204)
 
 

@@ -226,6 +226,25 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
 
 
 # ---------------------------------------------------------------- Worker
+def auftrag_pruefen(auftrag: dict) -> None:
+    """Was vom Server kommt, wird zu Dateinamen und Abrufen: nur einfache Kennungen (UUID oder „stimme“), ganze
+    Zahlen und Pfade dieses Servers."""
+    import re
+
+    def nein(was: str):
+        raise audio.AudioFehler("worker_rejected", f"Auftrag abgelehnt: ungültige Angabe ({was}).", False)
+
+    for f in auftrag.get("files") or []:
+        if not isinstance(f.get("fileId"), str) or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", f["fileId"]):
+            nein("fileId")
+        if not isinstance(f.get("position"), int) or isinstance(f.get("position"), bool) or f["position"] < 0:
+            nein("position")
+        for c in f.get("chunks") or []:
+            url = c.get("url")
+            if not isinstance(url, str) or not url.startswith("/worker/v1/") or "//" in url or "\\" in url:
+                nein("url")
+
+
 class WorkerProzess:
     def __init__(self, server: str, token: str, arbeitsordner: Path,
                  verarbeite: Callable[[dict, list[Path], Path, Fortschritt], dict],
@@ -298,6 +317,7 @@ class WorkerProzess:
             self.melden("server_pausiert" if an else "server_fortgesetzt")
 
     def herunterladen(self, auftrag: dict) -> list[Path]:
+        auftrag_pruefen(auftrag)
         dateien = []
         for f in sorted(auftrag["files"], key=lambda x: x["position"]):
             ziel = self.arbeit / f"{f['position']:04d}-{f['fileId']}"

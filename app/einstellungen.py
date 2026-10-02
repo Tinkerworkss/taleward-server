@@ -39,6 +39,13 @@ def oeffentliche_adresse(db: Session, request=None) -> str:
     return "http://localhost:8000"
 
 
+def mail_adresse(db: Session) -> str | None:
+    """Adresse für Links in E-Mails – nur die eingetragene öffentliche Adresse, nie aus der Anfrage (Host-Kopfzeile
+    ist fälschbar). Ohne sie werden keine Mails mit Links verschickt."""
+    url = angaben(db).public_url
+    return url.rstrip("/") if url else None
+
+
 def angaben(db: Session) -> Angaben:
     s = get_settings()
     werte = {f: getattr(s, f) for f in FELDER}

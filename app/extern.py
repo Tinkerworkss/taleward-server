@@ -125,7 +125,8 @@ def _teile(wav: Path, arbeit: Path, max_sek: float) -> list[tuple[Path, float]]:
         laenge = min(max_sek, gesamt - start)
         ziel = arbeit / f"teil-{nr:02d}.ogg"
         res = audio.ffmpeg(["-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
-                            "-t", f"{laenge:.2f}", "-i", str(wav), "-ac", "1", "-c:a", "libopus", "-b:a", "32k",
+                            "-t", f"{laenge:.2f}", *audio.EINGABE, "-i", str(wav), "-ac", "1", "-c:a", "libopus",
+                            "-b:a", "32k",
                             str(ziel)], 900)
         if res.returncode != 0:
             raise AudioFehler("audio_unreadable", res.stderr.decode(errors="replace")[-300:])

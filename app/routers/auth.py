@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import errors, schemas
 from app.access import current_user
-from app.einstellungen import angaben
+from app.einstellungen import angaben, mail_adresse
 from app.extern import anbieter
 from app.konto import registrierung
 from app.db import get_db, server_id, utcnow
@@ -45,18 +45,32 @@ def info(request: Request, db: Session = Depends(get_db)):
         external_transcription_mode=(("primary" if betriebsart(db) == "cloud" else "fallback") if extern else None),
         cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],
-        password_reset=mail.kann_senden(db),
+        password_reset=mail.kann_senden(db) and mail_adresse(db) is not None,
         audio_retention=schemas.AudioRetentionOut(**aufbewahrung.lesen(db).api()),
     )
 
 
+LOGIN_FENSTER = 15 * 60
+LOGIN_JE_ADRESSE, LOGIN_JE_NAME = 30, 10  # Fehlversuche im Fenster
+
+
 @router.post("/auth/login", response_model=schemas.LoginResponse)
-def login(body: schemas.LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.username == body.username.strip().lower()))
+def login(body: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
+    from app.begrenzung import ZAEHLER
+
+    name = body.username.strip().lower()
+    adresse = request.client.host if request.client else "?"
+    if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
+            ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
+        # 401 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
+        raise errors.ApiError(401, "too_many_requests")
+    user = db.scalar(select(User).where(User.username == name))
     methode = None
     if user is not None:
         methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id, AuthMethod.kind == "password"))
     if not verify_password(body.password, methode.secret if methode else None):
+        ZAEHLER.zaehlen(f"login-adr:{adresse}", LOGIN_FENSTER)
+        ZAEHLER.zaehlen(f"login-name:{name}", LOGIN_FENSTER)
         raise errors.BAD_CREDENTIALS
     if user.setup_account:  # admin/admin: nur für die Ersteinrichtung in der Verwaltung
         raise errors.ApiError(401, "setup_account_only")

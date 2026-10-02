@@ -154,9 +154,9 @@ async def put_chunk(
     if index < 0 or index >= f.chunk_count:
         raise errors.bad_request("chunk_index_invalid", index=index)
     erwartet = _expected_size(up, f, index)
-    data = await request.body()
-    if len(data) > up.chunk_size:
-        raise errors.ApiError(413, "payload_too_large")
+    from app.koerper import lesen
+
+    data = await lesen(request, up.chunk_size)
     if len(data) != erwartet:
         raise errors.bad_request("chunk_size_mismatch", index=index, got=len(data), expected=erwartet)
     if x_chunk_sha256 and hashlib.sha256(data).hexdigest() != x_chunk_sha256.strip().lower():

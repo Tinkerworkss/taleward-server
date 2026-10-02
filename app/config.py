@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     organization_name: str = "Rollenspielverein"
     # Upload und Warteschlange
     chunk_size_bytes: int = 5 * 1024 * 1024
+    max_body_bytes: int = 64 * 1024 * 1024  # Obergrenze jeder Anfrage (Unterlagen bis 50 MB); Caddy: request_body
     max_file_bytes: int = 2 * 1024 * 1024 * 1024  # je Datei; 5 h Opus/AAC liegen weit darunter
     import_max_bytes: int = 1024 * 1024 * 1024  # 0.4.8: größte Umzugsdatei (Kampagne aus Datei übernehmen)
     audio_retention_days: int = 7  # Audio fehlgeschlagener Sessions wird spätestens danach gelöscht
@@ -50,7 +51,6 @@ class Settings(BaseSettings):
     llm_local_context: int = 32768     # höchstens – bei festem Modell; „auto“ wählt selbst
     worker_llm_url: str = "http://localhost:11434"  # Ollama auf dem Worker
     summarizer_interval_seconds: float = 2.0  # 0 = kein eigener Arbeitsprozess (Tests)
-    create_setup_account: bool = True  # bei leerer Datenbank Einrichtungskonto admin/admin anlegen
     local_worker_autostart: bool = True  # lokalen Worker mitstarten, falls in der Verwaltung eingestellt
     # Nur für den Worker (chronik worker)
     worker_server_url: str = "http://127.0.0.1:8000"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import logging
 import secrets
+import time
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -44,6 +45,10 @@ def code_pruefen(db: Session, code: str) -> bool:
     return bool(soll) and braucht_einrichtung(db) and hmac.compare_digest(soll.replace("-", ""), ist.replace("-", ""))
 
 
+HEIMNETZ_FRIST_S = 30 * 60
+_GESTARTET = time.monotonic()
+
+
 def heimnetz_ohne_code(request) -> bool:
     """Taleward-Box: Ersteinrichtung ohne Code – nur wenn so eingeschaltet (EINRICHTUNG_IM_HEIMNETZ) und die Anfrage
     aus einem privaten Netz kommt (Heimnetz, Vereins-WLAN). Aus dem Internet gilt weiter der Code."""
@@ -53,6 +58,8 @@ def heimnetz_ohne_code(request) -> bool:
 
     if not get_settings().einrichtung_im_heimnetz or request.client is None:
         return False
+    if time.monotonic() - _GESTARTET > HEIMNETZ_FRIST_S:
+        return False  # nur kurz nach dem Start; danach (oder bis zum nächsten Neustart der Box) mit Code
     try:
         adresse = ipaddress.ip_address(request.client.host)
     except ValueError:

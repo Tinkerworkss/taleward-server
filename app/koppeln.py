@@ -8,8 +8,6 @@ from __future__ import annotations
 import hmac
 import secrets
 import threading
-import time
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -23,7 +21,6 @@ from app.models import Worker
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 GUELTIG = timedelta(minutes=15)
 MAX_VERSUCHE, FENSTER = 10, 15 * 60
-_versuche: dict[str, deque] = defaultdict(deque)
 _sperre = threading.Lock()
 
 
@@ -47,19 +44,16 @@ def aktueller_code(db: Session) -> tuple[str, datetime] | None:
 
 
 def _begrenzen(adresse: str) -> None:
-    jetzt = time.monotonic()
-    with _sperre:
-        q = _versuche[adresse]
-        while q and q[0] < jetzt - FENSTER:
-            q.popleft()
-        if len(q) >= MAX_VERSUCHE:
-            raise errors.ApiError(429, "too_many_requests")
-        q.append(jetzt)
+    from app.begrenzung import ZAEHLER
+
+    if not ZAEHLER.versuch(f"koppeln:{adresse}", MAX_VERSUCHE, FENSTER):
+        raise errors.ApiError(429, "too_many_requests")
 
 
 def versuche_vergessen() -> None:
-    with _sperre:
-        _versuche.clear()
+    from app.begrenzung import ZAEHLER
+
+    ZAEHLER.vergessen()
 
 
 def koppeln(db: Session, adresse: str, code: str, name: str) -> tuple[Worker, str]:

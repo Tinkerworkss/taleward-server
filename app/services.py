@@ -225,7 +225,8 @@ _WORDS = [
 
 def new_invite_code(db: Session) -> str:
     for _ in range(50):
-        code = f"{secrets.choice(_WORDS)}-{secrets.randbelow(10000):04d}"
+        # Wort + 8 Ziffern (≈ 31 Bit); passt zum bisherigen Muster „WORT-Ziffern“ der App
+        code = f"{secrets.choice(_WORDS)}-{secrets.randbelow(10**8):08d}"
         if db.get(Invite, code) is None:
             return code
     raise RuntimeError("Kein freier Einladungscode gefunden")

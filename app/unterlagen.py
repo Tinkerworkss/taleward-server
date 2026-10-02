@@ -251,7 +251,9 @@ def eingabe(db: Session, doc: CampaignDocument) -> dict:
     Kontext“). Vorschläge und Unterlagen sieht nur die SL."""
     c = db.get(Campaign, doc.campaign_id)
     bibel = [{"id": e.id, "typ": e.type, "name": e.name, "zusammenfassung": e.summary or "",
-              "gm_notes": e.gm_notes or None, "sichtbarkeit": e.visibility}
+              "gm_notes": e.gm_notes or None,
+              # teilweise verborgen = nicht allgemein bekannt („Wer weiß was“) → im Aufruf als geheim
+              "sichtbarkeit": "teilweise" if e.visibility == "public" and e.hidden_member_ids else e.visibility}
              for e in db.scalars(select(Entry).where(Entry.campaign_id == c.id).order_by(Entry.name))]
     return {"sprache": c.language, "kampagne": c.title, "system": c.system, "system_name": c.system_name,
             "welt": c.world_info, "art": doc.kind, "titel": doc.title, "abschnitte": text_laden(doc.id),
@@ -284,7 +286,7 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
               kosten_cent: int = 0) -> None:
     """Vorschläge anlegen – mit den festen Regeln zur Trennung von SL- und Spielerwissen."""
     from app.sprachmodell import dokument_pruefen
-    from app.zusammenfassung import _geheimes_im_detail
+    from app.zusammenfassung import _geheimes_im_detail, geheime_bibeltexte
 
     eintraege = {e.id: e for e in db.scalars(select(Entry).where(Entry.campaign_id == doc.campaign_id))}
     # pc-Einträge (0.4.7) pflegt die App – keine Vorschläge dafür, auch nicht als neuer Eintrag gleichen Namens
@@ -292,7 +294,11 @@ def speichern(db: Session, doc: CampaignDocument, d: dict, engine: str, worker_i
     vorschlaege = [v for v in dokument_pruefen(d.get("proposals") or [],
                                                {i: e.name for i, e in eintraege.items() if e.type != "pc"})
                    if v["title"].casefold() not in spieler]
+    # als geheim markierte Absätze der Unterlage und – außer bei Handouts, die die SL ohnehin zeigt – was in der
+    # Bibel nicht alle Spieler kennen
     markiert = geheime_abschnitte(text_laden(doc.id))
+    if doc.kind != "handout":
+        markiert += geheime_bibeltexte(eintraege.values())
     db.execute(delete(Proposal).where(Proposal.document_id == doc.id))
     for pos, v in enumerate(vorschlaege):
         detail, gm_notes = v["detail"], v["gmNotes"]

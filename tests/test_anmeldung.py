@@ -28,6 +28,7 @@ def post(monkeypatch):
 
     def einrichten(dbs):
         meta_schreiben(dbs, "melden.smtp_host", "smtp.example.org")
+        meta_schreiben(dbs, "angabe.public_url", "https://chronik.example.org")  # Links in Mails nur damit
         dbs.commit()
 
     gesendet.einrichten = einrichten
