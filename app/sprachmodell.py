@@ -29,6 +29,7 @@ ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
 FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
 MAX_VORSCHLAEGE = 15
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
+NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
 # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
@@ -43,6 +44,10 @@ class SprachmodellFehler(Exception):
     def __init__(self, text: str, erneut: bool = True):
         super().__init__(text)
         self.erneut = erneut
+
+
+class AntwortFehler(SprachmodellFehler):
+    """Das Modell hat geantwortet, aber unbrauchbar (kein JSON, Schleife) – ein kleinerer Abschnitt hilft oft."""
 
 
 # ---------------------------------------------------------------- Anbindungen
@@ -217,7 +222,7 @@ class OllamaKlient:
                 continue
             break
         if (status >= 400 or fehler) and "repeat" in fehler:
-            raise SprachmodellFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
+            raise AntwortFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
                                      f"(Wiederholungsschleife; Ollama: {fehler[:120]}). Ein anderes oder größeres "
                                      "Modell hilft – Verwaltung → Transkription → Lokales Sprachmodell.")
         if status >= 400 or fehler:
@@ -586,22 +591,68 @@ def recap_text(d: dict) -> str:
     return lang[0] if len(lang) == 1 else ""
 
 
-def _json(antwort: Antwort) -> dict:
+def _json(antwort: Antwort, retten: bool = False) -> dict:
+    """JSON-Objekt aus der Antwort. retten=True: eine abgeschnittene Antwort (Längengrenze erreicht) bis zum letzten
+    vollständigen Wert übernehmen – nur für Szenennotizen, wo ein fehlender Rest nichts verfälscht."""
     text = antwort.text.strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     try:
         wert = json.loads(text)
     except ValueError:
         m = re.search(r"\{.*\}", text, re.S)
-        if not m:
-            raise SprachmodellFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
         try:
-            wert = json.loads(m.group(0))
+            wert = json.loads(m.group(0)) if m else None
         except ValueError:
-            raise SprachmodellFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
+            wert = None
+        if wert is None and retten:
+            wert = json_retten(text)
+        if wert is None:
+            raise AntwortFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
     if not isinstance(wert, dict):
-        raise SprachmodellFehler("Das Sprachmodell hat kein JSON-Objekt geliefert.")
+        raise AntwortFehler("Das Sprachmodell hat kein JSON-Objekt geliefert.")
     return wert
+
+
+def json_retten(text: str) -> dict | None:
+    """Abgeschnittenes JSON bis zum letzten vollständigen Wert kürzen und die offenen Klammern schließen."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    stapel: list[str] = []
+    im_text = escape = False
+    letzte = None  # (Position nach einem vollständigen Wert, offene Klammern dort)
+    for i in range(start, len(text)):
+        c = text[i]
+        if im_text:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                im_text = False
+                if stapel and stapel[-1] == "[":
+                    letzte = (i + 1, list(stapel))
+            continue
+        if c == '"':
+            im_text = True
+        elif c in "{[":
+            stapel.append(c)
+        elif c in "}]":
+            if not stapel:
+                break
+            stapel.pop()
+            letzte = (i + 1, list(stapel))
+            if not stapel:
+                break
+    if letzte is None:
+        return None
+    pos, offen = letzte
+    rest = "".join("]" if k == "[" else "}" for k in reversed(offen))
+    try:
+        wert = json.loads(text[start:pos] + rest)
+    except ValueError:
+        return None
+    return wert if isinstance(wert, dict) else None
 
 
 # ---------------------------------------------------------------- Ablauf
@@ -617,16 +668,19 @@ class Zaehler:
 
     token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
 
-    def aufruf(self, klient: Klient, system: str, nutzer: str) -> dict:
+    letzte_antwort: str = ""  # Rohtext der letzten Antwort (nur für die Fehlersuche im Modellvergleich)
+
+    def aufruf(self, klient: Klient, system: str, nutzer: str, retten: bool = False) -> dict:
         a = self._chat(klient, system, nutzer)
         try:
-            return _json(a)
+            return _json(a, retten)
         except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
             a = self._chat(klient, system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
-            return _json(a)
+            return _json(a, retten)
 
     def _chat(self, klient: Klient, system: str, nutzer: str) -> Antwort:
         a = klient.chat(system, nutzer)
+        self.letzte_antwort = a.text
         self.tokens_in += a.tokens_in
         self.tokens_out += a.tokens_out
         self.aufrufe += 1
@@ -673,20 +727,41 @@ class Ablauf:
         kopf = _kopf(ein)
         system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
         self._schritt("notes")
+        # Notizen sind kürzer als ihr Abschnitt, aber nicht beliebig: Die Antwort darf höchstens ANTWORT_HOECHSTENS
+        # Token lang werden. Darum höchstens NOTIZ_STUECK Token je Abschnitt, auch bei großem Kontext.
+        groesse = min(self.stueck_tokens, NOTIZ_STUECK)
         for runde in range(3):  # sehr lange Sessions bei kleinem Kontext: Notizen noch einmal verdichten
-            teile = stuecke(zeilen, self.stueck_tokens)
+            teile = stuecke(zeilen, groesse)
             notizen = []
             for i, teil in enumerate(teile):
                 was = "des Transkripts" if runde == 0 else "der bisherigen Szenennotizen (bitte weiter verdichten)"
-                d = self.zaehler.aufruf(self.klient, system,
-                                        f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n{teil}")
-                notizen += [str(n).strip() for n in d.get("notizen") or [] if str(n).strip()]
+                notizen += self._notizen(system, f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
+                                         teil.split("\n"))
                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
             text = "\n".join(notizen)
             if tokens(text) <= self.max_transkript_tokens or not notizen:
                 break
             zeilen = notizen
         return "Szenennotizen (aus dem Transkript verdichtet)", text
+
+    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
+        """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
+        (höchstens zweimal) – kleine Modelle verlieren sich eher in langen Abschnitten."""
+        try:
+            d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+        except AntwortFehler:
+            if tiefe >= 2 or len(zeilen) < 8:
+                raise
+            log.info("Szenennotizen: Abschnitt wird geteilt (%d Zeilen)", len(zeilen))
+            mitte = len(zeilen) // 2
+            return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
+                    + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
+        notizen = []
+        for n in d.get("notizen") or []:
+            n = str(n).strip()
+            if n and (not notizen or n != notizen[-1]):  # Schleifen ergeben gleiche Zeilen hintereinander
+                notizen.append(n)
+        return notizen
 
     def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
         bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"

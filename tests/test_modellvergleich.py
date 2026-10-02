@@ -68,7 +68,7 @@ def test_modellvergleich(client, world, dbs, tmp_path):
                            "http://ollama", tmp_path / "aus", meldungen.append, client=ollama)
     bericht = (ordner / "bericht.md").read_text(encoding="utf-8")
     assert "| a:1 (ctx 12288) | ok |" in bericht and "| b:2 (ctx 8192) | Fehler |" in bericht
-    erg = json.loads((ordner / "a_1" / "ergebnis.json").read_text(encoding="utf-8"))
+    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
     assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
