@@ -27,8 +27,9 @@
   </form>
   {% endif %}
   {% if server_status and server_status.ergebnis != "aktuell" %}
-  <div class="meldung {% if server_status.ergebnis != 'aktualisiert' %}meldung--fehler{% endif %}">
+  <div class="meldung {% if server_status.ergebnis not in ('aktualisiert', 'wartet') %}meldung--fehler{% endif %}">
     {% if server_status.ergebnis == "aktualisiert" %}{{ _("Zuletzt aktualisiert: {von} → {nach} ({zeit})", von=server_status.von, nach=server_status.nach, zeit=zeit(status_zeit)) }}
+    {% elif server_status.ergebnis == "wartet" %}{{ _("Fassung {nach} ist bei GitHub, aber noch nicht freigegeben ({zeit}). Es bleibt bei {von}.", nach=server_status.nach, von=server_status.von, zeit=zeit(status_zeit)) }}
     {% elif server_status.ergebnis == "zurueckgenommen" %}{{ _("Update auf {nach} zurückgenommen ({zeit}):", nach=server_status.nach, zeit=zeit(status_zeit)) }} {{ server_status.meldung }}
     {% else %}{{ _("Update-Fehler ({zeit}):", zeit=zeit(status_zeit)) }} {{ server_status.meldung }}{% endif %}
   </div>

@@ -3,8 +3,10 @@
 # taleward-aktualisieren.timer, den install.sh einrichtet; aktualisiert wird nur nachts (3–5 Uhr) oder sofort, wenn
 # in der Verwaltung „Jetzt aktualisieren“ gewählt wurde.
 #
-# Ablauf: neueste Fassung (Git-Tag v…) ermitteln → Sicherung → neue Fassung bauen und starten → Gesundheit prüfen.
-# Klappt der Start nicht, geht es zurück auf die alte Fassung und die Sicherung von eben.
+# Ablauf: neueste Fassung (Git-Tag v…) ermitteln → Freigabe prüfen → Sicherung → neue Fassung bauen und starten →
+# Gesundheit prüfen. Klappt der Start nicht, geht es zurück auf die alte Fassung und die Sicherung von eben.
+# Freigabe: Installiert wird nur eine Fassung, deren freigabe.txt mit dem Freigabe-Schlüssel unterschrieben ist
+# (Anhänge des Release v…, ssh-keygen -Y verify). Ohne Freigabe bleibt alles, wie es ist.
 # Die Verwaltung schaltet das ein/aus (daten/aktualisierung/server-auto.txt) und zeigt das Ergebnis
 # (daten/aktualisierung/server-status.json).
 #
@@ -13,13 +15,40 @@
 # shellcheck disable=SC1111  # deutsche Anführungszeichen sind Absicht
 set -uo pipefail
 
+REPO_NAME=Tinkerworkss/taleward-server
+REPO=https://github.com/$REPO_NAME.git
+# Öffentlicher Freigabe-Schlüssel (gleichlautend in app/freigabe.py und in der Worker-App)
+FREIGABE_SCHLUESSEL="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP8G+vT3BsQPQ+D5UlN615BaEd1FCXEYcxO1KEf7u7Sd"
+
+# freigabe.txt und freigabe.txt.sig im Ordner $1 für das Tag $2 prüfen; gibt den freigegebenen Commit aus
+freigabe_pruefen() {
+  local ordner=$1 tag=$2 text=$1/freigabe.txt commit
+  printf 'taleward-freigabe namespaces="taleward-freigabe" %s\n' "$FREIGABE_SCHLUESSEL" > "$ordner/erlaubt"
+  ssh-keygen -Y verify -f "$ordner/erlaubt" -I taleward-freigabe -n taleward-freigabe -s "$ordner/freigabe.txt.sig" \
+    < "$text" >/dev/null 2>&1 || return 1
+  [ "$(sed -n 1p "$text")" = "taleward-freigabe 1" ] || return 1
+  for feld in repo tag commit; do
+    [ "$(grep -c "^$feld " "$text")" -eq 1 ] || return 1
+  done
+  grep -qx "repo $REPO_NAME" "$text" && grep -qxF "tag $tag" "$text" || return 1
+  commit=$(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$text")
+  [ -n "$commit" ] || return 1
+  echo "$commit"
+}
+
+if [ "${1:-}" = "--freigabe-pruefen" ]; then  # nur prüfen (Tests): --freigabe-pruefen <ordner> <tag>
+  freigabe_pruefen "$2" "$3"
+  exit $?
+fi
+
 ZIEL=${TALEWARD_ZIEL:-/opt/taleward}
-REPO=https://github.com/Tinkerworkss/taleward-server.git
 ORDNER="$ZIEL/daten/aktualisierung"
 STATUS="$ORDNER/server-status.json"
 cd "$ZIEL" || exit 1
 mkdir -p "$ORDNER"
 BAULOG=$(mktemp /tmp/taleward-bau.XXXXXX) || exit 1
+FREIGABE=$(mktemp -d /tmp/taleward-freigabe.XXXXXX) || exit 1
+trap 'rm -rf "$BAULOG" "$FREIGABE"' EXIT
 
 jetzt=0
 [ "${1:-}" = "--jetzt" ] && jetzt=1
@@ -78,6 +107,28 @@ if [ "$ALT" != "main" ] && [ "$(printf '%s\n%s\n' "$ALT" "$NEU" | sort -V | tail
   exit 0
 fi
 
+# Freigabe prüfen – ohne gültige Unterschrift wird nichts geändert
+command -v ssh-keygen >/dev/null 2>&1 || apt-get install -y -q openssh-client >/dev/null 2>&1 || true
+if ! command -v ssh-keygen >/dev/null 2>&1; then
+  melden "fehler" "$ALT" "$NEU" "ssh-keygen fehlt (Paket openssh-client) – die Freigabe kann nicht geprüft werden"
+  exit 1
+fi
+FREIGABE_URL="https://github.com/$REPO_NAME/releases/download/$NEU"
+if ! curl -fsSL --max-filesize 65536 "$FREIGABE_URL/freigabe.txt" -o "$FREIGABE/freigabe.txt" \
+   || ! curl -fsSL --max-filesize 4096 "$FREIGABE_URL/freigabe.txt.sig" -o "$FREIGABE/freigabe.txt.sig"; then
+  melden "wartet" "$ALT" "$NEU" "Fassung $NEU ist noch nicht freigegeben – es bleibt bei $ALT"
+  exit 0
+fi
+if ! COMMIT=$(freigabe_pruefen "$FREIGABE" "$NEU"); then
+  melden "fehler" "$ALT" "$NEU" "Die Freigabe von $NEU ist ungültig – nichts geändert"
+  exit 1
+fi
+TAG_COMMIT=$(git ls-remote "$REPO" "refs/tags/$NEU" "refs/tags/$NEU^{}" 2>/dev/null | sort -k2 | tail -1 | cut -f1)
+if [ "$TAG_COMMIT" != "$COMMIT" ]; then
+  melden "fehler" "$ALT" "$NEU" "Tag $NEU zeigt nicht auf den freigegebenen Stand – nichts geändert"
+  exit 1
+fi
+
 SICHERUNG=$(docker compose exec -T server chronik sicherung 2>/dev/null | sed -n 's/^Sicherung angelegt: //p' | tr -d '\r')
 if [ -z "$SICHERUNG" ]; then
   melden "fehler" "$ALT" "$NEU" "Sicherung vor dem Update fehlgeschlagen – nichts geändert"
@@ -92,9 +143,9 @@ if docker compose build --pull server >"$BAULOG" 2>&1 && docker compose build >>
    && { docker compose pull --ignore-buildable --quiet >>"$BAULOG" 2>&1 || true; } \
    && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""
-  # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus der neuen Fassung übernehmen –
+  # Paketdateien (dieses Skript, docker-compose.yml, Caddyfile) aus genau dem freigegebenen Stand übernehmen –
   # fehlt eine in der Fassung, bleibt die vorhandene (docker-compose.override.yml wird nie angefasst)
-  QUELLE="https://raw.githubusercontent.com/Tinkerworkss/taleward-server/$NEU/deploy"
+  QUELLE="https://raw.githubusercontent.com/$REPO_NAME/$COMMIT/deploy"
   compose=docker-compose.yml
   [ "$(sed -n 's/^TALEWARD_MODUS=//p' .env)" = "heimnetz" ] && compose=docker-compose.heimnetz.yml
   for paar in aktualisieren.sh:aktualisieren.sh "$compose":docker-compose.yml Caddyfile:Caddyfile; do

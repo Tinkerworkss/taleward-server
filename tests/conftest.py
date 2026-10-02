@@ -93,6 +93,15 @@ def world(client, make_user, login):
 
 
 @pytest.fixture(autouse=True)
+def _freigabe_testschluessel(monkeypatch):
+    """Freigaben in Tests mit einem eigenen Schlüssel (tests/freigabe_hilfe.py) statt dem echten."""
+    from app import freigabe
+    from tests.freigabe_hilfe import OEFFENTLICH
+
+    monkeypatch.setattr(freigabe, "OEFFENTLICHER_SCHLUESSEL", OEFFENTLICH)
+
+
+@pytest.fixture(autouse=True)
 def _webapp_zwischenspeicher_leeren():
     """Erlaubte Herkünfte werden 30 s zwischengespeichert – zwischen Tests nicht mitnehmen."""
     from app import webapp

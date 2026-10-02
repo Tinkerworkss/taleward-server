@@ -12,8 +12,20 @@ APK = b"PK\x03\x04 taleward apk " * 100
 EXE = b"MZ taleward setup " * 100
 
 
-def github(releases_app, releases_worker, tags, dateien, zaehler=None):
-    """Nachgebautes GitHub (API + Downloads)."""
+DOWNLOADS: dict[str, bytes] = {}  # Freigaben der Releases (release() trägt sie ein)
+
+
+def github(releases_app, releases_worker, tags, dateien, zaehler=None, unsigniert=()):
+    """Nachgebautes GitHub (API + Downloads). Server-Tags sind freigegeben, außer sie stehen in unsigniert."""
+    from tests.freigabe_hilfe import freigabe
+
+    server = {}
+    for t in tags:
+        if t.startswith("v") and t not in unsigniert:
+            text, sig = freigabe("Tinkerworkss/taleward-server", t)
+            server[f"/Tinkerworkss/taleward-server/releases/download/{t}/freigabe.txt"] = text
+            server[f"/Tinkerworkss/taleward-server/releases/download/{t}/freigabe.txt.sig"] = sig.encode()
+
     def antwort(req: httpx.Request):
         if zaehler is not None:
             zaehler.append(str(req.url))
@@ -24,17 +36,28 @@ def github(releases_app, releases_worker, tags, dateien, zaehler=None):
             return httpx.Response(200, json=releases_worker)
         if pfad == "/repos/Tinkerworkss/taleward-server/tags":
             return httpx.Response(200, json=[{"name": t} for t in tags])
-        if pfad in dateien:
-            return httpx.Response(200, content=dateien[pfad])
+        for quelle in (dateien, server, DOWNLOADS):
+            if pfad in quelle:
+                return httpx.Response(200, content=quelle[pfad])
         return httpx.Response(404)
     return httpx.Client(transport=httpx.MockTransport(antwort), base_url="https://api.github.com")
 
 
-def release(tag, datei=None, inhalt=b"", body="", digest=True):
+def release(tag, datei=None, inhalt=b"", body="", digest=True, freigegeben=True, repo=None, freigabe_inhalt=None):
+    """Release wie bei GitHub; mit freigegeben=True samt freigabe.txt(.sig) über die Datei (bzw. freigabe_inhalt)."""
+    from tests.freigabe_hilfe import freigabe
+
     assets = []
     if datei:
         assets.append({"name": datei, "size": len(inhalt), "browser_download_url": f"https://dl.example/{tag}/{datei}",
                        **({"digest": "sha256:" + hashlib.sha256(inhalt).hexdigest()} if digest else {})})
+    if freigegeben:
+        repo = repo or ("Tinkerworkss/taleward-worker" if tag.startswith("worker-v") else "Tinkerworkss/taleward-app")
+        text, sig = freigabe(repo, tag, {datei: freigabe_inhalt if freigabe_inhalt is not None else inhalt}
+                             if datei else {})
+        for name, wert in (("freigabe.txt", text), ("freigabe.txt.sig", sig.encode())):
+            DOWNLOADS[f"/{tag}/{name}"] = wert
+            assets.append({"name": name, "size": len(wert), "browser_download_url": f"https://dl.example/{tag}/{name}"})
     return {"tag_name": tag, "draft": False, "prerelease": False, "body": body, "html_url": f"https://gh/{tag}",
             "published_at": "2026-09-28T10:00:00Z", "assets": assets}
 
@@ -130,7 +153,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch): 
     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
     aktualisierung.pruefen(dbs, gh)
     aktualisierung.pruefen(dbs, gh)
-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.37"})]  # nur einmal
+    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.38"})]  # nur einmal
     seite = client.get("/verwaltung/updates").text
     assert "Update verfügbar" in seite and "git pull" in seite
     monkeypatch.setenv("TALEWARD_DOCKER", "1")

@@ -222,7 +222,8 @@ Alle Befehle im Ordner `/opt/taleward`:
 
 Das automatische Update legt vorher selbst eine Sicherung an. Startet die neue Fassung nicht, stellt es die alte
 Fassung und die Daten von vorher wieder her und meldet das (Benachrichtigung, Verwaltung → Updates). Die Datenbank wird
-beim Start selbst auf den neuen Stand gebracht.
+beim Start selbst auf den neuen Stand gebracht. Installiert wird nur eine freigegebene (unterschriebene) Fassung; das
+Skript braucht dafür `ssh-keygen` (Paket `openssh-client`, auf Ubuntu und Raspberry Pi OS vorhanden).
 
 App und Worker-App holen ihre Updates ebenfalls über diesen Server – mehr dazu in
 [docs/BETRIEB.md](docs/BETRIEB.md#updates-für-app-und-worker).

@@ -87,6 +87,8 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 docker compose version >/dev/null 2>&1 || abbruch "„docker compose“ fehlt. Bitte Docker neu installieren."
 command -v git >/dev/null 2>&1 || { apt-get update -q && apt-get install -y -q git; }
+# ssh-keygen prüft beim Update die Freigabe (Unterschrift) einer neuen Fassung
+command -v ssh-keygen >/dev/null 2>&1 || { apt-get update -q && apt-get install -y -q openssh-client; }
 systemctl enable --now docker >/dev/null 2>&1 || true
 gruen "Docker ist bereit."
 

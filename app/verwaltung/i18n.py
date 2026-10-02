@@ -23,6 +23,8 @@ EN: dict[str, str] = {
     "Angefordert – startet in den nächsten Minuten.": "Requested – starts within the next few minutes.",
     "Zuletzt aktualisiert: {von} → {nach} ({zeit})": "Last updated: {von} → {nach} ({zeit})",
     "Update auf {nach} zurückgenommen ({zeit}):": "Update to {nach} rolled back ({zeit}):",
+    "Fassung {nach} ist bei GitHub, aber noch nicht freigegeben ({zeit}). Es bleibt bei {von}.":
+        "Version {nach} is on GitHub but not approved yet ({zeit}). Staying on {von}.",
     "Update-Fehler ({zeit}):": "Update error ({zeit}):",
     "Von Hand auf dem Server:": "By hand on the server:",
     "Update angefordert – der Server aktualisiert sich in den nächsten Minuten und ist dabei kurz nicht erreichbar.": "Update requested – the server updates itself within the next few minutes and is briefly unavailable.",

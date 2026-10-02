@@ -2,8 +2,11 @@
 
 - Einmal am Tag (und auf Knopfdruck in der Verwaltung) liest der Server die Releases bei GitHub:
   App (Android-APK), Worker (Windows-Installer; Linux ohne Datei) und die eigenen Server-Fassungen (Git-Tags).
-- Dateien für App und Worker lädt er einmal herunter, prüft die SHA-256 (sofern GitHub sie nennt) und bietet sie unter
-  /downloads/… selbst an. Handys und Worker fragen nur ihren Server – nie GitHub.
+- Berücksichtigt wird nur eine Fassung mit gültiger Freigabe (app/freigabe.py: freigabe.txt, vom Rechteinhaber
+  unterschrieben). Die SHA-256 jeder Datei kommt aus dieser Freigabe, nicht von GitHub. Fassungen ohne Freigabe
+  (noch nicht bestätigt) werden übergangen; eine ungültige Unterschrift erscheint als Fehler in der Verwaltung.
+- Dateien für App und Worker lädt er einmal herunter, prüft die SHA-256 und bietet sie unter /downloads/… selbst an.
+  Handys und Worker fragen nur ihren Server – nie GitHub. Der Worker bekommt die Freigabe mit und prüft sie selbst.
 - Freigabe: „automatisch“ (Standard) gibt jede neue Fassung sofort frei; „manuell“ erst nach Klick in der Verwaltung.
   Freigeben heißt nur „dieser Server verteilt die Fassung“ – er verbietet keine neueren Apps (dafür gibt es nur die
   Mindestversion, 426). Hat eine App mehrere Server, nimmt sie die neueste Fassung, die einer davon anbietet.
@@ -23,12 +26,14 @@ import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from importlib.metadata import PackageNotFoundError, version as paket_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as paket_version
 from pathlib import Path
 
 import httpx
 from sqlalchemy.orm import Session
 
+from app import freigabe as fg
 from app.config import get_settings
 from app.db import utcnow
 from app.einstellungen import meta_lesen, meta_schreiben, version_tupel
@@ -144,7 +149,37 @@ def datei(art: str, version: str, name: str | None) -> Path | None:
 
 
 # ---------------------------------------------------------------- GitHub lesen
+def _klein_laden(klient: httpx.Client, url: str, grenze: int) -> bytes | None:
+    """Kleine Datei (Freigabe) laden; None = gibt es nicht."""
+    with klient.stream("GET", url, headers={"Accept": "application/octet-stream"}) as r:
+        if r.status_code == 404:
+            return None
+        if r.status_code != 200:
+            raise UpdateFehler(f"Freigabe: HTTP {r.status_code}")
+        daten = b""
+        for block in r.iter_bytes(16 * 1024):
+            daten += block
+            if len(daten) > grenze:
+                raise UpdateFehler("Freigabe zu groß")
+        return daten
+
+
+def _freigabe(klient: httpx.Client, repo: str, tag: str, url_text: str, url_sig: str) -> dict | None:
+    """Freigabe laden und prüfen. None = (noch) keine Freigabe; ungültig → UpdateFehler."""
+    text = _klein_laden(klient, url_text, fg.MAX_TEXT)
+    sig = _klein_laden(klient, url_sig, fg.MAX_SIGNATUR) if text is not None else None
+    if text is None or sig is None:
+        return None
+    try:
+        f = fg.lesen(text, sig, repo, tag)
+    except fg.FreigabeFehler as e:
+        raise UpdateFehler(f"{tag}: {e}") from None
+    return {"freigabe": text.decode("utf-8"), "freigabe_sig": sig.decode("ascii"), "commit": f.commit,
+            "_dateien": f.dateien}
+
+
 def _neueste(klient: httpx.Client, art: Art) -> dict | None:
+    """Neueste Fassung mit gültiger Freigabe. Ungültige Unterschriften werfen UpdateFehler (erst nach der Suche)."""
     repo = art.repo()
     if art.quelle == "tags":
         r = klient.get(f"https://api.github.com/repos/{repo}/tags", params={"per_page": 100})
@@ -154,38 +189,68 @@ def _neueste(klient: httpx.Client, art: Art) -> dict | None:
         treffer = [(m.group(1), t) for t in r.json() if (m := re.match(art.tag, t.get("name", "")))]
         if not treffer:
             return None
-        v, _ = max(treffer, key=lambda x: version_tupel(x[0]) or (0,))
-        return {"version": v, "notizen": "", "url": f"https://github.com/{repo}/releases/tag/v{v}"}
+        v, t = max(treffer, key=lambda x: version_tupel(x[0]) or (0,))
+        tag = t["name"]
+        basis = f"https://github.com/{repo}/releases/download/{tag}"
+        f = _freigabe(klient, repo, tag, f"{basis}/{fg.DATEI}", f"{basis}/{fg.SIGNATUR}")
+        if f is None:
+            return None  # neueste Fassung noch nicht freigegeben
+        f.pop("_dateien")
+        return {"version": v, "notizen": "", "url": f"https://github.com/{repo}/releases/tag/{tag}", "tag": tag, **f}
     r = klient.get(f"https://api.github.com/repos/{repo}/releases", params={"per_page": 30})
     if r.status_code == 404:
         return None
     r.raise_for_status()
-    beste = None
+    kandidaten = []
     for rel in r.json():
         m = re.match(art.tag, rel.get("tag_name", ""))
         if not m or rel.get("draft") or rel.get("prerelease"):
             continue
+        anhaenge = {a.get("name"): a for a in rel.get("assets", [])}
+        if fg.DATEI not in anhaenge or fg.SIGNATUR not in anhaenge:
+            continue  # noch nicht freigegeben
         anhang = None
         if art.datei:
             anhang = next((a for a in rel.get("assets", []) if re.search(art.datei, a.get("name", ""))), None)
             if anhang is None:
                 continue  # Release ohne passende Datei (z. B. noch im Bau) überspringen
-        eintrag = {"version": m.group(1), "notizen": (rel.get("body") or "").strip()[:4000],
-                   "url": rel.get("html_url"), "veroeffentlicht": rel.get("published_at"), "tag": rel.get("tag_name")}
+        kandidaten.append((m.group(1), rel, anhang, anhaenge))
+    kandidaten.sort(key=lambda k: version_tupel(k[0]) or (0,), reverse=True)
+    fehler = None
+    for version, rel, anhang, anhaenge in kandidaten:
+        try:
+            f = _freigabe(klient, repo, rel["tag_name"], anhaenge[fg.DATEI]["browser_download_url"],
+                          anhaenge[fg.SIGNATUR]["browser_download_url"])
+        except UpdateFehler as e:
+            fehler = fehler or e
+            continue
+        if f is None:
+            continue
+        dateien = f.pop("_dateien")
+        eintrag = {"version": version, "notizen": (rel.get("body") or "").strip()[:4000],
+                   "url": rel.get("html_url"), "veroeffentlicht": rel.get("published_at"), "tag": rel.get("tag_name"),
+                   **f}
         if anhang:
-            digest = anhang.get("digest") or ""
+            if anhang["name"] not in dateien:
+                fehler = fehler or UpdateFehler(f"{rel['tag_name']}: {anhang['name']} ist nicht freigegeben")
+                continue
             eintrag.update(datei=anhang["name"], groesse=anhang.get("size"), quelle=anhang["browser_download_url"],
-                           sha256=digest.removeprefix("sha256:") if digest.startswith("sha256:") else None)
-        if beste is None or _neuer(eintrag["version"], beste["version"]):
-            beste = eintrag
-    return beste
+                           sha256=dateien[anhang["name"]])
+        if fehler:  # Neuere Fassung mit ungültiger Freigabe: melden, aber die ältere gültige trotzdem nehmen
+            eintrag["_fehler"] = str(fehler)
+        return eintrag
+    if fehler:
+        raise fehler
+    return None
 
 
 def _laden(klient: httpx.Client, art: str, eintrag: dict) -> dict:
     """Datei herunterladen und prüfen; liegt sie schon da, nur prüfen."""
     ziel_ordner = ablage() / art / eintrag["version"]
     ziel = ziel_ordner / eintrag["datei"]
-    if ziel.is_file() and (not eintrag.get("sha256") or _sha(ziel) == eintrag["sha256"]):
+    if not eintrag.get("sha256"):
+        raise UpdateFehler(f"{eintrag['datei']}: keine Prüfsumme in der Freigabe")
+    if ziel.is_file() and _sha(ziel) == eintrag["sha256"]:
         return {**eintrag, "sha256": _sha(ziel), "groesse": ziel.stat().st_size, "bereit": True}
     ziel_ordner.mkdir(parents=True, exist_ok=True)
     tmp = ziel.with_suffix(ziel.suffix + ".teil")
@@ -198,7 +263,7 @@ def _laden(klient: httpx.Client, art: str, eintrag: dict) -> dict:
                 h.update(block)
                 f.write(block)
     summe = h.hexdigest()
-    if eintrag.get("sha256") and summe != eintrag["sha256"]:
+    if summe != eintrag["sha256"]:
         tmp.unlink(missing_ok=True)
         raise UpdateFehler(f"{eintrag['datei']}: Prüfsumme stimmt nicht")
     tmp.replace(ziel)
@@ -294,11 +359,17 @@ def pruefen(db: Session, klient: httpx.Client | None = None) -> dict:
             except (httpx.HTTPError, ValueError) as e:
                 fehler.append(f"{art.name}: {type(e).__name__}")
                 continue
+            except UpdateFehler as e:
+                fehler.append(f"{art.name}: {e}")
+                continue
             ergebnis[schluessel] = eintrag["version"] if eintrag else None
             if not eintrag:
                 continue
+            if eintrag.get("_fehler"):
+                fehler.append(f"{art.name}: {eintrag.pop('_fehler')}")
             bisher = stand(db, schluessel)
-            if bisher and bisher.get("version") == eintrag["version"] and bisher.get("bereit"):
+            if bisher and bisher.get("version") == eintrag["version"] and bisher.get("bereit") \
+                    and bisher.get("freigabe") == eintrag.get("freigabe"):
                 continue
             if art.datei:
                 try:

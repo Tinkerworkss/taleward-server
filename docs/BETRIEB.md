@@ -192,6 +192,11 @@ Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen (**Updates**):
 - **Web-App:** Enthält ein App-Release die Web-Fassung, liefert der Server sie unter `https://<server>/app/` selbst aus.
   Sonst zeigt „Im Browser öffnen“ auf die zentrale Web-App auf taleward.org, sofern das unter Einstellungen erlaubt ist.
 - **Server:** siehe [INSTALLATION.md](../INSTALLATION.md#alltag-und-updates).
+- **Freigabe:** Übernommen wird nur eine Fassung, die der Rechteinhaber freigegeben hat. Dazu hängt der Ablauf
+  „Freigabe“ an jedes Release eine `freigabe.txt` (Repo, Tag, Commit, SHA-256 jeder Datei) und deren Unterschrift
+  `freigabe.txt.sig` (Ed25519, `ssh-keygen -Y sign`, Namensraum `taleward-freigabe`). Server, Update-Skript und
+  Worker-App prüfen sie mit dem fest eingebauten öffentlichen Schlüssel. Fassungen ohne Freigabe werden übergangen,
+  eine ungültige Unterschrift erscheint unter Verwaltung → Updates als Fehler.
 - Ohne Internetzugang oder zum Abschalten: `UPDATE_CHECK=false` in der `.env`.
 
 ## Wortlisten für die Namensprüfung

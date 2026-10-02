@@ -551,7 +551,10 @@ def app_update(request: Request, system: str = "windows", worker: Worker = Depen
     angebot = aktualisierung.angebot(db, art, oeffentliche_adresse(db, request))
     if angebot is None:
         return Response(status_code=204)
-    return {**angebot, "repo": aktualisierung.ARTEN[art].repo()}
+    # Die Freigabe (Text und Unterschrift) reicht der Server nur durch – der Worker prüft sie selbst
+    s = aktualisierung.freigegeben(db, art) or {}
+    zusatz = {"freigabe": s.get("freigabe"), "freigabeSignatur": s.get("freigabe_sig"), "commit": s.get("commit")}
+    return {**angebot, "repo": aktualisierung.ARTEN[art].repo(), **{k: v for k, v in zusatz.items() if v}}
 
 
 def server_fassung() -> str:

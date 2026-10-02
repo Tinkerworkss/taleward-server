@@ -87,7 +87,7 @@ if [ -z "${BOX_OHNE_CHROOT:-}" ]; then
   chroot "$MNT" /bin/bash -euo pipefail -c "
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
-    apt-get install -y -q ca-certificates curl gnupg zstd git avahi-daemon
+    apt-get install -y -q ca-certificates curl gnupg zstd git openssh-client avahi-daemon
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
     echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable' \
