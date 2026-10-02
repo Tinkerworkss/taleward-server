@@ -28,24 +28,19 @@ diff --git a/app/modellvergleich.py b/app/modellvergleich.py
 index 1ad9763..74f54f6 100644
 --- a/app/modellvergleich.py
 +++ b/app/modellvergleich.py
-@@ -168,6 +168,7 @@ class Ergebnis:
-     tokens_ein: int = 0
+@@ -169,4 +169,5 @@ class Ergebnis:
      tokens_aus: int = 0
      grundlage: str = ""  # „Transkript“ oder „Szenennotizen …“
 +    letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
      titel: str = ""
      text: str = ""
-     offene_faeden: list[str] = field(default_factory=list)
-@@ -239,6 +240,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
-         erg.selbst = zaehlen(d["review"]["paragraphs"])
+@@ -240,4 +241,5 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
      except SprachmodellFehler as e:
          erg.fehler = str(e)
 +        erg.letzte_antwort = ablauf.zaehler.letzte_antwort[-20000:]
      finally:
          erg.dauer_s = time.monotonic() - t0
-         erg.aufrufe, erg.tokens_ein, erg.tokens_aus = (ablauf.zaehler.aufrufe, ablauf.zaehler.tokens_in,
-@@ -369,11 +371,13 @@ def _ordnername(modell: str) -> str:
- def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]) -> None:
+@@ -370,9 +372,11 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
      ordner.mkdir(parents=True, exist_ok=True)
      for e in ergebnisse:
 -        d = ordner / _ordnername(e.modell)
@@ -59,21 +54,17 @@ index 1ad9763..74f54f6 100644
 +        (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                           encoding="utf-8")
      (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
-     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
 diff --git a/app/sprachmodell.py b/app/sprachmodell.py
 index f147bed..70fd92b 100644
 --- a/app/sprachmodell.py
 +++ b/app/sprachmodell.py
-@@ -29,6 +29,7 @@ ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
- FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
+@@ -30,4 +30,5 @@ FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
  MAX_VORSCHLAEGE = 15
  ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 +NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
  ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
  
- # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
-@@ -45,6 +46,10 @@ class SprachmodellFehler(Exception):
-         self.erneut = erneut
+@@ -46,4 +47,8 @@ class SprachmodellFehler(Exception):
  
  
 +class AntwortFehler(SprachmodellFehler):
@@ -82,18 +73,14 @@ index f147bed..70fd92b 100644
 +
  # ---------------------------------------------------------------- Anbindungen
  @dataclass
- class Antwort:
-@@ -217,7 +222,7 @@ class OllamaKlient:
-                 continue
+@@ -218,5 +223,5 @@ class OllamaKlient:
              break
          if (status >= 400 or fehler) and "repeat" in fehler:
 -            raise SprachmodellFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
 +            raise AntwortFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
                                       f"(Wiederholungsschleife; Ollama: {fehler[:120]}). Ein anderes oder größeres "
                                       "Modell hilft – Verwaltung → Transkription → Lokales Sprachmodell.")
-         if status >= 400 or fehler:
-@@ -586,24 +591,70 @@ def recap_text(d: dict) -> str:
-     return lang[0] if len(lang) == 1 else ""
+@@ -587,5 +592,7 @@ def recap_text(d: dict) -> str:
  
  
 -def _json(antwort: Antwort) -> dict:
@@ -102,8 +89,7 @@ index f147bed..70fd92b 100644
 +    vollständigen Wert übernehmen – nur für Szenennotizen, wo ein fehlender Rest nichts verfälscht."""
      text = antwort.text.strip()
      text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-     try:
-         wert = json.loads(text)
+@@ -594,15 +601,59 @@ def _json(antwort: Antwort) -> dict:
      except ValueError:
          m = re.search(r"\{.*\}", text, re.S)
 -        if not m:
@@ -168,9 +154,7 @@ index f147bed..70fd92b 100644
 +
  # ---------------------------------------------------------------- Ablauf
  def _zahl(n: int) -> str:
-     return f"{n:,}".replace(",", " ")  # 3 800 mit schmalem Leerzeichen – kein Punkt, der mit dem Komma streitet
-@@ -617,16 +668,19 @@ class Zaehler:
- 
+@@ -618,14 +669,17 @@ class Zaehler:
      token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
  
 -    def aufruf(self, klient: Klient, system: str, nutzer: str) -> dict:
@@ -191,9 +175,7 @@ index f147bed..70fd92b 100644
 +        self.letzte_antwort = a.text
          self.tokens_in += a.tokens_in
          self.tokens_out += a.tokens_out
-         self.aufrufe += 1
-@@ -673,14 +727,16 @@ class Ablauf:
-         kopf = _kopf(ein)
+@@ -674,12 +728,14 @@ class Ablauf:
          system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
          self._schritt("notes")
 +        # Notizen sind kürzer als ihr Abschnitt, aber nicht beliebig: Die Antwort darf höchstens ANTWORT_HOECHSTENS
@@ -212,9 +194,7 @@ index f147bed..70fd92b 100644
 +                                         teil.split("\n"))
                  fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
              text = "\n".join(notizen)
-             if tokens(text) <= self.max_transkript_tokens or not notizen:
-@@ -688,6 +744,25 @@ class Ablauf:
-             zeilen = notizen
+@@ -689,4 +745,23 @@ class Ablauf:
          return "Szenennotizen (aus dem Transkript verdichtet)", text
  
 +    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
@@ -238,71 +218,61 @@ index f147bed..70fd92b 100644
 +
      def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
          bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"
-                                                            if _erwaehnt(e["name"], grundlage) else "")
 diff --git a/pyproject.toml b/pyproject.toml
 index 81c14e0..3d99eb5 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -1,6 +1,6 @@
+@@ -1,5 +1,5 @@
  [project]
  name = "taleward-server"
 -version = "0.4.38"
 +version = "0.4.39"
  description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
  license = "AGPL-3.0-only"
- license-files = ["LICENSE"]
 diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
 index 69a6390..de8b4fb 100644
 --- a/tests/test_aktualisierung.py
 +++ b/tests/test_aktualisierung.py
-@@ -153,7 +153,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
-     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
      aktualisierung.pruefen(dbs, gh)
      aktualisierung.pruefen(dbs, gh)
 -    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.38"})]  # nur einmal
 +    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.39"})]  # nur einmal
      seite = client.get("/verwaltung/updates").text
      assert "Update verfügbar" in seite and "git pull" in seite
-     monkeypatch.setenv("TALEWARD_DOCKER", "1")
 diff --git a/tests/test_assistent.py b/tests/test_assistent.py
 index 565c67b..66a74ab 100644
 --- a/tests/test_assistent.py
 +++ b/tests/test_assistent.py
-@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
-     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
      h = {"Authorization": f"Bearer {r.json()['token']}"}
      assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
 -    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.38"}
 +    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.39"}
      assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
      seite = client.get("/verwaltung/assistent/betrieb").text
-     assert "gaming-pc" in seite and "bereit" in seite
 diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
 index 57ee298..fac9439 100644
 --- a/tests/test_modellablage.py
 +++ b/tests/test_modellablage.py
-@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
-     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
      assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
      modellablage.holen(dbs, klient=hf_transport())
 -    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.38"}
 +    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.39"}
      assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
      r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
-                headers=h)
 diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
 index 78ba3b9..4ce773e 100644
 --- a/tests/test_modellvergleich.py
 +++ b/tests/test_modellvergleich.py
-@@ -68,7 +68,7 @@ def test_modellvergleich(client, world, dbs, tmp_path):
-                            "http://ollama", tmp_path / "aus", meldungen.append, client=ollama)
+@@ -69,5 +69,5 @@ def test_modellvergleich(client, world, dbs, tmp_path):
      bericht = (ordner / "bericht.md").read_text(encoding="utf-8")
      assert "| a:1 (ctx 12288) | ok |" in bericht and "| b:2 (ctx 8192) | Fehler |" in bericht
 -    erg = json.loads((ordner / "a_1" / "ergebnis.json").read_text(encoding="utf-8"))
 +    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
      assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
      assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
-     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
 diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
 new file mode 100644
 index 0000000..1906ab1
@@ -384,28 +354,24 @@ diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
 index 13e5c9c..e9579b6 100644
 --- a/tests/test_worker_app.py
 +++ b/tests/test_worker_app.py
-@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
-     code, _ = code_erzeugen(dbs)
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
      dbs.commit()
      r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
 -    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.38"
 +    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.39"
  
  
- def test_engine_requirements_passen_zu_uv_lock(tmp_path):
 diff --git a/uv.lock b/uv.lock
 index a3385ca..603afd1 100644
 --- a/uv.lock
 +++ b/uv.lock
-@@ -1986,7 +1986,7 @@ wheels = [
- 
+@@ -1987,5 +1987,5 @@ wheels = [
  [[package]]
  name = "taleward-server"
 -version = "0.4.38"
 +version = "0.4.39"
  source = { editable = "." }
  dependencies = [
-     { name = "alembic" },
 -- 
 2.43.0
 
