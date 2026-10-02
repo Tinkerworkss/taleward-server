@@ -1,0 +1,121 @@
+name: Freigabe
+# Unterschreibt eine neue Fassung mit dem Freigabe-Schlüssel – erst nach Bestätigung durch Benjamin (Umgebung
+# „freigabe“, Mail „Review deployments“). Ohne Freigabe installieren Server und Worker die Fassung nicht.
+# Ergebnis: freigabe.txt (Repo, Tag, Commit, SHA-256 aller Anhänge) und freigabe.txt.sig am Release des Tags.
+# Läuft nach „Fassung markieren“ oder von Hand (Actions → Freigabe → Run workflow, Fassung z. B. v0.4.38).
+on:
+  workflow_run:
+    workflows: ["Fassung markieren"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      fassung:
+        description: "Fassung, z. B. v0.4.38 (leer = neueste)"
+        required: false
+
+permissions: {}
+
+concurrency: freigabe
+
+env:
+  MUSTER: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+  PRAEFIX: v
+  OEFFENTLICH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP8G+vT3BsQPQ+D5UlN615BaEd1FCXEYcxO1KEf7u7Sd"
+
+jobs:
+  ermitteln:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.f.outputs.tag }}
+      commit: ${{ steps.f.outputs.commit }}
+    steps:
+      - name: Fassung bestimmen
+        id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EINGABE: ${{ inputs.fassung }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EINGABE:-}" ]; then
+            TAG=$EINGABE
+          else
+            TAG=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$PRAEFIX" --paginate -q '.[].ref' \
+              | sed 's#^refs/tags/##' | grep -E "$MUSTER" | sort -V | tail -1 || true)
+          fi
+          if ! printf '%s' "$TAG" | grep -Eq "$MUSTER"; then
+            echo "Keine gültige Fassung gefunden."; exit 0
+          fi
+          if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'freigabe.txt'; then
+            echo "$TAG ist schon freigegeben."; exit 0
+          fi
+          COMMIT=$(gh api "repos/$GH_REPO/commits/$TAG" -q .sha)
+          {
+            echo "### Freigabe für $TAG"
+            echo "Commit: \`$COMMIT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          { echo "tag=$TAG"; echo "commit=$COMMIT"; } >> "$GITHUB_OUTPUT"
+
+  unterschreiben:
+    needs: ermitteln
+    if: needs.ermitteln.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    environment: freigabe
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.ermitteln.outputs.tag }}
+      COMMIT: ${{ needs.ermitteln.outputs.commit }}
+    steps:
+      - name: Freigabe schreiben
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          [ "$(gh api "repos/$GH_REPO/commits/$TAG" -q .sha)" = "$COMMIT" ] || { echo "Tag hat sich verschoben"; exit 1; }
+          mkdir -p anhaenge
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json assets -q '.assets[].name' > namen.txt
+            if grep -q . namen.txt; then gh release download "$TAG" --dir anhaenge; fi
+          fi
+          {
+            echo "taleward-freigabe 1"
+            echo "repo $GH_REPO"
+            echo "tag $TAG"
+            echo "commit $COMMIT"
+            for d in anhaenge/*; do
+              [ -f "$d" ] || continue
+              n=$(basename "$d")
+              case "$n" in freigabe.txt|freigabe.txt.sig) continue ;; esac
+              echo "datei $(sha256sum "$d" | cut -d' ' -f1) $n"
+            done
+          } > inhalt.txt
+          mv inhalt.txt freigabe.txt
+          cat freigabe.txt
+      - name: Unterschreiben
+        env:
+          SCHLUESSEL: ${{ secrets.FREIGABE_SCHLUESSEL }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          [ -n "$SCHLUESSEL" ] || { echo "Secret FREIGABE_SCHLUESSEL fehlt in der Umgebung freigabe"; exit 1; }
+          umask 077
+          trap 'rm -f schluessel' EXIT
+          printf '%s\n' "$SCHLUESSEL" | tr -d '\r' > schluessel
+          ssh-keygen -q -Y sign -f schluessel -n taleward-freigabe freigabe.txt
+          printf 'taleward-freigabe namespaces="taleward-freigabe" %s\n' "$OEFFENTLICH" > erlaubt
+          ssh-keygen -Y verify -f erlaubt -I taleward-freigabe -n taleward-freigabe -s freigabe.txt.sig < freigabe.txt
+      - name: Anhängen
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --latest=false --title "Taleward-Server ${TAG#v}" \
+              --notes "Freigegebene Server-Fassung. Installation und Updates: siehe INSTALLATION.md."
+          fi
+          gh release upload "$TAG" freigabe.txt freigabe.txt.sig
+          echo "$TAG freigegeben." >> "$GITHUB_STEP_SUMMARY"
