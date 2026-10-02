@@ -1,6 +1,7 @@
 name: Fassung markieren
 # Setzt zu jeder neuen Server-Fassung (version in pyproject.toml) das Git-Tag v<Fassung>.
-# Die Worker-App installiert ihr KI-Paket genau aus diesem Tag – so passen Worker und Server immer zusammen.
+# Nur nach einem erfolgreichen Patch-Lauf. Danach unterschreibt „Freigabe“ die Fassung nach Bestätigung durch Benjamin;
+# erst dann übernehmen Server und Worker sie.
 on:
   push:
     branches: [main]
@@ -10,21 +11,30 @@ on:
     workflows: ["Patch einspielen"]
     types: [completed]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   markieren:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: main
+          persist-credentials: false
       - name: Tag setzen, falls neu
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
           V=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
-          if git rev-parse "v$V" >/dev/null 2>&1; then
+          printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Unbekannte Fassung: $V"; exit 1; }
+          if gh api "repos/$GH_REPO/git/ref/tags/v$V" >/dev/null 2>&1; then
             echo "v$V gibt es schon."
           else
-            git tag "v$V" && git push origin "v$V" && echo "v$V gesetzt."
+            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/v$V" -f sha="$(git rev-parse HEAD)" >/dev/null
+            echo "v$V gesetzt."
           fi
