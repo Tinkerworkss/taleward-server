@@ -1,0 +1,411 @@
+From 4d66432793005b7e3f3126e76f34f38f54339f83 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 20:58:08 +0200
+Subject: [PATCH] Szenennotizen fuer lange Runden robuster (Server 0.4.39)
+
+Abschnitte fuer Szenennotizen hoechstens 6000 Token, abgeschnittene
+Antworten werden bis zum letzten vollstaendigen Eintrag uebernommen, ein
+unbrauchbarer Abschnitt wird geteilt. Der Modellvergleich legt bei einem
+Fehler die letzte Antwort ab und trennt Laeufe mit verschiedenem Kontext.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/modellvergleich.py        |   8 ++-
+ app/sprachmodell.py           | 103 +++++++++++++++++++++++++++++-----
+ pyproject.toml                |   2 +-
+ tests/test_aktualisierung.py  |   2 +-
+ tests/test_assistent.py       |   2 +-
+ tests/test_modellablage.py    |   2 +-
+ tests/test_modellvergleich.py |   2 +-
+ tests/test_szenennotizen.py   |  71 +++++++++++++++++++++++
+ tests/test_worker_app.py      |   2 +-
+ uv.lock                       |   2 +-
+ 10 files changed, 173 insertions(+), 23 deletions(-)
+ create mode 100644 tests/test_szenennotizen.py
+
+diff --git a/app/modellvergleich.py b/app/modellvergleich.py
+index 1ad9763..74f54f6 100644
+--- a/app/modellvergleich.py
++++ b/app/modellvergleich.py
+@@ -168,6 +168,7 @@ class Ergebnis:
+     tokens_ein: int = 0
+     tokens_aus: int = 0
+     grundlage: str = ""  # „Transkript“ oder „Szenennotizen …“
++    letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
+     titel: str = ""
+     text: str = ""
+     offene_faeden: list[str] = field(default_factory=list)
+@@ -239,6 +240,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+         erg.selbst = zaehlen(d["review"]["paragraphs"])
+     except SprachmodellFehler as e:
+         erg.fehler = str(e)
++        erg.letzte_antwort = ablauf.zaehler.letzte_antwort[-20000:]
+     finally:
+         erg.dauer_s = time.monotonic() - t0
+         erg.aufrufe, erg.tokens_ein, erg.tokens_aus = (ablauf.zaehler.aufrufe, ablauf.zaehler.tokens_in,
+@@ -369,11 +371,13 @@ def _ordnername(modell: str) -> str:
+ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]) -> None:
+     ordner.mkdir(parents=True, exist_ok=True)
+     for e in ergebnisse:
+-        d = ordner / _ordnername(e.modell)
++        d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}")  # dasselbe Modell mit zwei Kontexten getrennt
+         d.mkdir(exist_ok=True)
+         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
++        if e.letzte_antwort:
++            (d / "letzte-antwort.txt").write_text(e.letzte_antwort, encoding="utf-8")
+         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+-        (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "token_s": e.token_s}, ensure_ascii=False, indent=2),
++        (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                          encoding="utf-8")
+     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
+     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index f147bed..70fd92b 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -29,6 +29,7 @@ ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
+ FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
+ MAX_VORSCHLAEGE = 15
+ ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
++NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
+ ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
+ 
+ # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
+@@ -45,6 +46,10 @@ class SprachmodellFehler(Exception):
+         self.erneut = erneut
+ 
+ 
++class AntwortFehler(SprachmodellFehler):
++    """Das Modell hat geantwortet, aber unbrauchbar (kein JSON, Schleife) – ein kleinerer Abschnitt hilft oft."""
++
++
+ # ---------------------------------------------------------------- Anbindungen
+ @dataclass
+ class Antwort:
+@@ -217,7 +222,7 @@ class OllamaKlient:
+                 continue
+             break
+         if (status >= 400 or fehler) and "repeat" in fehler:
+-            raise SprachmodellFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
++            raise AntwortFehler(f"Das Sprachmodell hat sich in {len(self.VERSUCHE)} Versuchen festgefahren "
+                                      f"(Wiederholungsschleife; Ollama: {fehler[:120]}). Ein anderes oder größeres "
+                                      "Modell hilft – Verwaltung → Transkription → Lokales Sprachmodell.")
+         if status >= 400 or fehler:
+@@ -586,24 +591,70 @@ def recap_text(d: dict) -> str:
+     return lang[0] if len(lang) == 1 else ""
+ 
+ 
+-def _json(antwort: Antwort) -> dict:
++def _json(antwort: Antwort, retten: bool = False) -> dict:
++    """JSON-Objekt aus der Antwort. retten=True: eine abgeschnittene Antwort (Längengrenze erreicht) bis zum letzten
++    vollständigen Wert übernehmen – nur für Szenennotizen, wo ein fehlender Rest nichts verfälscht."""
+     text = antwort.text.strip()
+     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+     try:
+         wert = json.loads(text)
+     except ValueError:
+         m = re.search(r"\{.*\}", text, re.S)
+-        if not m:
+-            raise SprachmodellFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
+         try:
+-            wert = json.loads(m.group(0))
++            wert = json.loads(m.group(0)) if m else None
+         except ValueError:
+-            raise SprachmodellFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
++            wert = None
++        if wert is None and retten:
++            wert = json_retten(text)
++        if wert is None:
++            raise AntwortFehler("Das Sprachmodell hat kein gültiges JSON geliefert.") from None
+     if not isinstance(wert, dict):
+-        raise SprachmodellFehler("Das Sprachmodell hat kein JSON-Objekt geliefert.")
++        raise AntwortFehler("Das Sprachmodell hat kein JSON-Objekt geliefert.")
+     return wert
+ 
+ 
++def json_retten(text: str) -> dict | None:
++    """Abgeschnittenes JSON bis zum letzten vollständigen Wert kürzen und die offenen Klammern schließen."""
++    start = text.find("{")
++    if start < 0:
++        return None
++    stapel: list[str] = []
++    im_text = escape = False
++    letzte = None  # (Position nach einem vollständigen Wert, offene Klammern dort)
++    for i in range(start, len(text)):
++        c = text[i]
++        if im_text:
++            if escape:
++                escape = False
++            elif c == "\\":
++                escape = True
++            elif c == '"':
++                im_text = False
++                if stapel and stapel[-1] == "[":
++                    letzte = (i + 1, list(stapel))
++            continue
++        if c == '"':
++            im_text = True
++        elif c in "{[":
++            stapel.append(c)
++        elif c in "}]":
++            if not stapel:
++                break
++            stapel.pop()
++            letzte = (i + 1, list(stapel))
++            if not stapel:
++                break
++    if letzte is None:
++        return None
++    pos, offen = letzte
++    rest = "".join("]" if k == "[" else "}" for k in reversed(offen))
++    try:
++        wert = json.loads(text[start:pos] + rest)
++    except ValueError:
++        return None
++    return wert if isinstance(wert, dict) else None
++
++
+ # ---------------------------------------------------------------- Ablauf
+ def _zahl(n: int) -> str:
+     return f"{n:,}".replace(",", " ")  # 3 800 mit schmalem Leerzeichen – kein Punkt, der mit dem Komma streitet
+@@ -617,16 +668,19 @@ class Zaehler:
+ 
+     token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
+ 
+-    def aufruf(self, klient: Klient, system: str, nutzer: str) -> dict:
++    letzte_antwort: str = ""  # Rohtext der letzten Antwort (nur für die Fehlersuche im Modellvergleich)
++
++    def aufruf(self, klient: Klient, system: str, nutzer: str, retten: bool = False) -> dict:
+         a = self._chat(klient, system, nutzer)
+         try:
+-            return _json(a)
++            return _json(a, retten)
+         except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
+             a = self._chat(klient, system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
+-            return _json(a)
++            return _json(a, retten)
+ 
+     def _chat(self, klient: Klient, system: str, nutzer: str) -> Antwort:
+         a = klient.chat(system, nutzer)
++        self.letzte_antwort = a.text
+         self.tokens_in += a.tokens_in
+         self.tokens_out += a.tokens_out
+         self.aufrufe += 1
+@@ -673,14 +727,16 @@ class Ablauf:
+         kopf = _kopf(ein)
+         system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein))
+         self._schritt("notes")
++        # Notizen sind kürzer als ihr Abschnitt, aber nicht beliebig: Die Antwort darf höchstens ANTWORT_HOECHSTENS
++        # Token lang werden. Darum höchstens NOTIZ_STUECK Token je Abschnitt, auch bei großem Kontext.
++        groesse = min(self.stueck_tokens, NOTIZ_STUECK)
+         for runde in range(3):  # sehr lange Sessions bei kleinem Kontext: Notizen noch einmal verdichten
+-            teile = stuecke(zeilen, self.stueck_tokens)
++            teile = stuecke(zeilen, groesse)
+             notizen = []
+             for i, teil in enumerate(teile):
+                 was = "des Transkripts" if runde == 0 else "der bisherigen Szenennotizen (bitte weiter verdichten)"
+-                d = self.zaehler.aufruf(self.klient, system,
+-                                        f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n{teil}")
+-                notizen += [str(n).strip() for n in d.get("notizen") or [] if str(n).strip()]
++                notizen += self._notizen(system, f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
++                                         teil.split("\n"))
+                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
+             text = "\n".join(notizen)
+             if tokens(text) <= self.max_transkript_tokens or not notizen:
+@@ -688,6 +744,25 @@ class Ablauf:
+             zeilen = notizen
+         return "Szenennotizen (aus dem Transkript verdichtet)", text
+ 
++    def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0) -> list[str]:
++        """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
++        (höchstens zweimal) – kleine Modelle verlieren sich eher in langen Abschnitten."""
++        try:
++            d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
++        except AntwortFehler:
++            if tiefe >= 2 or len(zeilen) < 8:
++                raise
++            log.info("Szenennotizen: Abschnitt wird geteilt (%d Zeilen)", len(zeilen))
++            mitte = len(zeilen) // 2
++            return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
++                    + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
++        notizen = []
++        for n in d.get("notizen") or []:
++            n = str(n).strip()
++            if n and (not notizen or n != notizen[-1]):  # Schleifen ergeben gleiche Zeilen hintereinander
++                notizen.append(n)
++        return notizen
++
+     def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
+         bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"
+                                                            if _erwaehnt(e["name"], grundlage) else "")
+diff --git a/pyproject.toml b/pyproject.toml
+index 81c14e0..3d99eb5 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.38"
++version = "0.4.39"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+ license-files = ["LICENSE"]
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 69a6390..de8b4fb 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -153,7 +153,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.38"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.39"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+     monkeypatch.setenv("TALEWARD_DOCKER", "1")
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 565c67b..66a74ab 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -134,7 +134,7 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     assert r.status_code == 201 and r.json()["name"] == "gaming-pc"
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.38"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.39"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+     assert "gaming-pc" in seite and "bereit" in seite
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 57ee298..fac9439 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -83,7 +83,7 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/models", params={"repo": REPO}, headers=h).status_code == 404
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.38"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.39"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+                headers=h)
+diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
+index 78ba3b9..4ce773e 100644
+--- a/tests/test_modellvergleich.py
++++ b/tests/test_modellvergleich.py
+@@ -68,7 +68,7 @@ def test_modellvergleich(client, world, dbs, tmp_path):
+                            "http://ollama", tmp_path / "aus", meldungen.append, client=ollama)
+     bericht = (ordner / "bericht.md").read_text(encoding="utf-8")
+     assert "| a:1 (ctx 12288) | ok |" in bericht and "| b:2 (ctx 8192) | Fehler |" in bericht
+-    erg = json.loads((ordner / "a_1" / "ergebnis.json").read_text(encoding="utf-8"))
++    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
+     assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
+     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
+     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+new file mode 100644
+index 0000000..1906ab1
+--- /dev/null
++++ b/tests/test_szenennotizen.py
+@@ -0,0 +1,71 @@
++"""Lange Runden: Szenennotizen auch dann, wenn ein kleines Modell abgeschnittenes oder kaputtes JSON liefert."""
++import json
++
++import pytest
++
++
++def test_abgeschnittenes_json_wird_gerettet():
++    from app.sprachmodell import json_retten
++
++    assert json_retten('{"notizen": ["[0:01] Ankunft in Rabenfels", "[0:05] Der Wirt sagt \\"Willkommen\\"", "[0:0') \
++        == {"notizen": ["[0:01] Ankunft in Rabenfels", '[0:05] Der Wirt sagt "Willkommen"']}
++    assert json_retten('Hier: {"notizen": ["a", "b"], "x": [1, {"y": "z') == {"notizen": ["a", "b"]}
++    assert json_retten('{"notizen": ["[0:01] nur ein halber') is None
++    assert json_retten("kein json") is None
++
++
++def test_recap_wird_nicht_gerettet():
++    from app.sprachmodell import Antwort, AntwortFehler, _json
++
++    with pytest.raises(AntwortFehler):
++        _json(Antwort('{"title": "Kapitel 1", "text": "Die Gruppe ritt nach'))
++    assert _json(Antwort('{"notizen": ["a", "b'), retten=True) == {"notizen": ["a"]}
++
++
++def _ein(n=300):
++    zeilen = [{"start": i * 20.0, "sprecher": "Mira" if i % 2 else "Anna", "member_id": None,
++               "text": f"Satz {i} über Rabenfels und den langen Weg dorthin, es regnet seit Tagen."} for i in range(n)]
++    return {"sprache": "de", "kampagne": "K", "system": None, "system_name": None, "welt": None,
++            "session_nummer": 1, "session_titel": None, "gaeste": [], "personen": [], "transkript": zeilen,
++            "bibel": [], "geheim": []}
++
++
++def test_kaputter_abschnitt_wird_geteilt():
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.laengen = []
++
++        def chat(self, system, nutzer):
++            zeilen = nutzer.count("\n[")
++            self.laengen.append(zeilen)
++            if zeilen > 40:  # langer Abschnitt: das Modell verliert sich
++                return Antwort("Ich fasse zusammen: Die Gruppe", 10, 5)
++            return Antwort(json.dumps({"notizen": [f"[0:00] Teil mit {zeilen} Zeilen"] * 3}), 10, 5)
++
++    k = Klient()
++    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
++    titel, text = ablauf.grundlage(_ein(), lambda _p: None)
++    assert titel.startswith("Szenennotizen")
++    assert max(k.laengen) > 40 and min(k.laengen) <= 40  # erst lang (zwei Versuche), dann geteilt
++    assert "Teil mit" in text and text.count("\n") < len(k.laengen) * 3  # gleiche Zeilen hintereinander nur einmal
++
++
++def test_abschnitte_fuer_notizen_bleiben_klein():
++    from app import sprachmodell
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++        groessen: list[int] = []
++
++        def chat(self, system, nutzer):
++            self.groessen.append(sprachmodell.tokens(nutzer))
++            return Antwort(json.dumps({"notizen": ["[0:00] x"]}), 10, 5)
++
++    k = Klient()
++    Ablauf(k, max_transkript_tokens=200, stueck_tokens=30000).grundlage(_ein(2000), lambda _p: None)
++    assert max(k.groessen) <= sprachmodell.NOTIZ_STUECK + 500
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 13e5c9c..e9579b6 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     code, _ = code_erzeugen(dbs)
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.38"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.39"
+ 
+ 
+ def test_engine_requirements_passen_zu_uv_lock(tmp_path):
+diff --git a/uv.lock b/uv.lock
+index a3385ca..603afd1 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1986,7 +1986,7 @@ wheels = [
+ 
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.38"
++version = "0.4.39"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+-- 
+2.43.0
+
