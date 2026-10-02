@@ -117,8 +117,8 @@ def eingabe_bauen(db: Session, s: GameSession) -> Eingabe:
             return f"{sp.assigned_guest_name} ({'guest' if c.language == 'en' else 'Gast'})", None
         if m is None:
             return sp.label, None
-        if m.role == "gm":
-            return f"{m.anzeigename} (Spielleitung)", m.id
+        if m.role == "gm":  # ohne Namen: das Modell soll die Spielleitung nie als Figur mit Namen erzählen
+            return "Game Master" if c.language == "en" else "Spielleitung", m.id
         return m.character_name or m.anzeigename, m.id
 
     sprecher = {sp.id: sp for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}

@@ -288,3 +288,61 @@ def test_beleg_zeit_aus_zitierter_notiz():
                          {"start": 0.0, "quote": "Ganz etwas anderes, das in keiner Notiz steht."}]}]
     belege = pruefen(roh, set(), set(), grundlage=notizen)[0]["evidence"]
     assert belege[0]["start"] == 24 * 60 + 48 and belege[1]["start"] == 0.0
+
+
+def test_notizen_erben_zeit_und_abschriften_fallen_weg():
+    """Lauf 8: Ein Abschnitt bestand aus abgeschriebenen Transkriptzeilen, je gefolgt von einer Notiz ohne Zeit."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+            return Antwort(json.dumps({"notizen": [
+                zeilen[2],  # wörtlich abgeschrieben, mit Sprecher
+                "Die Gruppe spricht über Rabenfels und den Regen.",  # ohne Zeit → erbt die Zeit der Notiz davor
+                "[1:00] Spielleitung: " + zeilen[3].split(": ", 1)[1],  # abgeschrieben, anderer Sprecher
+                "[2:00] Mira bricht nach Rabenfels auf.",
+                "Anna bleibt zurück und wartet.",
+                "[9:00] Alle erreichen Rabenfels im Regen."]}), 1, 1)
+
+    _, text = Ablauf(Klient(), max_transkript_tokens=200, stueck_tokens=50000).grundlage(_ein(30), lambda _p: None)
+    assert text.split("\n") == ["[0:40] Die Gruppe spricht über Rabenfels und den Regen.",
+                                "[2:00] Mira bricht nach Rabenfels auf.", "[2:00] Anna bleibt zurück und wartet.",
+                                "[9:00] Alle erreichen Rabenfels im Regen."]
+
+
+def test_teile_nach_spielzeit():
+    from app.sprachmodell import _teile_nach_zeit, TEIL_MINUTEN
+
+    # 90 Minuten, aber die ersten 10 Minuten sind wortreich: trotzdem drei Teile nach Zeit
+    notizen = [f"[{m}:00] " + ("Lange Notiz über den Kerker, die viel Platz braucht. " * 6) for m in range(0, 10)]
+    notizen += [f"[{m}:00] Kurze Notiz." for m in range(10, 91, 5)]
+    teile = _teile_nach_zeit(notizen)
+    assert len(teile) == 3
+    assert teile[0].startswith("[0:00]") and "[30:00]" in teile[1] and teile[2].endswith("[90:00] Kurze Notiz.")
+    # ohne Zeiten: nach Textmenge wie bisher
+    assert _teile_nach_zeit(["a", "b"]) == ["a\nb"]
+    assert TEIL_MINUTEN == 30
+
+
+def test_spielleitung_im_recap_wird_beanstandet():
+    from app.sprachmodell import spielleitung_beanstanden, BEANSTANDET
+
+    text = "Die Gruppe floh.\n\nDie Spielleitung sicherte zu, Arbon zu schützen.\n\nAm Ende schliefen alle."
+    befund = [{"index": i, "verdict": "supported", "note": None, "evidence": []} for i in range(3)]
+    aus = spielleitung_beanstanden(befund, text)
+    assert [b["verdict"] for b in aus] == ["supported", "off_game", "supported"]
+    assert aus[1]["verdict"] in BEANSTANDET and "Nichtspielercharakter" in aus[1]["note"]
+
+
+def test_spielleitung_ohne_namen_im_transkript():
+    from app.sprachmodell import _kopf, SYSTEM_NOTIZEN, SYSTEM_RECAP
+
+    ein = _ein(3)
+    ein["personen"] = [{"id": "1", "name": "Tinker", "rolle": "gm", "charakter": None},
+                       {"id": "2", "name": "Ben", "rolle": "player", "charakter": "Mira"}]
+    kopf = _kopf(ein)
+    assert "Tinker" not in kopf and "Spielleitung" in kopf and "Ben spielt Mira" in kopf
+    assert "„Spielleitung“ kommt" in SYSTEM_NOTIZEN and "„Spielleitung“ kommt im Recap nicht vor" in SYSTEM_RECAP

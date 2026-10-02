@@ -32,7 +32,8 @@ ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
 BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
 NOTIZEN_HOECHSTENS = 15  # je Abschnitt; mehr sprengt die Antwortlänge, und das Ende des Abschnitts geht verloren
-TEIL_TOKEN = 2000  # lange Runden: so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
+TEIL_TOKEN = 2000  # lange Runden: höchstens so viele Token Notizen je Teil, der vor dem Recap eigens zusammengefasst wird
+TEIL_MINUTEN = 30  # … und Teile nach Spielzeit geschnitten, damit jeder Teil gleich viel Platz im Kapitel bekommt
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
 # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
@@ -387,10 +388,12 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
 _ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] “, zur Not auch „12:34] “
 _REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
                      r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
-                     r"|Initiative|erleichtert um|erschwert um|kritisch(?:er)? (?:erfolgreich|Erfolg|Patzer)|Patzer"
+                     r"|Initiative|erleichtert\w*|erschwert\w*|kritisch\w* (?:erfolgreich|Erfolg\w*|Patzer|Wurf\w*|Treffer|bei)|Patzer"
+                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b"
                      r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
                      r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
                      r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
+_SPIELLEITUNG = re.compile(r"\b(?:Spielleitung|Spielleiter\w*|game master|GM)\b", re.I)
 ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
 ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
 ERINNERUNG_ZEIT = ("\n\nWichtig: Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen "
@@ -441,7 +444,7 @@ def _kopf(ein: dict) -> str:
     runde = []
     for p in ein["personen"]:
         if p["rolle"] == "gm":
-            runde.append(f"- {p['name']}: Spielleitung")
+            runde.append("- Spielleitung (leitet die Runde, keine Figur)")
         else:
             c = p.get("charakter") or "(ohne Charaktername)"
             kurz = f" – {p['charakter_kurz']}" if p.get("charakter_kurz") else ""
@@ -468,8 +471,9 @@ Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder 
 Ende des Abschnitts bleibt.
 Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen Klammern, z. B. „[12:34]“ oder \
 „[1:09:07]“ – ohne Zeitstempel ist eine Notiz unbrauchbar. Übernimm Namen genau so, wie sie gesagt werden. \
-Die als „(Spielleitung)“ markierte Person ist keine Figur der Geschichte: Spricht sie, erzählt sie oder spricht für \
-einen Nichtspielercharakter – schreib dann den Namen dieser Figur, nie den Namen der Spielleitung. \
+Der Sprecher „Spielleitung“ ist keine Figur der Geschichte: Spricht er, erzählt er oder spricht für einen \
+Nichtspielercharakter – schreib dann den Namen dieser Figur; das Wort „Spielleitung“ kommt in den Notizen nicht vor. \
+Schreib die Zeilen nicht ab, sondern fasse sie zusammen. \
 Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
 des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
 „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
@@ -495,8 +499,8 @@ Absätze durch Leerzeilen getrennt.
 weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
 geschehen; wer etwas wofür gibt, steht so in der Grundlage.
 - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
-Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung. Regeln, Würfe, Punkte und Gespräche außerhalb des \
-Spiels kommen nicht vor.
+Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung; das Wort „Spielleitung“ kommt im Recap nicht vor. \
+Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
 - Offensichtliche Witze sind kein Spielgeschehen.
 - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
 - Offene Fäden: 0 bis 6 kurze Sätze zu ungelösten Fragen, Versprechen und Zielen der Gruppe.
@@ -553,13 +557,26 @@ SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer P
 sie beanstandet; der Grund steht jeweils dabei.
 Schreibe jeden genannten Absatz neu, sodass er nur noch enthält, was die Grundlage belegt. Lass Unbelegtes und \
 Ausgeschmücktes weg, statt es umzuformulieren – lieber kürzer. Gleicher Ton, Erzählstimme in der Vergangenheit, Figuren \
-nach ihren Charakteren. Bleibt von einem Absatz nichts Belegtes übrig, gib als text "" zurück. Reiner Text ohne Markdown.
+nach ihren Charakteren. Die Spielleitung ist keine Figur: Was sie sagt oder tut, sagt oder tut ein \
+Nichtspielercharakter oder die Erzählung. Bleibt von einem Absatz nichts Belegtes übrig, gib als text "" zurück. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 
 URTEILE = {"belegt": "supported", "teilweise": "partial", "unbelegt": "unsupported", "widerspricht": "contradicted",
            "witz": "off_game", "supported": "supported", "partial": "partial", "unsupported": "unsupported",
            "contradicted": "contradicted", "off_game": "off_game"}
 BEANSTANDET = ("unsupported", "contradicted", "off_game")
+
+
+def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
+    """Absätze, in denen die Spielleitung als Figur auftritt („die Spielleitung zusicherte“), gelten als beanstandet –
+    die Nachbesserung bekommt den Grund. Die Prüfung durch das Modell übersieht das regelmäßig."""
+    teile = absaetze(text)
+    for b in befund:
+        i = b.get("index", -1)
+        if 0 <= i < len(teile) and _SPIELLEITUNG.search(teile[i]) and b["verdict"] not in BEANSTANDET:
+            b["verdict"] = "off_game"
+            b["note"] = "Die Spielleitung ist keine Figur – nenne den Nichtspielercharakter, für den sie spricht, oder erzähle ohne sie."
+    return befund
 
 
 def absaetze(text: str) -> list[str]:
@@ -781,6 +798,46 @@ def _notizkern(n: str) -> str:
     return re.sub(r"[^\wäöüß]+", " ", (n[m.end():] if m else n).lower()).strip()
 
 
+_SPRECHER_VORN = re.compile(r"^\[[^\]]*\]\s*[^:\n]{1,60}:\s*")  # „[1:00] Spielleitung: “
+
+
+def _zeilenkerne(zeilen: list[str]) -> set[str]:
+    """Transkriptzeilen als Kern (mit und ohne Sprechernamen), um abgeschriebene Zeilen in den Notizen zu erkennen."""
+    kerne = set()
+    for z in zeilen:
+        k = _notizkern(z)
+        if len(k) >= 12:
+            kerne.add(k)
+            ohne = _SPRECHER_VORN.sub("", z)
+            if ohne != z and len(_notizkern(ohne)) >= 12:
+                kerne.add(_notizkern(ohne))
+    return kerne
+
+
+def _teile_nach_zeit(notizen: list[str]) -> list[str]:
+    """Notizen in Teile von etwa TEIL_MINUTEN Spielzeit, keiner länger als TEIL_TOKEN Token. Nach Zeit statt nach
+    Textmenge, damit eine wortreiche halbe Stunde nicht den ganzen Teil füllt und das Ende der Runde in einen
+    Zwei-Minuten-Teil rutscht."""
+    zeiten = [t for t in (_zeit_vorn(n) for n in notizen) if t is not None]
+    if not zeiten:
+        return stuecke(notizen, TEIL_TOKEN)
+    von, bis = min(zeiten), max(zeiten)
+    anzahl = max(1, round((bis - von) / (TEIL_MINUTEN * 60)))
+    laenge = (bis - von) / anzahl if anzahl else 0
+    gruppen: list[list[str]] = [[] for _ in range(anzahl)]
+    letzte = 0
+    for n in notizen:
+        t = _zeit_vorn(n)
+        if t is not None and laenge:
+            letzte = min(anzahl - 1, int((t - von) / laenge))
+        gruppen[letzte].append(n)
+    teile = []
+    for g in gruppen:
+        if g:
+            teile += stuecke(g, TEIL_TOKEN)  # zu wortreich: weiter teilen
+    return teile
+
+
 def _ohne_doppelte(notizen: list[str]) -> list[str]:
     """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
     gesehen, aus = set(), []
@@ -859,11 +916,19 @@ class Ablauf:
             return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
         gerettet = bool(d.pop("_gerettet", False))
-        notizen = []
+        kopien = _zeilenkerne(zeilen)
+        notizen, zuletzt = [], None
         for n in d.get("notizen") or []:
             n = _notiz_normieren(str(n))
+            m = _ZEIT_VORN.match(n)
+            if m:
+                zuletzt = f"[{m.group(1)}]"
+            elif zuletzt is not None:
+                n = f"{zuletzt} {n}"  # Notiz ohne Zeit gehört zur Stelle davor
             if not n or _REGELN.search(n) or _bruchstueck(n):
                 continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
+            if _notizkern(n) in kopien or _notizkern(_SPRECHER_VORN.sub("", n)) in kopien:
+                continue  # abgeschriebene Transkriptzeile statt Notiz
             if not notizen or n != notizen[-1]:  # Schleifen ergeben gleiche Zeilen hintereinander
                 notizen.append(n)
         if gerettet and notizen:
@@ -894,7 +959,7 @@ class Ablauf:
     def verlauf(self, ein: dict, notizen: str) -> str:
         """Lange Runden: die Notizen in Teile gliedern und jeden Teil einzeln zusammenfassen. Der Recap bekommt diese
         Gliederung, damit kein Teil der Runde untergeht (kleine Modelle erzählen sonst vor allem den Anfang)."""
-        teile = stuecke([z for z in notizen.split("\n") if z.strip()], TEIL_TOKEN)
+        teile = _teile_nach_zeit([z for z in notizen.split("\n") if z.strip()])
         if len(teile) < 2:
             return ""
         system = SYSTEM_TEIL.replace("{sprache}", _sprache(ein))
@@ -975,14 +1040,14 @@ class Ablauf:
         pruefung = {"model": self.klient.modell, "revised": False, "paragraphs": []}
         try:
             self._schritt("review")
-            befund = self.pruefen(ein, titel, grundlage, r["text"])
+            befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
             if any(b["verdict"] in BEANSTANDET for b in befund):
                 self._schritt("revision")
                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
                 if neu:
                     r["text"], pruefung["revised"] = neu, True
                     self._schritt("review")
-                    befund = self.pruefen(ein, titel, grundlage, neu)
+                    befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
             pruefung["paragraphs"] = befund
         except SprachmodellFehler as e:
             log.warning("Gegenprüfung übersprungen: %s", e)

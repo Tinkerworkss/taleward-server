@@ -73,7 +73,7 @@ def test_modellvergleich(client, world, dbs, tmp_path):
     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
     transkript = (ordner / "transkript.txt").read_text(encoding="utf-8")
-    assert "(Spielleitung)" in transkript and "[0:00:00]" in transkript
+    assert "] Spielleitung:" in transkript and "[0:00:00]" in transkript
     # Denkmodus: nur beim Modell, das ihn kann, wird er abgeschaltet
     assert all("think" not in b for b in aufrufe if b["model"] == "a:1")
     assert all(b.get("think") is False for b in aufrufe if b["model"] == "b:2")

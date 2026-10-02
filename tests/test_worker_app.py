@@ -112,7 +112,7 @@ def test_serverfassung_beim_koppeln(client, dbs):
     code, _ = code_erzeugen(dbs)
     dbs.commit()
     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.43"
+    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.44"
 
 
 def test_engine_requirements_passen_zu_uv_lock(tmp_path):

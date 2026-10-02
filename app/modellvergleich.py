@@ -126,7 +126,7 @@ def eingabe_aus_schnittstelle(server: Server, session_id: str) -> tuple[dict, di
         if m is None:
             return sp.get("label") or ("Unknown" if en else "Unbekannt")
         if m["role"] == "gm":
-            return f"{m['displayName']} ({'game master' if en else 'Spielleitung'})"
+            return "Game Master" if en else "Spielleitung"  # ohne Namen, wie im Betrieb
         return m.get("characterName") or m["displayName"]
 
     zeilen = [Zeile(z["start"], name(z), z.get("memberId"), z["text"]) for z in zeilen_roh]
