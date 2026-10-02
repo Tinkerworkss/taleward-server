@@ -69,3 +69,60 @@ def test_abschnitte_fuer_notizen_bleiben_klein():
     k = Klient()
     Ablauf(k, max_transkript_tokens=200, stueck_tokens=30000).grundlage(_ein(2000), lambda _p: None)
     assert max(k.groessen) <= sprachmodell.NOTIZ_STUECK + 500
+
+
+def test_recap_laenge_nach_rundenlaenge():
+    from app.sprachmodell import woerter
+
+    assert woerter({"transkript": [{"start": 45 * 60.0}]}) == "250–600"
+    assert woerter({"transkript": [{"start": 95 * 60.0}]}) == "400–900"
+    assert woerter({"transkript": [{"start": 158 * 60.0}]}) == "600–1200"
+    assert woerter({"transkript": []}) == "250–600"
+
+
+def test_recap_aufruf_nennt_laenge_und_wendepunkte():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+        systeme: list[str] = []
+
+        def chat(self, system, nutzer):
+            self.systeme.append(system)
+            return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
+
+    k = Klient()
+    Ablauf(k).recap(_ein(500), "Transkript", "[0:00] Anna: los")  # 500 Zeilen × 20 s ≈ 166 min
+    assert "600–1200 Wörter" in k.systeme[-1] and "Wendepunkte" in k.systeme[-1]
+
+
+def test_notizen_bekommen_die_vorgeschichte():
+    from app.sprachmodell import BISHER, Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append(nutzer)
+            return Antwort(json.dumps({"notizen": [f"[0:{len(self.nutzer):02d}] Notiz {len(self.nutzer)}-{j}"
+                                                   for j in range(10)]}), 1, 1)
+
+    k = Klient()
+    ablauf = Ablauf(k, max_transkript_tokens=200, stueck_tokens=1500)
+    ablauf.grundlage(_ein(300), lambda _p: None)
+    assert "Bisher" not in k.nutzer[0]
+    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9" in k.nutzer[1]
+    assert k.nutzer[1].count("Notiz 1-") == BISHER
+
+
+def test_beleg_zeit_aus_der_notiz():
+    from app.sprachmodell import pruefen
+
+    v = pruefen([{"entryType": "npc", "action": "create", "title": "Pipo", "detail": "Eine Wache.",
+                  "evidence": [{"start": "0:00", "quote": "[1:09:07] Pipo ist schwer verletzt"},
+                               {"quote": "[12:34] Pipo gibt sein Schwert"},
+                               {"start": "5:00", "quote": "[12:34] bleibt"}]}], set(), set())
+    assert [b["start"] for b in v[0]["evidence"]] == [4147.0, 754.0, 300.0]

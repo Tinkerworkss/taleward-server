@@ -30,6 +30,7 @@ FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
 MAX_VORSCHLAEGE = 15
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
+BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
 ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
 
 # Cent je 1 Mio. Tokens (ein, aus) – Stand 09/2026, Dollarpreise ≈ Euro. Nur für die Verbrauchsanzeige.
@@ -381,6 +382,17 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
     return teile
 
 
+def woerter(ein: dict) -> str:
+    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
+    zeilen = ein.get("transkript") or []
+    minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
+    if minuten > 120:
+        return "600–1200"
+    if minuten > 60:
+        return "400–900"
+    return "250–600"
+
+
 def _sprache(ein: dict) -> str:
     return "English" if ein.get("sprache") == "en" else "Deutsch"
 
@@ -409,19 +421,30 @@ def _kopf(ein: dict) -> str:
 
 SYSTEM_NOTIZEN = """Du hilfst bei der Nachbereitung einer Pen-&-Paper-Rollenspielsession. Du bekommst einen Abschnitt \
 des Transkripts (automatisch erkannt, mit Fehlern; Sprecher sind Charaktere oder die Spielleitung).
-Schreibe knappe Szenennotizen zu diesem Abschnitt: was in der Spielwelt geschieht, Orte, Nichtspielercharaktere mit \
-Namen, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene Fragen. Jede Notiz beginnt mit dem Zeitstempel der \
-Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden, und wichtige Aussagen wörtlich in \
-Anführungszeichen. Lass Regelfragen, Würfelwürfe, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche \
-Witze markierst du mit „(Witz?)“. Erfinde nichts.
+Schreibe Szenennotizen zu diesem Abschnitt. Aus ihnen entsteht später der Recap – was hier fehlt, fehlt dort auch.
+Halte vor allem fest:
+- Wendepunkte und ihren Ausgang: wer gefangen, verurteilt, befreit, gerettet, verletzt oder getötet wird, wer flieht, \
+wer wem etwas gibt, verspricht oder schuldet, welche Abmachungen mit welchen Bedingungen getroffen werden.
+- Ereignisse, die die Lage ändern (Angriffe, Einstürze, Erscheinungen, Visionen) – Botschaften wörtlich in \
+Anführungszeichen.
+- Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
+Fragen.
+Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
+nicht getan. Lieber eine Notiz mehr als eine zu wenig – etwa eine je ein bis zwei Minuten Spielgeschehen.
+Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
+Lass Regelfragen, Würfelwürfe, Werte, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche Witze markierst \
+du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
 Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
 
 SYSTEM_RECAP = """Du schreibst den Recap („Was bisher geschah“) einer Pen-&-Paper-Rollenspielsession. Er wird vor der \
 nächsten Session allen Spielern vorgelesen.
 Regeln:
 - Nur, was am Tisch als Spielgeschehen passiert ist. Nichts erfinden, nichts ausschmücken, was nicht vorkam.
-- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. 250–600 Wörter, \
+- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {woerter} Wörter, \
 Absätze durch Leerzeilen getrennt.
+- Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
+weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
+geschehen; wer etwas wofür gibt, steht so in der Grundlage.
 - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung, Regeln, Würfe und \
 Gespräche außerhalb des Spiels kommen nicht vor.
 - Offensichtliche Witze sind kein Spielgeschehen.
@@ -452,7 +475,8 @@ War es nur eine Andeutung, schreib es als Spur in der Welt: „Oren scheint Iria
 gesprochen hat. visibilityReason: ein kurzer Satz.
 - confidence zwischen 0 und 1. flags: joke_suspected (vermutlich Witz), low_confidence, contradicts_bible (widerspricht \
 einem vorhandenen Eintrag).
-- evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}.
+- evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}. start ist der \
+Zeitstempel der Zeile bzw. Notiz in eckigen Klammern.
 - Keine Einträge für die Charaktere der Spieler. Höchstens {max} Vorschläge, das Wichtigste zuerst. Lieber wenige gute.
 - detail und gmNotes sind reiner Text ohne Markdown (keine Sternchen, keine Rauten); mehrere Punkte als eigene Zeilen. \
 Keine Vermutungen – nur, was gesagt wurde.
@@ -735,7 +759,10 @@ class Ablauf:
             notizen = []
             for i, teil in enumerate(teile):
                 was = "des Transkripts" if runde == 0 else "der bisherigen Szenennotizen (bitte weiter verdichten)"
-                notizen += self._notizen(system, f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
+                # Die letzten Notizen davor: wer ist da, was ist offen – damit Abschnitte nicht ohne Vorgeschichte stehen
+                bisher = ("\n\nBisher (nur zur Orientierung, nicht wiederholen):\n" + "\n".join(notizen[-BISHER:])
+                          if notizen and runde == 0 else "")
+                notizen += self._notizen(system, f"{kopf}{bisher}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
                                          teil.split("\n"))
                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
             text = "\n".join(notizen)
@@ -769,7 +796,8 @@ class Ablauf:
                           for e in ein["bibel"])
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"\n\n{titel}:\n{grundlage}")
-        system = SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
+        system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
+                  .replace("{woerter}", woerter(ein)))
         self._schritt("recap")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         text = recap_text(d)
@@ -965,6 +993,9 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
         for b in v.get("evidence") or []:
             if isinstance(b, dict) and str(b.get("quote") or "").strip():
                 start = zeit_lesen(b.get("start"))
+                if not start:  # fehlt oder 0 – aus Notizen steht der Zeitstempel oft im Zitat: „[1:09:07] …“
+                    m = re.search(r"\[(\d{1,2}(?::\d{2}){1,2})\]", str(b["quote"]))
+                    start = zeit_lesen(m.group(1)) if m else start
                 belege.append({"start": start if start is not None else 0.0,
                                "quote": str(b["quote"]).strip()[:200]})
         flags = [f for f in v.get("flags") or [] if f in FLAGS]
