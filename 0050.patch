@@ -1,0 +1,251 @@
+From 8da70b2f1472abea4141e7739ba8012f219c4b37 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 21:52:19 +0200
+Subject: [PATCH] Recaps langer Runden: Wendepunkte, Laenge nach Rundenlaenge
+ (Server 0.4.40)
+
+Szenennotizen halten Wendepunkte und Ausgaenge fest und bekommen die letzten
+Notizen des vorigen Abschnitts als Vorgeschichte. Der Recap darf bei langen
+Runden laenger werden (bis 900 bzw. 1200 Woerter) und soll alle Wendepunkte
+mit Ausgang erzaehlen. Belege aus Notizen bekommen ihren Zeitstempel.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/sprachmodell.py          | 49 +++++++++++++++++++++++++------
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_szenennotizen.py  | 57 ++++++++++++++++++++++++++++++++++++
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 8 files changed, 103 insertions(+), 15 deletions(-)
+
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 70fd92b..5961743 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -31,4 +31,5 @@ MAX_VORSCHLAEGE = 15
+ ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
+ NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
++BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
+ ZEICHEN_PRO_TOKEN = 3.2  # grobe Schätzung für deutsche und englische Texte
+ 
+@@ -382,4 +383,15 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
+ 
+ 
++def woerter(ein: dict) -> str:
++    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
++    zeilen = ein.get("transkript") or []
++    minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
++    if minuten > 120:
++        return "600–1200"
++    if minuten > 60:
++        return "400–900"
++    return "250–600"
++
++
+ def _sprache(ein: dict) -> str:
+     return "English" if ein.get("sprache") == "en" else "Deutsch"
+@@ -410,9 +422,17 @@ def _kopf(ein: dict) -> str:
+ SYSTEM_NOTIZEN = """Du hilfst bei der Nachbereitung einer Pen-&-Paper-Rollenspielsession. Du bekommst einen Abschnitt \
+ des Transkripts (automatisch erkannt, mit Fehlern; Sprecher sind Charaktere oder die Spielleitung).
+-Schreibe knappe Szenennotizen zu diesem Abschnitt: was in der Spielwelt geschieht, Orte, Nichtspielercharaktere mit \
+-Namen, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene Fragen. Jede Notiz beginnt mit dem Zeitstempel der \
+-Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden, und wichtige Aussagen wörtlich in \
+-Anführungszeichen. Lass Regelfragen, Würfelwürfe, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche \
+-Witze markierst du mit „(Witz?)“. Erfinde nichts.
++Schreibe Szenennotizen zu diesem Abschnitt. Aus ihnen entsteht später der Recap – was hier fehlt, fehlt dort auch.
++Halte vor allem fest:
++- Wendepunkte und ihren Ausgang: wer gefangen, verurteilt, befreit, gerettet, verletzt oder getötet wird, wer flieht, \
++wer wem etwas gibt, verspricht oder schuldet, welche Abmachungen mit welchen Bedingungen getroffen werden.
++- Ereignisse, die die Lage ändern (Angriffe, Einstürze, Erscheinungen, Visionen) – Botschaften wörtlich in \
++Anführungszeichen.
++- Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
++Fragen.
++Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
++nicht getan. Lieber eine Notiz mehr als eine zu wenig – etwa eine je ein bis zwei Minuten Spielgeschehen.
++Jede Notiz beginnt mit dem Zeitstempel der Stelle, z. B. „[12:34]“. Übernimm Namen genau so, wie sie gesagt werden. \
++Lass Regelfragen, Würfelwürfe, Werte, Pausen und Gespräche außerhalb des Spiels weg. Offensichtliche Witze markierst \
++du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
+ Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
+ 
+@@ -421,6 +441,9 @@ nächsten Session allen Spielern vorgelesen.
+ Regeln:
+ - Nur, was am Tisch als Spielgeschehen passiert ist. Nichts erfinden, nichts ausschmücken, was nicht vorkam.
+-- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. 250–600 Wörter, \
++- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {woerter} Wörter, \
+ Absätze durch Leerzeilen getrennt.
++- Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
++weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
++geschehen; wer etwas wofür gibt, steht so in der Grundlage.
+ - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung, Regeln, Würfe und \
+ Gespräche außerhalb des Spiels kommen nicht vor.
+@@ -453,5 +476,6 @@ gesprochen hat. visibilityReason: ein kurzer Satz.
+ - confidence zwischen 0 und 1. flags: joke_suspected (vermutlich Witz), low_confidence, contradicts_bible (widerspricht \
+ einem vorhandenen Eintrag).
+-- evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}.
++- evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}. start ist der \
++Zeitstempel der Zeile bzw. Notiz in eckigen Klammern.
+ - Keine Einträge für die Charaktere der Spieler. Höchstens {max} Vorschläge, das Wichtigste zuerst. Lieber wenige gute.
+ - detail und gmNotes sind reiner Text ohne Markdown (keine Sternchen, keine Rauten); mehrere Punkte als eigene Zeilen. \
+@@ -736,5 +760,8 @@ class Ablauf:
+             for i, teil in enumerate(teile):
+                 was = "des Transkripts" if runde == 0 else "der bisherigen Szenennotizen (bitte weiter verdichten)"
+-                notizen += self._notizen(system, f"{kopf}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
++                # Die letzten Notizen davor: wer ist da, was ist offen – damit Abschnitte nicht ohne Vorgeschichte stehen
++                bisher = ("\n\nBisher (nur zur Orientierung, nicht wiederholen):\n" + "\n".join(notizen[-BISHER:])
++                          if notizen and runde == 0 else "")
++                notizen += self._notizen(system, f"{kopf}{bisher}\n\nAbschnitt {i + 1} von {len(teile)} {was}:\n",
+                                          teil.split("\n"))
+                 fortschritt(min(0.6, 0.6 * (runde * 0.3 + (i + 1) / len(teile) * 0.7)))
+@@ -770,5 +797,6 @@ class Ablauf:
+         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
+                   f"\n\n{titel}:\n{grundlage}")
+-        system = SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
++        system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
++                  .replace("{woerter}", woerter(ein)))
+         self._schritt("recap")
+         d = self.zaehler.aufruf(self.klient, system, nutzer)
+@@ -966,4 +994,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
+             if isinstance(b, dict) and str(b.get("quote") or "").strip():
+                 start = zeit_lesen(b.get("start"))
++                if not start:  # fehlt oder 0 – aus Notizen steht der Zeitstempel oft im Zitat: „[1:09:07] …“
++                    m = re.search(r"\[(\d{1,2}(?::\d{2}){1,2})\]", str(b["quote"]))
++                    start = zeit_lesen(m.group(1)) if m else start
+                 belege.append({"start": start if start is not None else 0.0,
+                                "quote": str(b["quote"]).strip()[:200]})
+diff --git a/pyproject.toml b/pyproject.toml
+index 3d99eb5..e2e1cbe 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.39"
++version = "0.4.40"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index de8b4fb..7a9242e 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.39"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.40"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 66a74ab..2d2024a 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.39"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.40"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index fac9439..0d78598 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.39"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.40"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index 1906ab1..72fcf86 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -70,2 +70,59 @@ def test_abschnitte_fuer_notizen_bleiben_klein():
+     Ablauf(k, max_transkript_tokens=200, stueck_tokens=30000).grundlage(_ein(2000), lambda _p: None)
+     assert max(k.groessen) <= sprachmodell.NOTIZ_STUECK + 500
++
++
++def test_recap_laenge_nach_rundenlaenge():
++    from app.sprachmodell import woerter
++
++    assert woerter({"transkript": [{"start": 45 * 60.0}]}) == "250–600"
++    assert woerter({"transkript": [{"start": 95 * 60.0}]}) == "400–900"
++    assert woerter({"transkript": [{"start": 158 * 60.0}]}) == "600–1200"
++    assert woerter({"transkript": []}) == "250–600"
++
++
++def test_recap_aufruf_nennt_laenge_und_wendepunkte():
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++        systeme: list[str] = []
++
++        def chat(self, system, nutzer):
++            self.systeme.append(system)
++            return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
++
++    k = Klient()
++    Ablauf(k).recap(_ein(500), "Transkript", "[0:00] Anna: los")  # 500 Zeilen × 20 s ≈ 166 min
++    assert "600–1200 Wörter" in k.systeme[-1] and "Wendepunkte" in k.systeme[-1]
++
++
++def test_notizen_bekommen_die_vorgeschichte():
++    from app.sprachmodell import BISHER, Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.nutzer = []
++
++        def chat(self, system, nutzer):
++            self.nutzer.append(nutzer)
++            return Antwort(json.dumps({"notizen": [f"[0:{len(self.nutzer):02d}] Notiz {len(self.nutzer)}-{j}"
++                                                   for j in range(10)]}), 1, 1)
++
++    k = Klient()
++    ablauf = Ablauf(k, max_transkript_tokens=200, stueck_tokens=1500)
++    ablauf.grundlage(_ein(300), lambda _p: None)
++    assert "Bisher" not in k.nutzer[0]
++    assert "Bisher (nur zur Orientierung" in k.nutzer[1] and "Notiz 1-9" in k.nutzer[1]
++    assert k.nutzer[1].count("Notiz 1-") == BISHER
++
++
++def test_beleg_zeit_aus_der_notiz():
++    from app.sprachmodell import pruefen
++
++    v = pruefen([{"entryType": "npc", "action": "create", "title": "Pipo", "detail": "Eine Wache.",
++                  "evidence": [{"start": "0:00", "quote": "[1:09:07] Pipo ist schwer verletzt"},
++                               {"quote": "[12:34] Pipo gibt sein Schwert"},
++                               {"start": "5:00", "quote": "[12:34] bleibt"}]}], set(), set())
++    assert [b["start"] for b in v[0]["evidence"]] == [4147.0, 754.0, 300.0]
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index e9579b6..4e1aab5 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.39"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.40"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 603afd1..6c2f325 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.39"
++version = "0.4.40"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
