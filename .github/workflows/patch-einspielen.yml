@@ -1,33 +1,41 @@
 name: Patch einspielen
 # Lädt man eine *.patch-Datei ins Hauptverzeichnis hoch, spielt dieser Ablauf sie ein,
 # prüft mit den Tests und schiebt das Ergebnis auf main. Die Patch-Datei selbst wird wieder entfernt.
+# Einspielen und Testen laufen ohne Schreibrecht; nur der letzte Schritt darf auf main schieben.
 on:
   push:
     branches: [main]
     paths: ["*.patch"]
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency: patch
 
 jobs:
   einspielen:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Patch anwenden
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p /tmp/patches
-          ls *.patch
-          cp *.patch /tmp/patches/
-          git rm -q *.patch
+          BASIS=$(git rev-parse HEAD)
+          echo "BASIS=$BASIS" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/patches"
+          ls ./*.patch
+          cp ./*.patch "$RUNNER_TEMP/patches/"
+          git rm -q ./*.patch
           git commit -q -m "Patch-Datei entfernt"
-          git am --committer-date-is-author-date /tmp/patches/*.patch
-      - uses: astral-sh/setup-uv@v6
+          git am --committer-date-is-author-date "$RUNNER_TEMP"/patches/*.patch
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Tests
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
@@ -37,7 +45,7 @@ jobs:
         run: |
           docker build -t taleward-server:probe .
           docker run -d --name probe -p 8000:8000 taleward-server:probe
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1/health && exit 0; sleep 2; done
           docker logs probe; exit 1
       - name: Worker-Paket (nur Prozessor) bauen
         run: |
@@ -45,5 +53,37 @@ jobs:
           docker run --rm taleward-worker:probe python -c "import whisperx, torch, app.cli; print('torch', torch.__version__)"
           docker run --rm taleward-worker:probe chronik worker --help
           docker image rm taleward-worker:probe
-      - name: Hochladen
-        run: git push
+      - name: Ergebnis bündeln
+        run: |
+          git branch -f neu HEAD
+          git bundle create "$RUNNER_TEMP/neu.bundle" neu "^$BASIS"
+          echo "$BASIS" > "$RUNNER_TEMP/basis.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: neu
+          path: |
+            ${{ runner.temp }}/neu.bundle
+            ${{ runner.temp }}/basis.txt
+          retention-days: 1
+
+  hochladen:
+    needs: einspielen
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: neu
+          path: ${{ runner.temp }}/neu
+      - name: Auf main schieben
+        run: |
+          set -euo pipefail
+          BASIS=$(cat "$RUNNER_TEMP/neu/basis.txt")
+          [ "$(git rev-parse HEAD)" = "$BASIS" ] || { echo "main hat sich inzwischen geändert – Patch neu hochladen"; exit 1; }
+          git fetch -q "$RUNNER_TEMP/neu/neu.bundle" neu:neu
+          git merge -q --ff-only neu
+          git push -q origin HEAD:main
