@@ -160,6 +160,7 @@ def eingabe_aus_schnittstelle(server: Server, session_id: str) -> tuple[dict, di
 class Ergebnis:
     modell: str
     kontext: int
+    lauf: int = 1  # bei mehreren Läufen je Modell (--laeufe)
     ok: bool = False
     fehler: str | None = None
     laden_s: float = 0.0
@@ -179,6 +180,7 @@ class Ergebnis:
     selbst: dict = field(default_factory=dict)   # Gegenprüfung durch das Modell selbst (wie im Betrieb)
     richter: dict = field(default_factory=dict)  # Bewertung des fertigen Textes durch den festen Richter
     richter_absaetze: list[dict] = field(default_factory=list)
+    pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
 
     @property
     def token_s(self) -> float:
@@ -216,12 +218,23 @@ def klient(url: str, modell: str, kontext: int, client: httpx.Client | None = No
     return OllamaKlient(url, modell, kontext, client=client)
 
 
+@dataclass
+class Einstellungen:
+    """Testoptionen des Vergleichs; der Betrieb kennt sie nicht."""
+    laeufe: int = 1
+    gliederung: str = "auto"  # auto | direkt | teile (siehe Ablauf.gliederung)
+    temperatur: float | None = None  # nur für die Szenennotizen
+    pruefliste: list[dict] = field(default_factory=list)
+
+
 def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschlag_ein: dict,
-                  melden: Callable[[str], None], client: httpx.Client | None = None) -> tuple[Ergebnis, object]:
+                  melden: Callable[[str], None], client: httpx.Client | None = None,
+                  einst: Einstellungen | None = None, lauf: int = 1) -> tuple[Ergebnis, object]:
     """Ein Modell durch den ganzen Ablauf. Liefert (Ergebnis, Ablauf) – der Ablauf trägt die Grundlage."""
     from app.sprachmodell import SprachmodellFehler
 
-    erg = Ergebnis(modell=modell, kontext=kontext)
+    einst = einst or Einstellungen()
+    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf)
     k = klient(url, modell, kontext, client)
     t0 = time.monotonic()
     try:
@@ -231,7 +244,8 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         return erg, None
     erg.laden_s = time.monotonic() - t0
     ablauf = _ablauf_klasse()(k, max_transkript_tokens=max(2000, kontext - 5000),
-                              stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"))
+                              stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
+                              gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
     t0 = time.monotonic()
     try:
         d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
@@ -251,6 +265,8 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         if erg.grundlage.startswith("Szenennotizen"):
             erg.notizen = ablauf.letzte_grundlage[1]
         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
+        if einst.pruefliste:
+            erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
         k.entladen()
     return erg, ablauf
 
@@ -285,6 +301,86 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 
 # ---------------------------------------------------------------- Bericht
+# ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
+STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel", "Vorschläge")
+
+
+def pruefliste_lesen(text: str) -> list[dict]:
+    """Prüfpunkte aus einer Textdatei. Je Zeile „Beschreibung :: Stichwort; Stichwort/Alias; …“; eine Zeile
+    „[Kapitel]“ oder „[Vorschläge]“ legt fest, wofür die folgenden Punkte gelten; „#“ beginnt einen Kommentar.
+    Ein Punkt gilt in einer Stufe als vorhanden, wenn jedes seiner Stichwörter (eine Schreibweise davon) vorkommt.
+    Das zeigt nur, WO ein Punkt verloren geht – nicht, ob er richtig wiedergegeben ist."""
+    punkte, bereich = [], "Kapitel"
+    for zeile in text.splitlines():
+        z = zeile.split("#", 1)[0].strip()
+        if not z:
+            continue
+        m = re.fullmatch(r"\[(\w+)\]", z)
+        if m:
+            bereich = "Vorschläge" if m.group(1).lower().startswith("vorschl") else "Kapitel"
+            continue
+        beschreibung, _, rest = z.partition("::")
+        if not rest.strip():
+            rest, beschreibung = beschreibung, beschreibung
+        woerter = [[a.strip().casefold() for a in w.split("/") if a.strip()] for w in rest.split(";") if w.strip()]
+        if woerter:
+            punkte.append({"bereich": bereich, "beschreibung": beschreibung.strip(), "woerter": woerter})
+    return punkte
+
+
+def _kommt_vor(woerter: list[list[str]], text: str) -> bool:
+    t = text.casefold()
+    return all(any(a in t for a in gruppe) for gruppe in woerter)
+
+
+def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> list[dict]:
+    """Je Prüfpunkt: in welchen Stufen kommen seine Stichwörter vor? Vorkommen, kein Qualitätsurteil."""
+    from app.sprachmodell import transkript_zeilen
+
+    stufen = {
+        "Transkript": "\n".join(transkript_zeilen(recap_ein.get("transkript") or [])),
+        "Notizen": e.notizen,
+        "Teile": e.verlauf,
+        "Kapitel": "\n".join([e.titel, e.text] + list(e.offene_faeden)),
+        "Vorschläge": "\n".join(f"{v.get('title', '')}\n{v.get('detail', '')}\n{v.get('gmNotes') or ''}"
+                                for v in e.vorschlaege),
+    }
+    aus = []
+    for p in punkte:
+        vorkommen = {}
+        for name in STUFEN:
+            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel"):
+                vorkommen[name] = None  # für Vorschläge nicht gefragt
+            elif name == "Notizen" and not e.notizen:
+                vorkommen[name] = None  # kurze Runde: keine Notizen
+            elif name == "Teile" and not e.verlauf:
+                vorkommen[name] = None  # direkt, ohne Teil-Zusammenfassungen
+            else:
+                vorkommen[name] = _kommt_vor(p["woerter"], stufen[name])
+        aus.append({**p, "vorkommen": vorkommen})
+    return aus
+
+
+def pruefliste_md(e: Ergebnis) -> str:
+    """Tabelle: Prüfpunkt × Stufe. ✓ Stichwörter kommen vor, – fehlen, · Stufe nicht gefragt/nicht vorhanden."""
+    if not e.pruefliste:
+        return ""
+    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt):", "",
+              "| Nr | Prüfpunkt | " + " | ".join(STUFEN) + " |", "|---|---|" + "---|" * len(STUFEN)]
+    bereich = None
+    for i, p in enumerate(e.pruefliste, 1):
+        if p["bereich"] != bereich:
+            bereich = p["bereich"]
+            zeilen.append(f"| | **{bereich}** |" + " |" * len(STUFEN))
+        marken = " | ".join("·" if v is None else ("✓" if v else "–") for v in p["vorkommen"].values())
+        zeilen.append(f"| {i} | {p['beschreibung']} | {marken} |")
+    for name in STUFEN:
+        werte = [p["vorkommen"][name] for p in e.pruefliste if p["vorkommen"][name] is not None]
+        if werte:
+            zeilen.append(f"| | *{name}: {sum(1 for w in werte if w)} von {len(werte)}* |" + " |" * len(STUFEN))
+    return "\n".join(zeilen)
+
+
 def _anteil(z: dict, *schluessel: str) -> str:
     if not z or not z.get("total"):
         return "–"
@@ -303,19 +399,25 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
               "|---|---|---|---|---|---|---|---|---|---|---|"]
     for e in ergebnisse:
         zeilen.append(
-            f"| {e.modell} (ctx {e.kontext}) | {'ok' if e.ok else 'Fehler'} | {_zeit(e.dauer_s)} | {e.token_s:.1f} | "
+            f"| {_name(e)} | {'ok' if e.ok else 'Fehler'} | {_zeit(e.dauer_s)} | {e.token_s:.1f} | "
             f"{_anteil(e.selbst, 'supported')} | {_anteil(e.selbst, 'unsupported', 'contradicted')} | "
             f"{_anteil(e.richter, 'supported')} | {_anteil(e.richter, 'unsupported', 'contradicted')} | "
             f"{len(e.vorschlaege)} | {'ja' if e.nachgebessert else 'nein'} | {e.grundlage or '–'} |")
     for e in ergebnisse:
-        zeilen += ["", f"## {e.modell}", ""]
+        zeilen += ["", f"## {_name(e)}", ""]
         if not e.ok:
             zeilen.append(f"Fehler: {e.fehler}")
             continue
         zeilen += [f"### {e.titel}", "", e.text, ""]
         if e.offene_faeden:
             zeilen += ["Offene Fäden:"] + [f"- {f}" for f in e.offene_faeden]
+        if e.pruefliste:
+            zeilen += ["", pruefliste_md(e)]
     return "\n".join(zeilen) + "\n"
+
+
+def _name(e: Ergebnis) -> str:
+    return f"{e.modell} (ctx {e.kontext})" + (f" Lauf {e.lauf}" if e.lauf > 1 else "")
 
 
 _FARBE = {"supported": "#5b7f5a", "partial": "#a07a2c", "unsupported": "#9b3b32", "contradicted": "#9b3b32",
@@ -329,7 +431,7 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
         "unbelegt (Richter)", "Vorschläge", "nachgebessert", "Grundlage"))
     reihen = "".join(
         "<tr>" + "".join(f"<td>{e_(str(x))}</td>" for x in (
-            f"{e.modell} (ctx {e.kontext})", "ok" if e.ok else "Fehler", _zeit(e.dauer_s), f"{e.token_s:.1f}",
+            _name(e), "ok" if e.ok else "Fehler", _zeit(e.dauer_s), f"{e.token_s:.1f}",
             _anteil(e.selbst, "supported"), _anteil(e.selbst, "unsupported", "contradicted"),
             _anteil(e.richter, "supported"), _anteil(e.richter, "unsupported", "contradicted"),
             len(e.vorschlaege), "ja" if e.nachgebessert else "nein", e.grundlage or "–")) + "</tr>"
@@ -337,7 +439,7 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
 
     def spalte(e: Ergebnis) -> str:
         if not e.ok:
-            return f"<section><h2>{e_(e.modell)}</h2><p class='fehler'>{e_(e.fehler or '')}</p></section>"
+            return f"<section><h2>{e_(_name(e))}</h2><p class='fehler'>{e_(e.fehler or '')}</p></section>"
         urteile = {a["index"]: a for a in e.richter_absaetze}
         from app.sprachmodell import absaetze
 
@@ -350,9 +452,17 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
         faeden = "".join(f"<li>{e_(f)}</li>" for f in e.offene_faeden)
         vorschl = "".join(f"<li><b>{e_(v['action'])} {e_(v['entryType'])}</b> {e_(v['title'])}: "
                           f"{e_(v['detail'][:240])}</li>" for v in e.vorschlaege)
-        return (f"<section><h2>{e_(e.modell)}</h2><h3>{e_(e.titel)}</h3>{''.join(teile)}"
+        liste = ""
+        if e.pruefliste:
+            reihen_ = "".join(
+                f"<tr><td>{i}</td><td>{e_(p['beschreibung'])}</td>"
+                + "".join(f"<td>{'·' if v is None else ('✓' if v else '–')}</td>" for v in p["vorkommen"].values())
+                + "</tr>" for i, p in enumerate(e.pruefliste, 1))
+            liste = (f"<details><summary>Prüfpunkte je Stufe (Vorkommen, kein Urteil)</summary><table><tr><th>Nr</th>"
+                     f"<th>Prüfpunkt</th>{''.join(f'<th>{e_(x)}</th>' for x in STUFEN)}</tr>{reihen_}</table></details>")
+        return (f"<section><h2>{e_(_name(e))}</h2><h3>{e_(e.titel)}</h3>{''.join(teile)}"
                 f"{'<h4>Offene Fäden</h4><ul>' + faeden + '</ul>' if faeden else ''}"
-                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details></section>")
+                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details>{liste}</section>")
 
     return f"""<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Modellvergleich</title>
@@ -376,8 +486,10 @@ def _ordnername(modell: str) -> str:
 def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]) -> None:
     ordner.mkdir(parents=True, exist_ok=True)
     for e in ergebnisse:
-        d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}")  # dasselbe Modell mit zwei Kontexten getrennt
+        d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}" + (f"-lauf{e.lauf}" if e.lauf > 1 else ""))
         d.mkdir(exist_ok=True)
+        if e.pruefliste:
+            (d / "pruefliste.md").write_text(pruefliste_md(e) + "\n", encoding="utf-8")
         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
         for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
                              ("verlauf.txt", e.verlauf)):
@@ -385,7 +497,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                 (d / name).write_text(inhalt, encoding="utf-8")
         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
-                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                                     "pruefliste": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
@@ -438,18 +550,26 @@ def ollama_finden(wunsch: str | None, client: httpx.Client | None = None) -> str
 
 def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], richter: str, richter_kontext: int,
                ollama_url: str, ziel: Path, melden: Callable[[str], None] = print,
-               client: httpx.Client | None = None) -> Path:
+               client: httpx.Client | None = None, einst: Einstellungen | None = None) -> Path:
+    einst = einst or Einstellungen()
     recap_ein, vorschlag_ein, info = eingabe_aus_schnittstelle(server, session_id)
     melden(f"{info['kampagne']}, Kapitel {info['kapitel']}: {info['zeilen']} Zeilen, Aufnahme {_zeit(info['dauer_s'])}")
     ordner = ziel / f"modellvergleich-{datetime.now():%Y%m%d-%H%M}"
     melden(f"Transkript: {transkript_speichern(ordner, recap_ein)}")
     paare = []
     for modell, kontext in modelle:
-        melden(f"\n== {modell} (Kontext {kontext}) ==")
-        erg, ablauf = modell_laufen(ollama_url, modell, kontext, recap_ein, vorschlag_ein, melden, client)
-        melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
-        paare.append((erg, ablauf))
-        speichern(ordner, info, richter, [p[0] for p in paare])  # Zwischenstand, falls es abbricht
+        for lauf in range(1, max(1, einst.laeufe) + 1):
+            melden(f"\n== {modell} (Kontext {kontext}){f' – Lauf {lauf}' if einst.laeufe > 1 else ''} ==")
+            erg, ablauf = modell_laufen(ollama_url, modell, kontext, recap_ein, vorschlag_ein, melden, client,
+                                        einst, lauf)
+            melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
+            if erg.pruefliste:
+                for name in STUFEN:
+                    werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
+                    if werte:
+                        melden(f"  Prüfpunkte {name}: {sum(1 for w in werte if w)} von {len(werte)}")
+            paare.append((erg, ablauf))
+            speichern(ordner, info, richter, [p[0] for p in paare])  # Zwischenstand, falls es abbricht
     if richter:
         melden(f"\n== Richter {richter} ==")
         richten(ollama_url, richter, richter_kontext, recap_ein, paare, melden, client)

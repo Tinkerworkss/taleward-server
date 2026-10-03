@@ -122,6 +122,7 @@ class OllamaKlient:
         self.client = client or httpx.Client(timeout=httpx.Timeout(self.STILLSTAND_S, connect=10.0))
         self.token_s: float | None = None  # gemessene Geschwindigkeit des letzten Aufrufs
         self._denkt: bool | None = None  # Modell mit Denkmodus (Qwen3 u. a.)? Einmal bei Ollama nachgefragt
+        self.temperatur: float | None = None  # Testoption: feste Temperatur für den ersten Versuch statt 0.3
 
     def denkmodus(self) -> bool:
         """Kann das Modell „laut denken“? Dann schalten wir es ab: Für Recaps bringt es nichts außer langer Laufzeit
@@ -203,6 +204,8 @@ class OllamaKlient:
         # auch mal 20 Minuten – solange Stücke kommen, ist alles gut; kommt drei Minuten nichts, hängt Ollama.
         status, fehler, d = 0, "", {}
         for versuch, (temperatur, strafe, grammatik) in enumerate(self.VERSUCHE):
+            if versuch == 0 and self.temperatur is not None:
+                temperatur = self.temperatur
             optionen = {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
                         "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS}
             if versuch:
@@ -858,6 +861,9 @@ class Ablauf:
     zaehler: Zaehler = field(default_factory=Zaehler)
     schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
     letzter_verlauf: str = ""  # Zusammenfassungen der Teile (lange Runden), für den Modellvergleich
+    gliederung: str = "auto"  # lange Runden: "auto" = Notizen direkt in Zeitabschnitten, Teile nur als Ausweichlösung;
+    #                            "direkt" / "teile" erzwingen das eine oder andere (Modellvergleich, A/B)
+    temperatur_notizen: float | None = None  # Testoption: Temperatur nur für die Szenennotizen
 
     def _schritt(self, name: str) -> None:
         try:
@@ -906,6 +912,9 @@ class Ablauf:
         lässt sich nichts prüfen und nichts belegen). Bricht die Antwort ab oder enden die Notizen lange vor dem
         Abschnittsende, bekommt der nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an
         denen das Modell aufgab; Notizen ohne Zeit aus dem ersten Versuch fallen dann weg, damit nichts doppelt steht."""
+        vorher = getattr(self.klient, "temperatur", None)
+        if self.temperatur_notizen is not None and hasattr(self.klient, "temperatur"):
+            self.klient.temperatur = self.temperatur_notizen
         try:
             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
         except AntwortFehler:
@@ -915,6 +924,9 @@ class Ablauf:
             mitte = len(zeilen) // 2
             return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
+        finally:
+            if hasattr(self.klient, "temperatur"):
+                self.klient.temperatur = vorher
         gerettet = bool(d.pop("_gerettet", False))
         kopien = _zeilenkerne(zeilen)
         notizen, zuletzt = [], None
@@ -955,6 +967,20 @@ class Ablauf:
                     notizen = [n for n in notizen if _zeit_vorn(n) is not None]
                 notizen += self._notizen(system, vorspann, rest, tiefe + 1)
         return notizen
+
+    def gegliedert(self, notizen: str) -> str:
+        """Lange Runden ohne Zwischenzusammenfassung: die Notizen selbst, in feste Zeitabschnitte gegliedert
+        („Abschnitt 2 von 5 (30:00–1:00:00)“). Alles bleibt erhalten, was die Notizen festgehalten haben; die
+        Gliederung sorgt dafür, dass der Recap jeden Abschnitt sieht und gleich behandelt."""
+        teile = _teile_nach_zeit([z for z in notizen.split("\n") if z.strip()])
+        if len(teile) < 2:
+            return notizen
+        aus = []
+        for i, teil in enumerate(teile):
+            zeiten = re.findall(r"^\[(\d{1,2}(?::\d{2}){1,2})\]", teil, re.M)
+            von_bis = f" ({zeiten[0]}–{zeiten[-1]})" if zeiten else ""
+            aus.append(f"Abschnitt {i + 1} von {len(teile)}{von_bis}:\n{teil}")
+        return "\n\n".join(aus)
 
     def verlauf(self, ein: dict, notizen: str) -> str:
         """Lange Runden: die Notizen in Teile gliedern und jeden Teil einzeln zusammenfassen. Der Recap bekommt diese
@@ -1081,11 +1107,22 @@ class Ablauf:
         """Das ganze Ergebnis. Die Grundlage (Transkript bzw. Notizen) ist für beide gleich; die Notizen entstehen
         aus der Recap-Eingabe, die nichts Geheimes enthält. Die Gegenprüfung sieht nur, was der Recap sah."""
         titel, grundlage = self.grundlage(recap_ein, fortschritt)
-        verlauf = self.verlauf(recap_ein, grundlage) if titel.startswith("Szenennotizen") else ""
+        verlauf = ""
+        if titel.startswith("Szenennotizen"):
+            # Die Notizen passen fast immer in den Kontext (grundlage() verdichtet so lange). Dann bekommt der Recap
+            # sie direkt, nur in Zeitabschnitte gegliedert: Jede weitere Zusammenfassung kostet Fakten, die in den
+            # Notizen schon richtig standen. Teil-Zusammenfassungen nur, wenn die Notizen doch zu groß sind.
+            zu_gross = tokens(grundlage) > self.max_transkript_tokens
+            if self.gliederung == "teile" or (self.gliederung != "direkt" and zu_gross):
+                verlauf = self.verlauf(recap_ein, grundlage)
         self.letzter_verlauf = verlauf
         if verlauf:
             r = self.recap(recap_ein, "Verlauf der Runde in Teilen (jeder Teil gehört in den Recap, in dieser "
                                       "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
+        elif titel.startswith("Szenennotizen"):
+            r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
+                                      "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
+                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage))
         else:
             r = self.recap(recap_ein, titel, grundlage)
         fortschritt(0.6 if gegenpruefen else 0.8)

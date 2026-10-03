@@ -18,7 +18,7 @@ OHNE_KARTE_KONTEXT = 20480  # Prozessor oder Karte, die wir nicht messen können
 STUFEN = [
     (15000, GROSS, 32768),  # 16-GB-Karte: 12b ganz auf der Karte, ~80 s für 47 min Spiel
     (12000, GROSS, 24576),  # 12-GB-Karte: etwas weniger Kontext, damit nichts in den Arbeitsspeicher ausweicht
-    (6000, KLEIN, 20480),   # 8-GB-Karte: e4b ganz auf der Karte, ~1 min; 12b wiche hier aus (4 min)
+    (6000, KLEIN, 24576),   # 8-GB-Karte: e4b ganz auf der Karte, ~1 min; 24k lag im Vergleich vor 20k und 32k; 12b wiche aus
     (0, KLEIN, MIN_KONTEXT),
 ]
 # Modelle, die eine neuere Ollama-Fassung brauchen

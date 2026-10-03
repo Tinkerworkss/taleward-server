@@ -88,3 +88,31 @@ def test_modelle_lesen():
     from app.modellvergleich import modelle_lesen
 
     assert modelle_lesen("x, y@8192 ,", 12288) == [("x", 12288), ("y", 8192)]
+
+
+def test_pruefliste_lesen_und_anwenden():
+    from app import modellvergleich as mv
+
+    text = """# Kommentar
+[Kapitel]
+Zehn Tage Kerker :: Kerker; zehn Tage/10 Tage
+Pipo gibt sein Schwert :: Pipo; Schwert/Lostriana
+[Vorschläge]
+Pipo :: Pipo
+Grünkappen
+"""
+    punkte = mv.pruefliste_lesen(text)
+    assert [p["bereich"] for p in punkte] == ["Kapitel", "Kapitel", "Vorschläge", "Vorschläge"]
+    assert punkte[0]["woerter"] == [["kerker"], ["zehn tage", "10 tage"]] and punkte[3]["woerter"] == [["grünkappen"]]
+
+    e = mv.Ergebnis(modell="m", kontext=1, ok=True, notizen="[0:01] Zehn Tage im Kerker.\n[1:00] Pipo gibt Lostriana.",
+                    verlauf="", titel="Kapitel 1", text="Nach 10 Tagen Kerker floh die Gruppe. Pipo half.",
+                    vorschlaege=[{"title": "Pipo", "detail": "Wache", "gmNotes": None}])
+    ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None, "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
+    aus = mv.pruefliste_anwenden(punkte, ein, e)
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": True, "Vorschläge": False}
+    assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True  # im Kapitel verloren
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": None, "Vorschläge": True}
+    e.pruefliste = aus
+    md = mv.pruefliste_md(e)
+    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | – | – |" in md and "*Kapitel: 1 von 2*" in md

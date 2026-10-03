@@ -736,11 +736,15 @@ def modellvergleich(
     benutzer: str = typer.Option(..., "--benutzer", help="Benutzername einer SL der Kampagne"),
     passwort: str = typer.Option(..., "--passwort", prompt=True, hide_input=True),
     session: str = typer.Option(None, "--session", help="Session-ID (ohne Angabe: Liste der Sessions mit Transkript)"),
-    modelle: str = typer.Option("gemma4:e4b@20480,gemma4:12b@32768", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@32768"),
+    modelle: str = typer.Option("gemma4:e4b@24576,gemma4:12b@32768", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@32768"),
     kontext: int = typer.Option(20480, "--kontext", help="Kontextgröße (Tokens) für Modelle ohne @-Angabe und den Richter"),
     richter: str = typer.Option("", "--richter", help="Modell, das alle Recaps bewertet, z. B. gemma4:12b (ab 16 GB Grafikspeicher); leer = ohne"),
     ollama: str = typer.Option(None, "--ollama", help="Adresse von Ollama (Standard: 11434, sonst 11435 der Worker-App)"),
     ziel: Path = typer.Option(Path("."), "--ziel", help="Ordner für die Ergebnisse"),
+    laeufe: int = typer.Option(1, "--laeufe", min=1, max=10, help="So oft läuft jedes Modell (Streuung sichtbar machen)"),
+    grundlage: str = typer.Option("auto", "--grundlage", help="Lange Runden: auto | direkt (Notizen in Zeitabschnitten) | teile (Teil-Zusammenfassungen)"),
+    temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
+    pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
 ):
     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
     Vergleichen am eigenen PC. Liest nur über die Schnittstelle, ändert nichts auf dem Server."""
@@ -756,7 +760,14 @@ def modellvergleich(
             return
         url = mv.ollama_finden(ollama)
         typer.echo(f"Ollama unter {url}")
-        ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel)
+        if grundlage not in ("auto", "direkt", "teile"):
+            raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
+        einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
+                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [])
+        if pruefliste:
+            typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
+        ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
+                               einst=einst)
     except mv.VergleichFehler as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)

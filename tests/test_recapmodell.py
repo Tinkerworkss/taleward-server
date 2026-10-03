@@ -13,10 +13,10 @@ pytestmark = pytest.mark.usefixtures("_kleine_teile")
 def test_wahl_nach_grafikspeicher():
     assert rm.wahl(None) == ("gemma4:e4b", 20480)       # ohne messbare Karte
     assert rm.wahl(4096) == ("gemma4:e4b", 12288)
-    assert rm.wahl(8192) == ("gemma4:e4b", 20480)       # RTX 3060 Ti
+    assert rm.wahl(8192) == ("gemma4:e4b", 24576)       # RTX 3060 Ti
     assert rm.wahl(12288) == ("gemma4:12b", 24576)
     assert rm.wahl(16380) == ("gemma4:12b", 32768)      # RTX 4060 Ti 16 GB
-    assert rm.wahl(16380, 8000) == ("gemma4:e4b", 20480)  # Grenze aus der Worker-App gilt
+    assert rm.wahl(16380, 8000) == ("gemma4:e4b", 24576)  # Grenze aus der Worker-App gilt
 
 
 def test_kontext_nach_laenge():

@@ -130,6 +130,7 @@ def test_beleg_zeit_aus_der_notiz():
 
 
 def test_lange_runde_recap_aus_teilen():
+    """Ausweichlösung: Die Notizen bleiben auch nach dem Verdichten zu groß → Teil-Zusammenfassungen."""
     from app.sprachmodell import Ablauf, Antwort
 
     class Klient:
@@ -346,3 +347,75 @@ def test_spielleitung_ohne_namen_im_transkript():
     kopf = _kopf(ein)
     assert "Tinker" not in kopf and "Spielleitung" in kopf and "Ben spielt Mira" in kopf
     assert "„Spielleitung“ kommt" in SYSTEM_NOTIZEN and "„Spielleitung“ kommt im Recap nicht vor" in SYSTEM_RECAP
+
+
+def _klient_lange_runde():
+    from app.sprachmodell import Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = []
+
+        def chat(self, system, nutzer):
+            self.aufrufe.append((system, nutzer))
+            if "4 bis 8 Sätzen" in system:
+                nr = nutzer.split("Teil ")[1].split(" ")[0]
+                return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
+            if "Szenennotizen" in system:
+                zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+                return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht."
+                                                       for z in zeilen[::6]]}), 1, 1)
+            if "Recap" in system and "prüfst" not in system:
+                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
+            return Antwort(json.dumps({"proposals": [], "absaetze": []}), 1, 1)
+
+    return Klient()
+
+
+def test_lange_runde_notizen_direkt_in_zeitabschnitten():
+    """Phase 1: Passen die Notizen in den Kontext, bekommt der Recap sie direkt, in Zeitabschnitte gegliedert –
+    ohne die zweite Verdichtung, die Fakten kostet."""
+    from app.sprachmodell import Ablauf
+
+    k = _klient_lange_runde()
+    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
+    ein = _ein(600)  # 200 min
+    ablauf.ausfuehren(ein, ein)
+    assert not any("4 bis 8 Sätzen" in s for s, _ in k.aufrufe)
+    recap = [n for s, n in k.aufrufe if "Was bisher geschah" in s][0]
+    assert "Szenennotizen der Runde in Zeitabschnitten" in recap
+    assert "Abschnitt 1 von 7 (" in recap and "Abschnitt 7 von 7 (" in recap  # 200 min ≈ 7 × 30 min
+    assert "Ereignis bei [0:00]" in recap and ablauf.letzter_verlauf == ""
+
+
+def test_lange_runde_teile_erzwingen():
+    from app.sprachmodell import Ablauf
+
+    k = _klient_lange_runde()
+    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500, gliederung="teile")
+    ein = _ein(600)
+    ablauf.ausfuehren(ein, ein)
+    assert sum(1 for s, _ in k.aufrufe if "4 bis 8 Sätzen" in s) == 7
+    recap = [n for s, n in k.aufrufe if "Was bisher geschah" in s][0]
+    assert "Verlauf der Runde in Teilen" in recap and ablauf.letzter_verlauf.startswith("Teil 1 von 7")
+
+
+def test_temperatur_nur_fuer_notizen():
+    from app.sprachmodell import Ablauf
+
+    k = _klient_lange_runde()
+    k.temperatur = None
+    gesehen = []
+    chat = k.chat
+
+    def merken(system, nutzer):
+        gesehen.append((("Szenennotizen" in system), k.temperatur))
+        return chat(system, nutzer)
+
+    k.chat = merken
+    ein = _ein(120)
+    Ablauf(k, max_transkript_tokens=300, stueck_tokens=1500, temperatur_notizen=0.1).ausfuehren(ein, ein)
+    assert all(t == 0.1 for notiz, t in gesehen if notiz) and all(t is None for notiz, t in gesehen if not notiz)
+    assert k.temperatur is None
