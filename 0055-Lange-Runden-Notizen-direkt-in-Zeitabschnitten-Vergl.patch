@@ -1,0 +1,609 @@
+From 319bc3c9104b7bf7baf70281d0e402be0d4644b7 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 00:53:10 +0200
+Subject: [PATCH] Lange Runden: Notizen direkt in Zeitabschnitten, Vergleich
+ mit Pruefliste (Server 0.4.45)
+
+- Passen die Szenennotizen in den Kontext, bekommt der Recap sie direkt, in
+  feste Zeitabschnitte gegliedert; Teil-Zusammenfassungen nur noch als
+  Ausweichloesung oder auf Wunsch (--grundlage teile)
+- 8-GB-Stufe: gemma4:e4b mit Kontext 24576
+- Modellvergleich: --laeufe (mehrere Laeufe je Modell), --grundlage
+  auto|direkt|teile, --temperatur (nur Szenennotizen, Testoption),
+  --pruefliste (Vorkommen von Pruefpunkten je Stufe: Transkript, Notizen,
+  Teile, Kapitel, Vorschlaege - zeigt, wo etwas verloren geht)
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/cli.py                    |  15 +++-
+ app/modellvergleich.py        | 154 ++++++++++++++++++++++++++++++----
+ app/recapmodell.py            |   2 +-
+ app/sprachmodell.py           |  39 ++++++++-
+ pyproject.toml                |   2 +-
+ tests/test_aktualisierung.py  |   2 +-
+ tests/test_assistent.py       |   2 +-
+ tests/test_modellablage.py    |   2 +-
+ tests/test_modellvergleich.py |  28 +++++++
+ tests/test_recapmodell.py     |   4 +-
+ tests/test_szenennotizen.py   |  73 ++++++++++++++++
+ tests/test_worker_app.py      |   2 +-
+ uv.lock                       |   2 +-
+ 13 files changed, 298 insertions(+), 29 deletions(-)
+
+diff --git a/app/cli.py b/app/cli.py
+index 2ac65ae..ba74ac4 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -737,9 +737,13 @@ def modellvergleich(
+     passwort: str = typer.Option(..., "--passwort", prompt=True, hide_input=True),
+     session: str = typer.Option(None, "--session", help="Session-ID (ohne Angabe: Liste der Sessions mit Transkript)"),
+-    modelle: str = typer.Option("gemma4:e4b@20480,gemma4:12b@32768", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@32768"),
++    modelle: str = typer.Option("gemma4:e4b@24576,gemma4:12b@32768", "--modelle", help="Kommagetrennt; Kontext je Modell mit @, z. B. gemma4:12b@32768"),
+     kontext: int = typer.Option(20480, "--kontext", help="Kontextgröße (Tokens) für Modelle ohne @-Angabe und den Richter"),
+     richter: str = typer.Option("", "--richter", help="Modell, das alle Recaps bewertet, z. B. gemma4:12b (ab 16 GB Grafikspeicher); leer = ohne"),
+     ollama: str = typer.Option(None, "--ollama", help="Adresse von Ollama (Standard: 11434, sonst 11435 der Worker-App)"),
+     ziel: Path = typer.Option(Path("."), "--ziel", help="Ordner für die Ergebnisse"),
++    laeufe: int = typer.Option(1, "--laeufe", min=1, max=10, help="So oft läuft jedes Modell (Streuung sichtbar machen)"),
++    grundlage: str = typer.Option("auto", "--grundlage", help="Lange Runden: auto | direkt (Notizen in Zeitabschnitten) | teile (Teil-Zusammenfassungen)"),
++    temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
++    pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
+ ):
+     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
+@@ -757,5 +761,12 @@ def modellvergleich(
+         url = mv.ollama_finden(ollama)
+         typer.echo(f"Ollama unter {url}")
+-        ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel)
++        if grundlage not in ("auto", "direkt", "teile"):
++            raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
++        einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
++                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [])
++        if pruefliste:
++            typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
++        ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
++                               einst=einst)
+     except mv.VergleichFehler as e:
+         typer.echo(str(e), err=True)
+diff --git a/app/modellvergleich.py b/app/modellvergleich.py
+index cc7361e..18fcb1e 100644
+--- a/app/modellvergleich.py
++++ b/app/modellvergleich.py
+@@ -161,4 +161,5 @@ class Ergebnis:
+     modell: str
+     kontext: int
++    lauf: int = 1  # bei mehreren Läufen je Modell (--laeufe)
+     ok: bool = False
+     fehler: str | None = None
+@@ -180,4 +181,5 @@ class Ergebnis:
+     richter: dict = field(default_factory=dict)  # Bewertung des fertigen Textes durch den festen Richter
+     richter_absaetze: list[dict] = field(default_factory=list)
++    pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
+ 
+     @property
+@@ -217,10 +219,21 @@ def klient(url: str, modell: str, kontext: int, client: httpx.Client | None = No
+ 
+ 
++@dataclass
++class Einstellungen:
++    """Testoptionen des Vergleichs; der Betrieb kennt sie nicht."""
++    laeufe: int = 1
++    gliederung: str = "auto"  # auto | direkt | teile (siehe Ablauf.gliederung)
++    temperatur: float | None = None  # nur für die Szenennotizen
++    pruefliste: list[dict] = field(default_factory=list)
++
++
+ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschlag_ein: dict,
+-                  melden: Callable[[str], None], client: httpx.Client | None = None) -> tuple[Ergebnis, object]:
++                  melden: Callable[[str], None], client: httpx.Client | None = None,
++                  einst: Einstellungen | None = None, lauf: int = 1) -> tuple[Ergebnis, object]:
+     """Ein Modell durch den ganzen Ablauf. Liefert (Ergebnis, Ablauf) – der Ablauf trägt die Grundlage."""
+     from app.sprachmodell import SprachmodellFehler
+ 
+-    erg = Ergebnis(modell=modell, kontext=kontext)
++    einst = einst or Einstellungen()
++    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf)
+     k = klient(url, modell, kontext, client)
+     t0 = time.monotonic()
+@@ -232,5 +245,6 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+     erg.laden_s = time.monotonic() - t0
+     ablauf = _ablauf_klasse()(k, max_transkript_tokens=max(2000, kontext - 5000),
+-                              stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"))
++                              stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
++                              gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
+     t0 = time.monotonic()
+     try:
+@@ -252,4 +266,6 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+             erg.notizen = ablauf.letzte_grundlage[1]
+         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
++        if einst.pruefliste:
++            erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
+         k.entladen()
+     return erg, ablauf
+@@ -286,4 +302,84 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
+ 
+ # ---------------------------------------------------------------- Bericht
++# ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
++STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel", "Vorschläge")
++
++
++def pruefliste_lesen(text: str) -> list[dict]:
++    """Prüfpunkte aus einer Textdatei. Je Zeile „Beschreibung :: Stichwort; Stichwort/Alias; …“; eine Zeile
++    „[Kapitel]“ oder „[Vorschläge]“ legt fest, wofür die folgenden Punkte gelten; „#“ beginnt einen Kommentar.
++    Ein Punkt gilt in einer Stufe als vorhanden, wenn jedes seiner Stichwörter (eine Schreibweise davon) vorkommt.
++    Das zeigt nur, WO ein Punkt verloren geht – nicht, ob er richtig wiedergegeben ist."""
++    punkte, bereich = [], "Kapitel"
++    for zeile in text.splitlines():
++        z = zeile.split("#", 1)[0].strip()
++        if not z:
++            continue
++        m = re.fullmatch(r"\[(\w+)\]", z)
++        if m:
++            bereich = "Vorschläge" if m.group(1).lower().startswith("vorschl") else "Kapitel"
++            continue
++        beschreibung, _, rest = z.partition("::")
++        if not rest.strip():
++            rest, beschreibung = beschreibung, beschreibung
++        woerter = [[a.strip().casefold() for a in w.split("/") if a.strip()] for w in rest.split(";") if w.strip()]
++        if woerter:
++            punkte.append({"bereich": bereich, "beschreibung": beschreibung.strip(), "woerter": woerter})
++    return punkte
++
++
++def _kommt_vor(woerter: list[list[str]], text: str) -> bool:
++    t = text.casefold()
++    return all(any(a in t for a in gruppe) for gruppe in woerter)
++
++
++def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> list[dict]:
++    """Je Prüfpunkt: in welchen Stufen kommen seine Stichwörter vor? Vorkommen, kein Qualitätsurteil."""
++    from app.sprachmodell import transkript_zeilen
++
++    stufen = {
++        "Transkript": "\n".join(transkript_zeilen(recap_ein.get("transkript") or [])),
++        "Notizen": e.notizen,
++        "Teile": e.verlauf,
++        "Kapitel": "\n".join([e.titel, e.text] + list(e.offene_faeden)),
++        "Vorschläge": "\n".join(f"{v.get('title', '')}\n{v.get('detail', '')}\n{v.get('gmNotes') or ''}"
++                                for v in e.vorschlaege),
++    }
++    aus = []
++    for p in punkte:
++        vorkommen = {}
++        for name in STUFEN:
++            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel"):
++                vorkommen[name] = None  # für Vorschläge nicht gefragt
++            elif name == "Notizen" and not e.notizen:
++                vorkommen[name] = None  # kurze Runde: keine Notizen
++            elif name == "Teile" and not e.verlauf:
++                vorkommen[name] = None  # direkt, ohne Teil-Zusammenfassungen
++            else:
++                vorkommen[name] = _kommt_vor(p["woerter"], stufen[name])
++        aus.append({**p, "vorkommen": vorkommen})
++    return aus
++
++
++def pruefliste_md(e: Ergebnis) -> str:
++    """Tabelle: Prüfpunkt × Stufe. ✓ Stichwörter kommen vor, – fehlen, · Stufe nicht gefragt/nicht vorhanden."""
++    if not e.pruefliste:
++        return ""
++    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt):", "",
++              "| Nr | Prüfpunkt | " + " | ".join(STUFEN) + " |", "|---|---|" + "---|" * len(STUFEN)]
++    bereich = None
++    for i, p in enumerate(e.pruefliste, 1):
++        if p["bereich"] != bereich:
++            bereich = p["bereich"]
++            zeilen.append(f"| | **{bereich}** |" + " |" * len(STUFEN))
++        marken = " | ".join("·" if v is None else ("✓" if v else "–") for v in p["vorkommen"].values())
++        zeilen.append(f"| {i} | {p['beschreibung']} | {marken} |")
++    for name in STUFEN:
++        werte = [p["vorkommen"][name] for p in e.pruefliste if p["vorkommen"][name] is not None]
++        if werte:
++            zeilen.append(f"| | *{name}: {sum(1 for w in werte if w)} von {len(werte)}* |" + " |" * len(STUFEN))
++    return "\n".join(zeilen)
++
++
+ def _anteil(z: dict, *schluessel: str) -> str:
+     if not z or not z.get("total"):
+@@ -304,10 +400,10 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+     for e in ergebnisse:
+         zeilen.append(
+-            f"| {e.modell} (ctx {e.kontext}) | {'ok' if e.ok else 'Fehler'} | {_zeit(e.dauer_s)} | {e.token_s:.1f} | "
++            f"| {_name(e)} | {'ok' if e.ok else 'Fehler'} | {_zeit(e.dauer_s)} | {e.token_s:.1f} | "
+             f"{_anteil(e.selbst, 'supported')} | {_anteil(e.selbst, 'unsupported', 'contradicted')} | "
+             f"{_anteil(e.richter, 'supported')} | {_anteil(e.richter, 'unsupported', 'contradicted')} | "
+             f"{len(e.vorschlaege)} | {'ja' if e.nachgebessert else 'nein'} | {e.grundlage or '–'} |")
+     for e in ergebnisse:
+-        zeilen += ["", f"## {e.modell}", ""]
++        zeilen += ["", f"## {_name(e)}", ""]
+         if not e.ok:
+             zeilen.append(f"Fehler: {e.fehler}")
+@@ -316,7 +412,13 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+         if e.offene_faeden:
+             zeilen += ["Offene Fäden:"] + [f"- {f}" for f in e.offene_faeden]
++        if e.pruefliste:
++            zeilen += ["", pruefliste_md(e)]
+     return "\n".join(zeilen) + "\n"
+ 
+ 
++def _name(e: Ergebnis) -> str:
++    return f"{e.modell} (ctx {e.kontext})" + (f" Lauf {e.lauf}" if e.lauf > 1 else "")
++
++
+ _FARBE = {"supported": "#5b7f5a", "partial": "#a07a2c", "unsupported": "#9b3b32", "contradicted": "#9b3b32",
+           "off_game": "#777", "unchecked": "#999"}
+@@ -330,5 +432,5 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+     reihen = "".join(
+         "<tr>" + "".join(f"<td>{e_(str(x))}</td>" for x in (
+-            f"{e.modell} (ctx {e.kontext})", "ok" if e.ok else "Fehler", _zeit(e.dauer_s), f"{e.token_s:.1f}",
++            _name(e), "ok" if e.ok else "Fehler", _zeit(e.dauer_s), f"{e.token_s:.1f}",
+             _anteil(e.selbst, "supported"), _anteil(e.selbst, "unsupported", "contradicted"),
+             _anteil(e.richter, "supported"), _anteil(e.richter, "unsupported", "contradicted"),
+@@ -338,5 +440,5 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+     def spalte(e: Ergebnis) -> str:
+         if not e.ok:
+-            return f"<section><h2>{e_(e.modell)}</h2><p class='fehler'>{e_(e.fehler or '')}</p></section>"
++            return f"<section><h2>{e_(_name(e))}</h2><p class='fehler'>{e_(e.fehler or '')}</p></section>"
+         urteile = {a["index"]: a for a in e.richter_absaetze}
+         from app.sprachmodell import absaetze
+@@ -351,7 +453,15 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+         vorschl = "".join(f"<li><b>{e_(v['action'])} {e_(v['entryType'])}</b> {e_(v['title'])}: "
+                           f"{e_(v['detail'][:240])}</li>" for v in e.vorschlaege)
+-        return (f"<section><h2>{e_(e.modell)}</h2><h3>{e_(e.titel)}</h3>{''.join(teile)}"
++        liste = ""
++        if e.pruefliste:
++            reihen_ = "".join(
++                f"<tr><td>{i}</td><td>{e_(p['beschreibung'])}</td>"
++                + "".join(f"<td>{'·' if v is None else ('✓' if v else '–')}</td>" for v in p["vorkommen"].values())
++                + "</tr>" for i, p in enumerate(e.pruefliste, 1))
++            liste = (f"<details><summary>Prüfpunkte je Stufe (Vorkommen, kein Urteil)</summary><table><tr><th>Nr</th>"
++                     f"<th>Prüfpunkt</th>{''.join(f'<th>{e_(x)}</th>' for x in STUFEN)}</tr>{reihen_}</table></details>")
++        return (f"<section><h2>{e_(_name(e))}</h2><h3>{e_(e.titel)}</h3>{''.join(teile)}"
+                 f"{'<h4>Offene Fäden</h4><ul>' + faeden + '</ul>' if faeden else ''}"
+-                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details></section>")
++                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details>{liste}</section>")
+ 
+     return f"""<!doctype html><html lang="de"><head><meta charset="utf-8">
+@@ -377,6 +487,8 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
+     ordner.mkdir(parents=True, exist_ok=True)
+     for e in ergebnisse:
+-        d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}")  # dasselbe Modell mit zwei Kontexten getrennt
++        d = ordner / _ordnername(f"{e.modell}-ctx{e.kontext}" + (f"-lauf{e.lauf}" if e.lauf > 1 else ""))
+         d.mkdir(exist_ok=True)
++        if e.pruefliste:
++            (d / "pruefliste.md").write_text(pruefliste_md(e) + "\n", encoding="utf-8")
+         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
+         for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
+@@ -386,5 +498,5 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
+         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
+-                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
++                                                     "pruefliste": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                          encoding="utf-8")
+     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
+@@ -439,5 +551,6 @@ def ollama_finden(wunsch: str | None, client: httpx.Client | None = None) -> str
+ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], richter: str, richter_kontext: int,
+                ollama_url: str, ziel: Path, melden: Callable[[str], None] = print,
+-               client: httpx.Client | None = None) -> Path:
++               client: httpx.Client | None = None, einst: Einstellungen | None = None) -> Path:
++    einst = einst or Einstellungen()
+     recap_ein, vorschlag_ein, info = eingabe_aus_schnittstelle(server, session_id)
+     melden(f"{info['kampagne']}, Kapitel {info['kapitel']}: {info['zeilen']} Zeilen, Aufnahme {_zeit(info['dauer_s'])}")
+@@ -446,9 +559,16 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]],
+     paare = []
+     for modell, kontext in modelle:
+-        melden(f"\n== {modell} (Kontext {kontext}) ==")
+-        erg, ablauf = modell_laufen(ollama_url, modell, kontext, recap_ein, vorschlag_ein, melden, client)
+-        melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
+-        paare.append((erg, ablauf))
+-        speichern(ordner, info, richter, [p[0] for p in paare])  # Zwischenstand, falls es abbricht
++        for lauf in range(1, max(1, einst.laeufe) + 1):
++            melden(f"\n== {modell} (Kontext {kontext}){f' – Lauf {lauf}' if einst.laeufe > 1 else ''} ==")
++            erg, ablauf = modell_laufen(ollama_url, modell, kontext, recap_ein, vorschlag_ein, melden, client,
++                                        einst, lauf)
++            melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
++            if erg.pruefliste:
++                for name in STUFEN:
++                    werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
++                    if werte:
++                        melden(f"  Prüfpunkte {name}: {sum(1 for w in werte if w)} von {len(werte)}")
++            paare.append((erg, ablauf))
++            speichern(ordner, info, richter, [p[0] for p in paare])  # Zwischenstand, falls es abbricht
+     if richter:
+         melden(f"\n== Richter {richter} ==")
+diff --git a/app/recapmodell.py b/app/recapmodell.py
+index 93e6abd..c5e0489 100644
+--- a/app/recapmodell.py
++++ b/app/recapmodell.py
+@@ -19,5 +19,5 @@ STUFEN = [
+     (15000, GROSS, 32768),  # 16-GB-Karte: 12b ganz auf der Karte, ~80 s für 47 min Spiel
+     (12000, GROSS, 24576),  # 12-GB-Karte: etwas weniger Kontext, damit nichts in den Arbeitsspeicher ausweicht
+-    (6000, KLEIN, 20480),   # 8-GB-Karte: e4b ganz auf der Karte, ~1 min; 12b wiche hier aus (4 min)
++    (6000, KLEIN, 24576),   # 8-GB-Karte: e4b ganz auf der Karte, ~1 min; 24k lag im Vergleich vor 20k und 32k; 12b wiche aus
+     (0, KLEIN, MIN_KONTEXT),
+ ]
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 186cec3..984ef48 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -123,4 +123,5 @@ class OllamaKlient:
+         self.token_s: float | None = None  # gemessene Geschwindigkeit des letzten Aufrufs
+         self._denkt: bool | None = None  # Modell mit Denkmodus (Qwen3 u. a.)? Einmal bei Ollama nachgefragt
++        self.temperatur: float | None = None  # Testoption: feste Temperatur für den ersten Versuch statt 0.3
+ 
+     def denkmodus(self) -> bool:
+@@ -204,4 +205,6 @@ class OllamaKlient:
+         status, fehler, d = 0, "", {}
+         for versuch, (temperatur, strafe, grammatik) in enumerate(self.VERSUCHE):
++            if versuch == 0 and self.temperatur is not None:
++                temperatur = self.temperatur
+             optionen = {"num_ctx": self.kontext, "temperature": temperatur, "repeat_penalty": strafe,
+                         "repeat_last_n": 256, "num_predict": ANTWORT_HOECHSTENS}
+@@ -859,4 +862,7 @@ class Ablauf:
+     schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
+     letzter_verlauf: str = ""  # Zusammenfassungen der Teile (lange Runden), für den Modellvergleich
++    gliederung: str = "auto"  # lange Runden: "auto" = Notizen direkt in Zeitabschnitten, Teile nur als Ausweichlösung;
++    #                            "direkt" / "teile" erzwingen das eine oder andere (Modellvergleich, A/B)
++    temperatur_notizen: float | None = None  # Testoption: Temperatur nur für die Szenennotizen
+ 
+     def _schritt(self, name: str) -> None:
+@@ -907,4 +913,7 @@ class Ablauf:
+         Abschnittsende, bekommt der nicht abgedeckte Rest einen eigenen Aufruf – sonst fehlen genau die Stellen, an
+         denen das Modell aufgab; Notizen ohne Zeit aus dem ersten Versuch fallen dann weg, damit nichts doppelt steht."""
++        vorher = getattr(self.klient, "temperatur", None)
++        if self.temperatur_notizen is not None and hasattr(self.klient, "temperatur"):
++            self.klient.temperatur = self.temperatur_notizen
+         try:
+             d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+@@ -916,4 +925,7 @@ class Ablauf:
+             return (self._notizen(system, vorspann, zeilen[:mitte], tiefe + 1)
+                     + self._notizen(system, vorspann, zeilen[mitte:], tiefe + 1))
++        finally:
++            if hasattr(self.klient, "temperatur"):
++                self.klient.temperatur = vorher
+         gerettet = bool(d.pop("_gerettet", False))
+         kopien = _zeilenkerne(zeilen)
+@@ -957,4 +969,18 @@ class Ablauf:
+         return notizen
+ 
++    def gegliedert(self, notizen: str) -> str:
++        """Lange Runden ohne Zwischenzusammenfassung: die Notizen selbst, in feste Zeitabschnitte gegliedert
++        („Abschnitt 2 von 5 (30:00–1:00:00)“). Alles bleibt erhalten, was die Notizen festgehalten haben; die
++        Gliederung sorgt dafür, dass der Recap jeden Abschnitt sieht und gleich behandelt."""
++        teile = _teile_nach_zeit([z for z in notizen.split("\n") if z.strip()])
++        if len(teile) < 2:
++            return notizen
++        aus = []
++        for i, teil in enumerate(teile):
++            zeiten = re.findall(r"^\[(\d{1,2}(?::\d{2}){1,2})\]", teil, re.M)
++            von_bis = f" ({zeiten[0]}–{zeiten[-1]})" if zeiten else ""
++            aus.append(f"Abschnitt {i + 1} von {len(teile)}{von_bis}:\n{teil}")
++        return "\n\n".join(aus)
++
+     def verlauf(self, ein: dict, notizen: str) -> str:
+         """Lange Runden: die Notizen in Teile gliedern und jeden Teil einzeln zusammenfassen. Der Recap bekommt diese
+@@ -1082,9 +1108,20 @@ class Ablauf:
+         aus der Recap-Eingabe, die nichts Geheimes enthält. Die Gegenprüfung sieht nur, was der Recap sah."""
+         titel, grundlage = self.grundlage(recap_ein, fortschritt)
+-        verlauf = self.verlauf(recap_ein, grundlage) if titel.startswith("Szenennotizen") else ""
++        verlauf = ""
++        if titel.startswith("Szenennotizen"):
++            # Die Notizen passen fast immer in den Kontext (grundlage() verdichtet so lange). Dann bekommt der Recap
++            # sie direkt, nur in Zeitabschnitte gegliedert: Jede weitere Zusammenfassung kostet Fakten, die in den
++            # Notizen schon richtig standen. Teil-Zusammenfassungen nur, wenn die Notizen doch zu groß sind.
++            zu_gross = tokens(grundlage) > self.max_transkript_tokens
++            if self.gliederung == "teile" or (self.gliederung != "direkt" and zu_gross):
++                verlauf = self.verlauf(recap_ein, grundlage)
+         self.letzter_verlauf = verlauf
+         if verlauf:
+             r = self.recap(recap_ein, "Verlauf der Runde in Teilen (jeder Teil gehört in den Recap, in dieser "
+                                       "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
++        elif titel.startswith("Szenennotizen"):
++            r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
++                                      "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
++                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage))
+         else:
+             r = self.recap(recap_ein, titel, grundlage)
+diff --git a/pyproject.toml b/pyproject.toml
+index ff3e3f3..1ec9d07 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.44"
++version = "0.4.45"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 65e93f7..12cb73a 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.44"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.45"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index db85e08..6dc4219 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.44"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.45"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 3f13bb8..c8c719a 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.44"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.45"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
+index d854843..95f14e7 100644
+--- a/tests/test_modellvergleich.py
++++ b/tests/test_modellvergleich.py
+@@ -89,2 +89,30 @@ def test_modelle_lesen():
+ 
+     assert modelle_lesen("x, y@8192 ,", 12288) == [("x", 12288), ("y", 8192)]
++
++
++def test_pruefliste_lesen_und_anwenden():
++    from app import modellvergleich as mv
++
++    text = """# Kommentar
++[Kapitel]
++Zehn Tage Kerker :: Kerker; zehn Tage/10 Tage
++Pipo gibt sein Schwert :: Pipo; Schwert/Lostriana
++[Vorschläge]
++Pipo :: Pipo
++Grünkappen
++"""
++    punkte = mv.pruefliste_lesen(text)
++    assert [p["bereich"] for p in punkte] == ["Kapitel", "Kapitel", "Vorschläge", "Vorschläge"]
++    assert punkte[0]["woerter"] == [["kerker"], ["zehn tage", "10 tage"]] and punkte[3]["woerter"] == [["grünkappen"]]
++
++    e = mv.Ergebnis(modell="m", kontext=1, ok=True, notizen="[0:01] Zehn Tage im Kerker.\n[1:00] Pipo gibt Lostriana.",
++                    verlauf="", titel="Kapitel 1", text="Nach 10 Tagen Kerker floh die Gruppe. Pipo half.",
++                    vorschlaege=[{"title": "Pipo", "detail": "Wache", "gmNotes": None}])
++    ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None, "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
++    aus = mv.pruefliste_anwenden(punkte, ein, e)
++    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": True, "Vorschläge": False}
++    assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True  # im Kapitel verloren
++    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": None, "Vorschläge": True}
++    e.pruefliste = aus
++    md = mv.pruefliste_md(e)
++    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
+diff --git a/tests/test_recapmodell.py b/tests/test_recapmodell.py
+index c824188..1570e41 100644
+--- a/tests/test_recapmodell.py
++++ b/tests/test_recapmodell.py
+@@ -14,8 +14,8 @@ def test_wahl_nach_grafikspeicher():
+     assert rm.wahl(None) == ("gemma4:e4b", 20480)       # ohne messbare Karte
+     assert rm.wahl(4096) == ("gemma4:e4b", 12288)
+-    assert rm.wahl(8192) == ("gemma4:e4b", 20480)       # RTX 3060 Ti
++    assert rm.wahl(8192) == ("gemma4:e4b", 24576)       # RTX 3060 Ti
+     assert rm.wahl(12288) == ("gemma4:12b", 24576)
+     assert rm.wahl(16380) == ("gemma4:12b", 32768)      # RTX 4060 Ti 16 GB
+-    assert rm.wahl(16380, 8000) == ("gemma4:e4b", 20480)  # Grenze aus der Worker-App gilt
++    assert rm.wahl(16380, 8000) == ("gemma4:e4b", 24576)  # Grenze aus der Worker-App gilt
+ 
+ 
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index d3b16d0..fb15fb5 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -131,4 +131,5 @@ def test_beleg_zeit_aus_der_notiz():
+ 
+ def test_lange_runde_recap_aus_teilen():
++    """Ausweichlösung: Die Notizen bleiben auch nach dem Verdichten zu groß → Teil-Zusammenfassungen."""
+     from app.sprachmodell import Ablauf, Antwort
+ 
+@@ -347,2 +348,74 @@ def test_spielleitung_ohne_namen_im_transkript():
+     assert "Tinker" not in kopf and "Spielleitung" in kopf and "Ben spielt Mira" in kopf
+     assert "„Spielleitung“ kommt" in SYSTEM_NOTIZEN and "„Spielleitung“ kommt im Recap nicht vor" in SYSTEM_RECAP
++
++
++def _klient_lange_runde():
++    from app.sprachmodell import Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.aufrufe = []
++
++        def chat(self, system, nutzer):
++            self.aufrufe.append((system, nutzer))
++            if "4 bis 8 Sätzen" in system:
++                nr = nutzer.split("Teil ")[1].split(" ")[0]
++                return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
++            if "Szenennotizen" in system:
++                zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
++                return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht."
++                                                       for z in zeilen[::6]]}), 1, 1)
++            if "Recap" in system and "prüfst" not in system:
++                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
++            return Antwort(json.dumps({"proposals": [], "absaetze": []}), 1, 1)
++
++    return Klient()
++
++
++def test_lange_runde_notizen_direkt_in_zeitabschnitten():
++    """Phase 1: Passen die Notizen in den Kontext, bekommt der Recap sie direkt, in Zeitabschnitte gegliedert –
++    ohne die zweite Verdichtung, die Fakten kostet."""
++    from app.sprachmodell import Ablauf
++
++    k = _klient_lange_runde()
++    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
++    ein = _ein(600)  # 200 min
++    ablauf.ausfuehren(ein, ein)
++    assert not any("4 bis 8 Sätzen" in s for s, _ in k.aufrufe)
++    recap = [n for s, n in k.aufrufe if "Was bisher geschah" in s][0]
++    assert "Szenennotizen der Runde in Zeitabschnitten" in recap
++    assert "Abschnitt 1 von 7 (" in recap and "Abschnitt 7 von 7 (" in recap  # 200 min ≈ 7 × 30 min
++    assert "Ereignis bei [0:00]" in recap and ablauf.letzter_verlauf == ""
++
++
++def test_lange_runde_teile_erzwingen():
++    from app.sprachmodell import Ablauf
++
++    k = _klient_lange_runde()
++    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500, gliederung="teile")
++    ein = _ein(600)
++    ablauf.ausfuehren(ein, ein)
++    assert sum(1 for s, _ in k.aufrufe if "4 bis 8 Sätzen" in s) == 7
++    recap = [n for s, n in k.aufrufe if "Was bisher geschah" in s][0]
++    assert "Verlauf der Runde in Teilen" in recap and ablauf.letzter_verlauf.startswith("Teil 1 von 7")
++
++
++def test_temperatur_nur_fuer_notizen():
++    from app.sprachmodell import Ablauf
++
++    k = _klient_lange_runde()
++    k.temperatur = None
++    gesehen = []
++    chat = k.chat
++
++    def merken(system, nutzer):
++        gesehen.append((("Szenennotizen" in system), k.temperatur))
++        return chat(system, nutzer)
++
++    k.chat = merken
++    ein = _ein(120)
++    Ablauf(k, max_transkript_tokens=300, stueck_tokens=1500, temperatur_notizen=0.1).ausfuehren(ein, ein)
++    assert all(t == 0.1 for notiz, t in gesehen if notiz) and all(t is None for notiz, t in gesehen if not notiz)
++    assert k.temperatur is None
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 06a3d55..36c566f 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.44"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.45"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 23aa0e0..e19b3a3 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.44"
++version = "0.4.45"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
