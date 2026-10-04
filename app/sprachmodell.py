@@ -640,8 +640,8 @@ RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Ste
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
 PRUEF_BATCH = 4  # Gegenprüfung in kleinen Paketen: ein abgeschnittener Call darf nicht den ganzen Review vernichten
 LEDGER_STUECK_TOKEN = 3500  # Originaltranskript je Ledger-Aufruf; kleine Antworten sind wichtiger als wenige Calls
-LEDGER_REVIEW_BATCH = 18  # kompakte Kandidaten je Quellen-Review; Ausgabe enthält nur Änderungen, nicht alle Events
-LEDGER_RECONCILE_BATCH = 8  # aktuelle Events je History-Abgleich
+LEDGER_REVIEW_BATCH = 32  # nur Recovery-Grenze; normal prüft 0.4.53 genau einmal je Quellblock
+LEDGER_RECONCILE_BATCH = 12  # nach lokalem History-Filter passen mehr relevante Events sicher in einen Abgleich
 
 SYSTEM_RELATIONEN = """Du prüfst genau EINEN Absatz des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; „Spielleitung“ spricht dort für Nichtspielercharaktere). Prüfe nur atomare Beziehungen und Zustände, nicht Stil oder Vollständigkeit.
 Zerlege den Absatz in die kleinsten relevanten Behauptungen: Wer tut was wem? Wer gibt wem was und wer besitzt es danach? War jemand bereits verletzt oder wird er verletzt? Wer kennt wen und seit wann? Wer verspricht wem was gegen welche Gegenleistung? Sind zwei Figuren verwechselt oder verschmolzen? Ist eine Figur anwesend oder nur erwähnt? Ist etwas beobachtet, behauptet, vermutet, geplant, erinnert oder eine Vision?
@@ -666,17 +666,20 @@ Suche ausdrücklich nach Beziehungen ("wir kennen uns seit …", Verwandtschaft,
 Nutze dieselbe Event-Struktur wie das Ereignis-Ledger. assertions tragen subject/property/value und den epistemischen Status. Erfinde nichts und leite keine Weltwahrheit aus einem bloßen Gerücht ab. sourceIds müssen die Aussage direkt belegen und im Abschnitt vorhanden sein.
 Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
-SYSTEM_LEDGER_REVIEW = """Du prüfst Ledger-Kandidaten einer Pen-&-Paper-Session gegen den angegebenen Abschnitt des ORIGINALTRANSKRIPTS. Die Kandidaten stammen aus zwei unabhängigen Extraktionspässen und können doppelt, vertauscht oder falsch aufgelöst sein.
-Melde NUR Kandidaten, die geändert werden müssen; nicht genannte Kandidaten gelten als akzeptiert.
+SYSTEM_LEDGER_REVIEW = """Du prüfst Ledger-Kandidaten einer Pen-&-Paper-Session gegen EINEN Abschnitt des ORIGINALTRANSKRIPTS. Die Kandidaten stammen aus dem primären Ereignis-Pass. Prüfe vorhandene Kandidaten UND suche im selben Schritt nach wenigen wichtigen Kontinuitätsfakten, die der Primärpass ganz übersehen hat.
+Melde in reviews NUR Kandidaten, die geändert werden müssen; nicht genannte Kandidaten gelten als akzeptiert.
 Prüfe besonders:
 - Wer tut was wem? actor/target und Besitzrichtung niemals vertauschen.
 - Pronomen nur auflösen, wenn der lokale Kontext es trägt; sonst die Entität allgemeiner lassen.
 - "Spielleitung" ist keine Figur. Sie erzählt oder spricht für NPCs. Trenne mehrere NPCs in derselben Spielleitungszeile, wenn der Dialog das zeigt.
 - Personen nicht verschmelzen: "Danke, Satuna. Ich bin der Altvater." bedeutet zwei Rollen, nicht Satuna = Altvater.
 - beobachtet/gesagt/geglaubt/erinnert/Vision sauber trennen; geplant/versucht ist nicht automatisch geschehen.
-- gleiche oder nahezu gleiche Kandidaten aus beiden Pässen zusammenführen.
-Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" oder "reject". Bei repair/merge MUSS replacement ein vollständig source-belegtes Event im normalen Ledger-Schema sein. Bei reject ist replacement null. replacement.sourceIds dürfen ausschließlich aus dem bereitgestellten Abschnitt stammen und müssen die Aussage direkt tragen. Erfinde keine neuen Ereignisse; fehlende Ereignisse prüft ein eigener Coverage-Pass.
-Antworte nur mit JSON {"reviews": [...]}. Sprache: {sprache}."""
+- gleiche oder nahezu gleiche Kandidaten zusammenführen.
+Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" oder "reject". Bei repair/merge MUSS replacement ein vollständig source-belegtes Event im normalen Ledger-Schema sein. Bei reject ist replacement null. replacement.sourceIds dürfen ausschließlich aus dem bereitgestellten Abschnitt stammen und müssen die Aussage direkt tragen.
+
+coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Fakten. Gib dort ausschließlich importance "critical" oder "important" zurück, keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Ein kurzer Nebensatz darf aufgenommen werden, wenn er einen dauerhaften Zustand, eine Beziehung oder Verpflichtung festlegt. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
+Auch coverage.sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
+Antworte nur mit JSON {"reviews": [...], "coverage": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
 SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
 Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
@@ -921,12 +924,15 @@ S_SCHEMAS = {
         "evidence": {"type": "array", "items": _obj({"start": S_STR, "quote": S_STR}, ["start", "quote"])}
     }, ["entryType", "action", "title"])}}, ["proposals"]),
     "ledger": _obj({"events": {"type": "array", "items": S_LEDGER_EVENT}}, ["events"]),
-    "ledger_review": _obj({"reviews": {"type": "array", "items": _obj({
-        "originIds": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^C[0-9]{4,6}$"}},
-        "verdict": {"type": "string", "enum": ["repair", "merge", "reject"]},
-        "reason": S_STR,
-        "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
-    }, ["originIds", "verdict", "reason", "replacement"])}}, ["reviews"]),
+    "ledger_review": _obj({
+        "reviews": {"type": "array", "items": _obj({
+            "originIds": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^C[0-9]{4,6}$"}},
+            "verdict": {"type": "string", "enum": ["repair", "merge", "reject"]},
+            "reason": S_STR,
+            "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
+        }, ["originIds", "verdict", "reason", "replacement"])},
+        "coverage": {"type": "array", "items": S_LEDGER_EVENT},
+    }, ["reviews", "coverage"]),
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
         "relation": {"type": "string", "enum": ["confirms", "extends", "contradicts", "revises", "none"]},
@@ -1818,13 +1824,14 @@ class Ablauf:
         return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
 
     def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
-        """Source-grounded Review der beiden Extraktionspässe. Nicht genannte Kandidaten bleiben unverändert."""
+        """0.4.53: Genau ein source-grounded Review je Quellblock. Derselbe Call repariert Kandidaten und schließt
+        nur critical/important Coverage-Lücken; dadurch entfallen der zweite Vollpass und der separate Coverage-Pass."""
         quelle = {lid: z for lid, z in zeilen}
         teile = self._ledger_quellteile(zeilen)
         chunk_von = {}
         for nr, block in enumerate(teile):
             for z in block:
-                m = re.match(r"^(L\d{4,6}) \|", z)
+                m = re.match(r"^(L\\d{4,6}) \\|", z)
                 if m:
                     chunk_von[m.group(1)] = nr
         gruppen: dict[int, list[dict]] = {}
@@ -1834,34 +1841,50 @@ class Ablauf:
                 gruppen.setdefault(chunk_von[ids[0]], []).append(e)
 
         ersetzt: dict[str, dict | None] = {}
+        coverage_neu: list[dict] = []
+        coverage_seen: set[tuple] = set()
+        vorhandene_keys = {
+            (tuple(e.get("sourceIds") or []), _notizkern(e.get("summary") or "")) for e in kandidaten
+        }
         diag = {"state": "ok", "candidates": len(kandidaten), "accepted": 0, "repaired": 0,
-                "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageAdded": 0, "actions": []}
+                "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageErrors": 0,
+                "coverageAdded": 0, "reviewCalls": 0, "sourceChunks": len(teile), "actions": []}
         system = SYSTEM_LEDGER_REVIEW.replace("{sprache}", _sprache(ein))
 
         def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
-            if not batch:
-                return
             block = teile[chunk_nr]
-            erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
-            kandidaten_text = "\n".join(
-                f"{e['candidateId']} | {self._ledger_candidate_text(e)}" for e in batch)
+            erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\\d{4,6}) \\|", z))}
+            kandidaten_text = "\\n".join(
+                f"{e['candidateId']} | {self._ledger_candidate_text(e)}" for e in batch) or "(keine)"
+            # Extrem dichte Blöcke werden nur bei Bedarf geteilt. Normalfall: exakt ein Review-Call je Quellblock.
+            if len(batch) > LEDGER_REVIEW_BATCH and tokens(kandidaten_text) > 3500:
+                mitte = len(batch) // 2
+                pruefen(batch[:mitte], chunk_nr, suffix + "a")
+                pruefen(batch[mitte:], chunk_nr, suffix + "b")
+                return
             self._schritt(f"ledger.review {chunk_nr + 1}{suffix}/{len(teile)}")
+            diag["reviewCalls"] += 1
             try:
                 d = self.zaehler.aufruf(
                     self.klient, system,
-                    f"{_kopf(ein)}\n\nORIGINALTRANSKRIPT:\n" + "\n".join(block)
-                    + f"\n\nKANDIDATEN:\n{kandidaten_text}")
+                    f"{_kopf(ein)}\\n\\nORIGINALTRANSKRIPT:\\n" + "\\n".join(block)
+                    + f"\\n\\nKANDIDATEN:\\n{kandidaten_text}")
             except AntwortFehler as e:
                 if len(batch) > 1:
                     mitte = len(batch) // 2
                     pruefen(batch[:mitte], chunk_nr, suffix + "a")
                     pruefen(batch[mitte:], chunk_nr, suffix + "b")
                     return
-                diag["reviewErrors"] += 1
-                log.warning("Ledger-Review Kandidat %s übersprungen: %s", batch[0].get("candidateId"), e)
+                if batch:
+                    diag["reviewErrors"] += 1
+                    log.warning("Ledger-Review Kandidat %s übersprungen: %s", batch[0].get("candidateId"), e)
+                else:
+                    diag["coverageErrors"] += 1
+                    log.warning("Ledger-Review/Coverage Abschnitt %d übersprungen: %s", chunk_nr + 1, e)
                 return
             except SprachmodellFehler as e:
                 diag["reviewErrors"] += len(batch)
+                diag["coverageErrors"] += 1
                 log.warning("Ledger-Review Abschnitt %d übersprungen: %s", chunk_nr + 1, e)
                 return
 
@@ -1885,11 +1908,12 @@ class Ablauf:
                         continue
                     replacement["_review"] = {"verdict": verdict, "originIds": origin,
                                               "reason": klartext(r.get("reason") or "")[:500]}
+                    vorhandene_keys.add((tuple(replacement.get("sourceIds") or []),
+                                         _notizkern(replacement.get("summary") or "")))
                 for cid in origin:
                     ersetzt[cid] = None
                     benutzt.add(cid)
                 if replacement is not None:
-                    # Genau einmal anhängen: unter der ersten Origin-ID liegt der Ersatz, die übrigen sind Tombstones.
                     ersetzt[origin[0]] = replacement
                 diag[{"repair": "repaired", "merge": "merged", "reject": "rejected"}[verdict]] += 1
                 diag["actions"].append({
@@ -1900,9 +1924,28 @@ class Ablauf:
                                     if replacement is not None else None),
                 })
 
-        for chunk_nr, gruppe in sorted(gruppen.items()):
-            for ab in range(0, len(gruppe), LEDGER_REVIEW_BATCH):
-                pruefen(gruppe[ab:ab + LEDGER_REVIEW_BATCH], chunk_nr)
+            for roh in d.get("coverage") or []:
+                event = self._ledger_event_normalisieren(roh, erlaubte_ids, quelle)
+                if event is None or event.get("importance") not in ("critical", "important"):
+                    continue
+                key = (tuple(event.get("sourceIds") or []), _notizkern(event.get("summary") or ""))
+                if key in vorhandene_keys or key in coverage_seen:
+                    continue
+                coverage_seen.add(key)
+                event["extractionPass"] = "review_coverage"
+                event["_review"] = {"verdict": "coverage_added", "originIds": [],
+                                    "reason": "fehlte nach Primärpass"}
+                coverage_neu.append(event)
+                diag["coverageAdded"] += 1
+                diag["actions"].append({
+                    "verdict": "coverage_added", "originIds": [], "reason": "fehlte nach Primärpass",
+                    "replacement": {"sourceIds": event.get("sourceIds") or [], "summary": event.get("summary") or ""},
+                })
+
+        # Auch Blöcke ohne Primärkandidaten werden genau einmal geprüft: so bleibt z. B. ein komplett übersehener Tod
+        # auffindbar, ohne einen dritten Vollpass über das Transkript zu bezahlen.
+        for chunk_nr in range(len(teile)):
+            pruefen(gruppen.get(chunk_nr, []), chunk_nr)
 
         aus = []
         for e in kandidaten:
@@ -1915,7 +1958,7 @@ class Ablauf:
             x["_review"] = {"verdict": "accepted", "originIds": [cid], "reason": ""}
             aus.append(x)
             diag["accepted"] += 1
-        return aus, diag
+        return aus + coverage_neu, diag
 
     def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
         """Dritter, enger Pass: nur fehlende critical/important Fakten. So kann Review auch reine Auslassungen finden."""
@@ -2038,11 +2081,21 @@ class Ablauf:
             if text.strip():
                 recap_sources.append((h, text))
 
+        history_props = {"life_status", "physical_condition", "location", "possession", "relationship", "identity",
+                         "knowledge", "allegiance", "goal", "obligation", "reputation", "control", "role_status"}
+        minor_trotzdem = {"life_status", "possession", "relationship", "identity", "allegiance", "obligation",
+                          "role_status"}
         for e in events:
+            props = {str(a.get("property") or "") for a in e.get("assertions") or [] if isinstance(a, dict)}
+            # Frühere Recaps sind kein Suchindex für jede Handlung derselben Figur. Nur echte Zustands-/Kontinuitäts-
+            # Eigenschaften dürfen einen History-Modellcall auslösen; bei minor nur die dauerhaft wichtigen Typen.
+            if not (props & history_props):
+                continue
+            if e.get("importance") == "minor" and not (props & minor_trotzdem):
+                continue
             et = self._ledger_event_text(e)
             passende_namen = [n for n in namen if _erwaehnt(n, et)]
             ids = []
-            props = {str(a.get("property") or "") for a in e.get("assertions") or [] if isinstance(a, dict)}
             for n in passende_namen:
                 key = n.casefold()
                 if props & bibel_props and key in bibel_nach_name and key not in bibel_ids:
@@ -2095,15 +2148,16 @@ class Ablauf:
         return aus
 
     def ledger(self, ein: dict) -> dict:
-        """0.4.52 Schatten-Ledger v2: zwei Extraktionspässe, source-grounded Review, Coverage und erst danach Historie.
+        """0.4.53 Schatten-Ledger v2: ein Primärpass, danach pro Quellblock kombinierter Review+Coverage und Historie.
         Der geprüfte Ledger beeinflusst weiterhin weder Recap noch Bibelvorschläge."""
         zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
         if not zeilen:
             return {"version": 2, "state": "empty", "events": [], "states": [], "historySources": [],
                     "historyLinks": [], "review": {"state": "empty"}}
         self._schritt("ledger")
-        roh = (self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
-               + self._ledger_pass(ein, SYSTEM_LEDGER_CONTINUITY, zeilen))
+        # 0.4.53: Kein zweiter Volltranskript-Pass mehr. Der Primärpass sammelt Ereignisse; der anschließende
+        # source-grounded Review schließt im selben Quellblock gezielt wichtige Kontinuitäts-/Coverage-Lücken.
+        roh = self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
 
         # Nur wirklich identische Kandidaten vor dem Review entfernen. Semantisch ähnliche/konfligierende Kandidaten
         # bleiben bewusst erhalten, damit der Quellen-Review sie zusammenführen oder korrigieren kann.
@@ -2117,7 +2171,6 @@ class Ablauf:
             kandidaten.append(e)
 
         events, review = self._ledger_review(ein, kandidaten, zeilen)
-        events = self._ledger_coverage(ein, events, zeilen, review)
         events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
 
         for nr, e in enumerate(events, 1):
