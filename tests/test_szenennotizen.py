@@ -1027,7 +1027,7 @@ def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_rep
                 "verdict": "merge",
                 "reason": "Beide Kandidaten beschreiben dieselbe Übergabe; einer hatte die Richtung vertauscht.",
                 "replacement": replacement,
-            }], "coverage": []}), 1, 1)
+            }], "coverage": [], "anchors": [], "encounters": []}), 1, 1)
 
     ein = _ein(2)
     ein["transkript"][0]["sprecher"] = "Spielleitung"
@@ -1036,11 +1036,11 @@ def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_rep
     falsch = {**replacement, "summary": "Die Gruppe gibt Pipo das Schwert.", "actors": ["Gruppe"],
               "targets": ["Pipo"], "candidateId": "C0001", "extractionPass": "events"}
     richtig = {**replacement, "candidateId": "C0002", "extractionPass": "continuity"}
-    events, diag = Ablauf(Klient())._ledger_review(ein, [falsch, richtig], zeilen)
+    events, diag, anchors, encounters = Ablauf(Klient())._ledger_review(ein, [falsch, richtig], zeilen)
     assert len(events) == 1
     assert events[0]["actors"] == ["Pipo"] and events[0]["targets"] == ["Gruppe"]
     assert events[0]["_review"]["verdict"] == "merge"
-    assert diag["merged"] == 1
+    assert diag["merged"] == 1 and anchors == [] and encounters == []
 
 
 def test_ledger_review_kann_vollstaendig_fehlenden_kritischen_status_nachtragen():
@@ -1055,21 +1055,22 @@ def test_ledger_review_kann_vollstaendig_fehlenden_kritischen_status_nachtragen(
             assert "KANDIDATEN:\n(keine)" in nutzer
             return Antwort(json.dumps({"reviews": [], "coverage": [
                 _ledger_event(["L0001"], "Kano stirbt.", subject="Kano", value="dead", epistemic="observed")
-            ]}), 1, 1)
+            ], "anchors": [], "encounters": []}), 1, 1)
 
     ein = _ein(2)
     ein["transkript"][0]["text"] = "Kano bricht tot zusammen."
     zeilen = transkript_zeilen_mit_ids(ein["transkript"])
-    events, diag = Ablauf(Klient())._ledger_review(ein, [], zeilen)
+    events, diag, anchors, encounters = Ablauf(Klient())._ledger_review(ein, [], zeilen)
     assert len(events) == 1
     assert events[0]["assertions"][0]["subject"] == "Kano"
     assert events[0]["assertions"][0]["value"] == "dead"
     assert events[0]["_review"]["verdict"] == "coverage_added"
     assert diag["coverageAdded"] == 1 and diag["reviewCalls"] == 1
+    assert anchors == [] and encounters == []
 
 
-def test_ledger_053_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass():
-    """0.4.53: Pro Quellblock Primärextraktion + kombinierter Review/Coverage; kein Continuity-/Coverage-Vollpass."""
+def test_ledger_054_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass():
+    """0.4.54: Primärextraktion + kombinierter Review/Anchors/Encounter; kein zusätzlicher Vollpass."""
     from app.sprachmodell import Ablauf, Antwort
 
     class Klient:
@@ -1083,7 +1084,7 @@ def test_ledger_053_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass(
             if system.startswith("Du extrahierst ein Ereignis-Ledger"):
                 return Antwort(json.dumps({"events": []}), 1, 1)
             if system.startswith("Du prüfst Ledger-Kandidaten"):
-                return Antwort(json.dumps({"reviews": [], "coverage": []}), 1, 1)
+                return Antwort(json.dumps({"reviews": [], "coverage": [], "anchors": [], "encounters": []}), 1, 1)
             raise AssertionError(f"unerwarteter Ledger-Pass: {system[:80]}")
 
     k = Klient()
@@ -1093,6 +1094,66 @@ def test_ledger_053_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass(
     assert sum(s.startswith("Du prüfst Ledger-Kandidaten") for s in k.systeme) == 1
     assert not any(s.startswith("Du extrahierst aus EINEM Abschnitt") for s in k.systeme)
     assert not any(s.startswith("Du suchst im ORIGINALTRANSKRIPT") for s in k.systeme)
+
+
+def test_ledger_054_anchor_quarantaenisiert_verknuepfte_falsche_relation_und_ersetzt_sie():
+    """Ein kanonischer Anchor darf eine verknüpfte, widersprechende Relation ersetzen – ohne systemspezifische Regel."""
+    from app.sprachmodell import Ablauf, transkript_zeilen_mit_ids
+
+    ein = _ein(1)
+    ein["transkript"][0]["text"] = "Die Besitzerin übergibt das Artefakt an die Gruppe."
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    falsch = _ledger_event(["L0001"], "Das Artefakt bleibt bei der Besitzerin.", subject="Artefakt",
+                            value="bei der Besitzerin", epistemic="observed")
+    falsch["assertions"][0]["property"] = "possession"
+    falsch["_review"] = {"verdict": "accepted", "originIds": ["C0001"], "reason": ""}
+    anchor = {"originIds": ["C0001"], "sourceIds": ["L0001"], "subject": "Artefakt", "property": "possession",
+              "value": "bei der Gruppe", "epistemic": "observed", "certainty": "high", "importance": "critical",
+              "chunk": 0}
+    events, diag = Ablauf.__new__(Ablauf)._ledger_integrity([falsch], [anchor], zeilen)
+    assert len(events) == 1
+    assert events[0]["assertions"][0]["value"] == "bei der Gruppe"
+    assert events[0]["extractionPass"] == "integrity_anchor"
+    assert diag["anchorConflicts"] == 1 and diag["anchorAdded"] == 1
+
+
+def test_ledger_054_tischrolle_wird_nicht_weltentitaet():
+    """Spielleitung/Game Master ist eine strukturelle Tischrolle, kein systemspezifischer NPC."""
+    from app.sprachmodell import Ablauf, transkript_zeilen_mit_ids
+
+    ein = _ein(1)
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    e = _ledger_event(["L0001"], "Die Spielleitung übergibt den Schlüssel.")
+    e["actors"] = ["Spielleitung"]
+    e["_review"] = {"verdict": "accepted", "originIds": ["C0001"], "reason": ""}
+    events, diag = Ablauf.__new__(Ablauf)._ledger_integrity([e], [], zeilen)
+    assert events == []
+    assert diag["metaRejected"] == 1
+
+
+def test_ledger_054_encounter_fragmente_werden_systemagnostisch_verbunden():
+    from app.sprachmodell import Ablauf
+
+    fragmente = [
+        {"chunk": 2, "sourceIds": ["L0100"], "kind": "combat", "boundary": "start",
+         "participants": ["Team", "Wachen"], "locations": ["Lager"], "objectives": ["Person befreien"],
+         "domains": ["Haupthalle"], "summary": "Der Kampf beginnt.", "turningPoints": [], "outcomes": [],
+         "consequences": [], "unresolved": []},
+        {"chunk": 3, "sourceIds": ["L0150"], "kind": "combat", "boundary": "middle",
+         "participants": ["Team", "Wachen"], "locations": ["Lager"], "objectives": ["Person befreien"],
+         "domains": ["Nebentrakt"], "summary": "Verstärkung drängt das Team zurück.",
+         "turningPoints": ["Verstärkung trifft ein."], "outcomes": [], "consequences": [], "unresolved": []},
+        {"chunk": 4, "sourceIds": ["L0200"], "kind": "combat", "boundary": "end",
+         "participants": ["Team", "Wachen"], "locations": ["Lager"], "objectives": ["Person befreien"],
+         "domains": ["Ausgang"], "summary": "Das Team entkommt.", "turningPoints": [],
+         "outcomes": ["Die Zielperson wird befreit."], "consequences": ["Das Team wird verfolgt."],
+         "unresolved": ["Eine Wache entkommt."]},
+    ]
+    encounters = Ablauf._ledger_encounters(fragmente)
+    assert len(encounters) == 1
+    assert len(encounters[0]["phases"]) == 3
+    assert encounters[0]["participants"] == ["Team", "Wachen"]
+    assert encounters[0]["outcomes"][0]["text"] == "Die Zielperson wird befreit."
 
 
 def test_ledger_bibelhistorie_nicht_mehr_nur_wegen_gleichem_namen():
