@@ -978,7 +978,7 @@ def test_ledger_truncation_teilt_nur_betroffenen_quellblock_statt_ihn_zu_verlier
 
         def chat(self, system, nutzer):
             self.aufrufe += 1
-            ids = re.findall(r"(?m)^(L\\d{4,6}) \\|", nutzer)
+            ids = re.findall(r"(?m)^(L\d{4,6}) \|", nutzer)
             if len(ids) > 3:
                 return Antwort('{"events":[', 1, 1, done_reason="length")
             return Antwort(json.dumps({"events": [
