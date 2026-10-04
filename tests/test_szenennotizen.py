@@ -602,7 +602,7 @@ def test_relationen_gegen_transkript():
             }]}), 1, 1)
 
     ein = _ein(400)
-    ein["transkript"][215]["text"] = "Senke dein Schwert, Pipo. Nehmt mein Schwert, sagt Pipo."
+    ein["transkript"][215]["text"] = "Senke dein Schwert, Pipo. Pipo gibt der Gruppe sein Schwert."
     text = "Orasilas gab Pipo sein Schwert.\n\nDann rasteten alle lange."
     befund = [{"index": 0, "verdict": "supported", "note": None,
                "evidence": [{"start": 4300.0, "quote": "Schwert"}]},
@@ -616,7 +616,7 @@ def test_relationen_gegen_transkript():
     assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"]
     assert aus[0]["claims"][0]["exakt"] is True and aus[0]["claims"][0]["zitatBelegt"] is True
     assert aus[0]["claims"][0]["gegenbelegBelegt"] is True
-    assert aus[0]["claims"][0]["sourceIds"] == ["L0216"] and "Nehmt mein Schwert" in aus[0]["claims"][0]["zitat"]
+    assert aus[0]["claims"][0]["sourceIds"] == ["L0216"] and "gibt der Gruppe" in aus[0]["claims"][0]["zitat"]
     assert aus[1]["urteil"] == "stimmt"
     assert befund[0]["verdict"] == "contradicted" and befund[0]["relation_contradicted"] is True
     assert befund[1]["verdict"] == "supported"
