@@ -341,7 +341,7 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 # ---------------------------------------------------------------- Bericht
 # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
-STUFEN = ("Transkript", "Notizen", "Plan", "Ledger", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
+STUFEN = ("Transkript", "Notizen", "Plan", "Ledger", "Ledger Fakten", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
 
 
 def pruefliste_lesen(text: str) -> list[dict]:
@@ -381,6 +381,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
         "Notizen": e.notizen,
         "Plan": "\n".join(p.get("notiz", "") for p in e.plan),
         "Ledger": "",
+        "Ledger Fakten": "",
         "Teile": e.verlauf,
         "Kapitel 1": e.kapitel1,
         "Kapitel 2": e.kapitel2,
@@ -392,7 +393,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
     for p in punkte:
         vorkommen = {}
         for name in STUFEN:
-            if p["bereich"] == "Vorschläge" and name in ("Ledger", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
+            if p["bereich"] == "Vorschläge" and name in ("Ledger", "Ledger Fakten", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
                 vorkommen[name] = None  # für Vorschläge nicht gefragt
             elif name == "Kapitel 1" and not e.kapitel1:
                 vorkommen[name] = None
@@ -402,20 +403,23 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
                 vorkommen[name] = None  # kurze Runde: keine Notizen
             elif name == "Plan" and not e.plan:
                 vorkommen[name] = None  # kurze Runde oder Plan-Aufruf ohne gültige Auswahl
-            elif name == "Ledger":
+            elif name in ("Ledger", "Ledger Fakten"):
                 events = (e.ledger or {}).get("events") or []
                 if not events:
                     vorkommen[name] = None
                 else:
-                    # Strenger als der alte Stichwortcheck: alle Gruppen müssen im SELBEN source-belegten Event
-                    # vorkommen. Evidence-Originaltext zählt absichtlich nicht, sonst würde Extraktionsverlust verdeckt.
+                    # Ledger = harte Untergrenze: alle Stichwortgruppen im selben atomaren Event.
+                    # Ledger Fakten = diagnostische Obergrenze: Teilfakten dürfen über mehrere source-belegte Events
+                    # verteilt sein. Zusammen zeigen beide Werte, ob ein Goldpunkt fehlt oder nur atomisiert wurde.
                     def event_text(ev):
                         felder = [ev.get("summary", "")] + list(ev.get("actors") or []) + list(ev.get("targets") or [])
                         felder += list(ev.get("objects") or []) + list(ev.get("locations") or []) + list(ev.get("factions") or [])
                         felder += [f"{a.get('subject', '')} {a.get('property', '')} {a.get('value', '')}"
                                    for a in ev.get("assertions") or [] if isinstance(a, dict)]
                         return " ".join(str(x) for x in felder)
-                    vorkommen[name] = any(_kommt_vor(p["woerter"], event_text(ev)) for ev in events)
+                    texte = [event_text(ev) for ev in events]
+                    vorkommen[name] = (any(_kommt_vor(p["woerter"], t) for t in texte) if name == "Ledger"
+                                       else _kommt_vor(p["woerter"], "\n".join(texte)))
             elif name == "Teile" and not e.verlauf:
                 vorkommen[name] = None  # direkt, ohne Teil-Zusammenfassungen
             else:
@@ -589,9 +593,11 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                          1 for x in e.relationen_vorher if x.get("urteil") == "widerspricht"),
                                                      "pruefung_vorher": None, "pruefung_nachher": None,
                                                      "relationen_vorher": None, "relationen_nachher": None,
+                                                     "ledgerRawCandidates": int((e.ledger or {}).get("rawCandidates") or 0),
                                                      "ledgerEvents": len((e.ledger or {}).get("events") or []),
                                                      "ledgerStates": len((e.ledger or {}).get("states") or []),
                                                      "ledgerHistoryLinks": len((e.ledger or {}).get("historyLinks") or []),
+                                                     "ledgerReview": (e.ledger or {}).get("review") or {},
                                                      "ledger": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
@@ -672,9 +678,12 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                        f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
                 if erg.ledger:
-                    melden(f"  Ledger (Schatten): {len(erg.ledger.get('events') or [])} Events, "
-                           f"{len(erg.ledger.get('states') or [])} States, "
-                           f"{len(erg.ledger.get('historyLinks') or [])} History-Links")
+                    lr = erg.ledger.get("review") or {}
+                    melden(f"  Ledger (Schatten v2): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
+                           f"{len(erg.ledger.get('events') or [])} Events, {len(erg.ledger.get('states') or [])} States, "
+                           f"{len(erg.ledger.get('historyLinks') or [])} History-Links; Review: "
+                           f"{lr.get('repaired', 0)} repariert, {lr.get('merged', 0)} zusammengeführt, "
+                           f"{lr.get('rejected', 0)} verworfen, {lr.get('coverageAdded', 0)} ergänzt")
             if erg.pruefliste:
                 for name in STUFEN:
                     werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
