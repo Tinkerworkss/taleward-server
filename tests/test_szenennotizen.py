@@ -625,6 +625,7 @@ def test_recap_plan_klassifiziert_alle_ids_in_kurzen_fenstern():
         "[20:00] Ein Helfer löst die Fesseln.",
         "[31:00] Kano ist tot.",
         "[40:00] Orasilas rettet Arlekin aus dem Wasser.",
+        "[44:00] Die Menge flieht vom eingestürzten Platz.",
         "[50:00] Pipo übergibt Lostriana.",
         "[61:00] Die Gruppe schließt eine Abmachung.",
     ])
@@ -633,7 +634,7 @@ def test_recap_plan_klassifiziert_alle_ids_in_kurzen_fenstern():
     plan = ablauf.planen(_ein(10), notizen)
 
     assert PLAN_MINUTEN == 15
-    assert len(plan) == 7 and {p["id"] for p in plan} == {f"N{i:03d}" for i in range(1, 8)}
+    assert len(plan) == 8 and {p["id"] for p in plan} == {f"N{i:03d}" for i in range(1, 9)}
     assert all(p["id"] != "N999" for p in plan)
     assert all(p["notiz"] in notizen for p in plan)
     assert len(k.aufrufe) >= 4  # 0–15, 15–30, 30–45, 45–60, 60–75; leere Fenster werden übersprungen
