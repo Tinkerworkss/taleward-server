@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 import httpx
+import jsonschema
 
 log = logging.getLogger("worker")
 
@@ -60,6 +61,7 @@ class Antwort:
     text: str
     tokens_in: int = 0
     tokens_out: int = 0
+    done_reason: str | None = None
 
 
 class Klient(Protocol):
@@ -104,6 +106,11 @@ class OpenAIKlient:
             return Antwort(d["choices"][0]["message"]["content"] or "", int(u.get("prompt_tokens") or 0),
                            int(u.get("completion_tokens") or 0))
         raise SprachmodellFehler("Sprachmodell nicht erreichbar.")
+
+    def chat_strukturiert(self, system: str, nutzer: str, schema: dict) -> Antwort:
+        """OpenAI-kompatibel: Schema im Prompt validieren wir immer lokal. Anbieter unterscheiden sich bei json_schema,
+        deshalb bleibt serverseitig json_object für maximale Kompatibilität."""
+        return self.chat(system, nutzer)
 
     def kosten_cent(self, tokens_in: int, tokens_out: int) -> int:
         ein, aus = self.cent_pro_mio
@@ -197,6 +204,12 @@ class OllamaKlient:
     VERSUCHE = ((0.3, 1.1, True), (0.6, 1.2, True), (0.8, 1.3, False))
 
     def chat(self, system: str, nutzer: str) -> Antwort:
+        return self._chat_mit_schema(system, nutzer, None)
+
+    def chat_strukturiert(self, system: str, nutzer: str, schema: dict) -> Antwort:
+        return self._chat_mit_schema(system, nutzer, schema)
+
+    def _chat_mit_schema(self, system: str, nutzer: str, schema: dict | None) -> Antwort:
         # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
         # reached“ ab). Daher eine leichte Wiederholungsstrafe und eine Obergrenze für die Antwortlänge – und bei einem
         # Abbruch weitere Versuche mit mehr Streuung, der letzte ohne JSON-Grammatik.
@@ -213,7 +226,7 @@ class OllamaKlient:
             body = {"model": self.modell, "stream": True, "keep_alive": "2m", "options": optionen,
                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
             if grammatik:
-                body["format"] = "json"
+                body["format"] = schema or "json"
             if self.denkmodus():
                 body["think"] = False
             try:
@@ -240,7 +253,8 @@ class OllamaKlient:
             if self.token_s < self.LANGSAM_TOKEN_S:
                 log.warning("Sprachmodell sehr langsam (%.1f Token/s) – dieser Rechner sollte Recaps dem Server "
                             "überlassen (Worker-App: „Recaps hier schreiben“ abschalten)", self.token_s)
-        return Antwort(d.get("inhalt", ""), int(d.get("prompt_eval_count") or 0), tokens_aus)
+        return Antwort(d.get("inhalt", ""), int(d.get("prompt_eval_count") or 0), tokens_aus,
+                       str(d.get("done_reason") or "") or None)
 
     def _streamen(self, body: dict) -> tuple[int, str, dict]:
         """(Status, Fehlertext, Daten) – Daten enthalten den zusammengesetzten Text unter „inhalt“."""
@@ -368,6 +382,11 @@ def transkript_zeilen(transkript: list[dict]) -> list[str]:
     if puffer:
         out.append(f"[{_zeit(start)}] {letzter}: {' '.join(puffer)}")
     return out
+
+
+def transkript_zeilen_mit_ids(transkript: list[dict]) -> list[tuple[str, str]]:
+    """Wie transkript_zeilen, aber mit stabilen IDs L0001… für evidenzkritische Modellaufrufe."""
+    return [(f"L{i + 1:04d}", z) for i, z in enumerate(transkript_zeilen(transkript))]
 
 
 def tokens(text: str) -> int:
@@ -603,7 +622,7 @@ hast, jeweils vollständig. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
-ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.49: post-hoc nur kritische Punkte; Klassifikationsplan trägt Wichtiges
+ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.50: post-hoc nur kritische Punkte; Klassifikationsplan trägt Wichtiges
 RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Stellen eines Absatzes
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
 
@@ -614,8 +633,8 @@ Für jede solche Behauptung:
 - urteil: "stimmt", "widerspricht" oder "unklar". "widerspricht" NUR, wenn das Transkript ausdrücklich eine unvereinbare Beziehung oder einen anderen Zustand zeigt. Fehlt die Information im Ausschnitt, ist das "unklar", niemals ein Widerspruch.
 - korrektur: nur bei "widerspricht" eine minimale Ersatzformulierung für genau claim, die das Transkript belegt. Keine zusätzlichen Tatsachen. Wenn keine sichere minimale Korrektur möglich ist, leer lassen.
 - begruendung: ein kurzer Satz.
-- zitat: kurzes wörtliches Zitat aus dem Transkript, das den Widerspruch belegt; bei "stimmt"/"unklar" optional.
-Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur": "…", "begruendung": "…", "zitat": "…"}]}. Sprache: {sprache}."""
+- sourceIds: die IDs Lxxxx der Transkriptzeilen, die dein Urteil direkt belegen. Verwende ausschließlich IDs, die im Ausschnitt stehen. Keine Zitate und keine Zeitstempel erfinden.
+Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur": "…", "begruendung": "…", "sourceIds": ["L0001"]}]}. Sprache: {sprache}."""
 
 SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
 sie beanstandet; der Grund steht jeweils dabei.
@@ -762,6 +781,73 @@ def klartext(text) -> str:
 RECAP_SCHLUESSEL = ("text", "recap", "summary", "zusammenfassung", "body", "content", "story", "inhalt")
 
 
+
+def _obj(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
+
+S_STR = {"type": "string"}
+S_SCHEMAS = {
+    "notes": _obj({"notizen": {"type": "array", "items": S_STR}}, ["notizen"]),
+    "plan": _obj({
+        "critical": {"type": "array", "items": S_STR},
+        "important": {"type": "array", "items": S_STR},
+        "minor": {"type": "array", "items": S_STR},
+    }, ["critical", "important", "minor"]),
+    "recap": _obj({
+        "title": S_STR, "text": S_STR, "openThreads": {"type": "array", "items": S_STR}
+    }, ["title", "text", "openThreads"]),
+    "missing": _obj({"fehlend": {"type": "array", "items": _obj({
+        "zeit": S_STR, "wichtigkeit": {"type": "string", "enum": ["kritisch", "wichtig", "nebensächlich"]},
+        "notiz": S_STR
+    }, ["zeit", "wichtigkeit", "notiz"])}}, ["fehlend"]),
+    "paragraphs": _obj({"absaetze": {"type": "array", "items": _obj({
+        "nr": {"type": "integer"}, "text": S_STR
+    }, ["nr", "text"])}}, ["absaetze"]),
+    "review": _obj({"absaetze": {"type": "array", "items": _obj({
+        "nr": {"type": "integer"},
+        "urteil": {"type": "string", "enum": ["belegt", "teilweise", "unbelegt", "widerspricht", "witz"]},
+        "stellen": {"type": "array", "items": _obj({"zeit": S_STR, "zitat": S_STR}, ["zeit", "zitat"])},
+        "begruendung": S_STR
+    }, ["nr", "urteil", "stellen", "begruendung"])}}, ["absaetze"]),
+    "relations": _obj({"claims": {"type": "array", "items": _obj({
+        "claim": S_STR,
+        "urteil": {"type": "string", "enum": ["stimmt", "widerspricht", "unklar"]},
+        "korrektur": S_STR, "begruendung": S_STR,
+        "sourceIds": {"type": "array", "items": {"type": "string", "pattern": "^L[0-9]{4,6}$"}}
+    }, ["claim", "urteil", "korrektur", "begruendung", "sourceIds"])}}, ["claims"]),
+}
+
+
+def _schema_fuer(system: str) -> dict | None:
+    if system.startswith("Du hilfst bei der Nachbereitung") and "Szenennotizen" in system:
+        return S_SCHEMAS["notes"]
+    if system.startswith("Du klassifizierst die Szenennotizen"):
+        return S_SCHEMAS["plan"]
+    if "Was bisher geschah" in system:
+        return S_SCHEMAS["recap"]
+    if system.startswith("Du vergleichst den Recap"):
+        return S_SCHEMAS["missing"]
+    if system.startswith("Du prüfst genau EINEN Absatz"):
+        return S_SCHEMAS["relations"]
+    if system.startswith("Du prüfst den Recap"):
+        return S_SCHEMAS["review"]
+    if system.startswith("Du ergänzt den Recap") or system.startswith("Du überarbeitest einzelne Absätze"):
+        return S_SCHEMAS["paragraphs"]
+    return None
+
+
+def _schema_pruefen(d: dict, schema: dict | None) -> list[str]:
+    if not schema:
+        return []
+    fehler = sorted(jsonschema.Draft202012Validator(schema).iter_errors(d), key=lambda e: list(e.path))
+    aus = []
+    for e in fehler[:8]:
+        pfad = ".".join(str(x) for x in e.path) or "(Wurzel)"
+        aus.append(f"{pfad}: {e.message}")
+    return aus
+
+
 def _form(v) -> str:
     if isinstance(v, str):
         return f"str[{len(v)}]"
@@ -878,15 +964,31 @@ class Zaehler:
     letzte_antwort: str = ""  # Rohtext der letzten Antwort (nur für die Fehlersuche im Modellvergleich)
 
     def aufruf(self, klient: Klient, system: str, nutzer: str, retten: bool = False) -> dict:
-        a = self._chat(klient, system, nutzer)
-        try:
-            return _json(a, retten)
-        except SprachmodellFehler:  # ein zweiter Versuch – kleine Modelle stolpern gelegentlich
-            a = self._chat(klient, system, nutzer + "\n\nAntworte ausschließlich mit gültigem JSON.")
-            return _json(a, retten)
+        schema = _schema_fuer(system)
+        letzter_fehler = ""
+        for versuch in range(2):
+            extra = ""
+            if versuch:
+                extra = ("\n\nDie vorige Ausgabe wurde vom Harness abgelehnt. Korrigiere NUR die Ausgabe nach "
+                         "dem verlangten Schema. Fehler:\n- " + letzter_fehler.replace("\n", "\n- "))
+            a = self._chat(klient, system, nutzer + extra, schema)
+            if a.done_reason == "length" and not retten:
+                letzter_fehler = "Antwort wurde wegen der Ausgabelänge abgeschnitten"
+                continue
+            try:
+                d = _json(a, retten)
+            except SprachmodellFehler as e:
+                letzter_fehler = str(e)
+                continue
+            fehler = _schema_pruefen(d, schema)
+            if not fehler:
+                return d
+            letzter_fehler = "\n".join(fehler)
+        raise AntwortFehler(f"Strukturierte Ausgabe nach Reparatur weiter ungültig: {letzter_fehler[:600]}")
 
-    def _chat(self, klient: Klient, system: str, nutzer: str) -> Antwort:
-        a = klient.chat(system, nutzer)
+    def _chat(self, klient: Klient, system: str, nutzer: str, schema: dict | None = None) -> Antwort:
+        strukturiert = getattr(klient, "chat_strukturiert", None)
+        a = strukturiert(system, nutzer, schema) if schema and callable(strukturiert) else klient.chat(system, nutzer)
         self.letzte_antwort = a.text
         self.tokens_in += a.tokens_in
         self.tokens_out += a.tokens_out
@@ -1146,7 +1248,7 @@ class Ablauf:
         return "\n\n".join(aus)
 
     def planen(self, ein: dict, notizen: str) -> list[dict]:
-        """0.4.49: Jede Szenennotiz in kurzen Zeitfenstern klassifizieren statt Top-N auszuwählen. Kritisch und
+        """0.4.50: Jede Szenennotiz in kurzen Zeitfenstern klassifizieren statt Top-N auszuwählen. Kritisch und
         wichtig werden später Pflichtpunkte; nebensächlich bleibt in plan.json sichtbar. Fehlt eine gültige ID in
         der Modellantwort, fällt sie auf 'wichtig' zurück, damit eine Auslassung des Klassifizierers keine Information
         still entfernt."""
@@ -1292,8 +1394,8 @@ class Ablauf:
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
         """Atomare Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen. Ein Widerspruch
         wird nur übernommen, wenn Claim UND Belegzitat im tatsächlichen Text wiedergefunden werden."""
-        zeilen = [(_zeit_vorn(z), z) for z in transkript_zeilen(ein.get("transkript") or [])]
-        zeilen = [(t, z) for t, z in zeilen if t is not None]
+        zeilen = [(_zeit_vorn(z), lid, z) for lid, z in transkript_zeilen_mit_ids(ein.get("transkript") or [])]
+        zeilen = [(t, lid, z) for t, lid, z in zeilen if t is not None]
         teile = absaetze(text)
         aus = []
         for b in befund:
@@ -1301,8 +1403,9 @@ class Ablauf:
             zeiten = sorted({e["start"] for e in b.get("evidence") or [] if e.get("start") is not None})[:3]
             if not (0 <= i < len(teile)) or not zeiten:
                 continue
-            spans = [z for t, z in zeilen if any(abs(t - zt) <= RELATION_FENSTER_S for zt in zeiten)]
-            text_spans = "\n".join(spans)[:RELATION_ZEICHEN]
+            spans = [(lid, z) for t, lid, z in zeilen if any(abs(t - zt) <= RELATION_FENSTER_S for zt in zeiten)]
+            text_spans = "\n".join(f"{lid} | {z}" for lid, z in spans)[:RELATION_ZEICHEN]
+            erlaubte_ids = {lid: z for lid, z in spans if f"{lid} |" in text_spans}
             if not text_spans.strip():
                 continue
             fenster = [_zeit(zt) for zt in zeiten]
@@ -1343,7 +1446,7 @@ class Ablauf:
                     "korrektur": klartext(c.get("korrektur") or c.get("correction") or "")[:500],
                     "begruendung": klartext(c.get("begruendung") or c.get("reason") or "")[:400],
                     "zitat": zitat,
-                    "zitatBelegt": zitat_belegt,
+
                     "exakt": exakt,
                     "gepatcht": False,
                 })
