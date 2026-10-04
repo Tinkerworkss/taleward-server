@@ -615,6 +615,7 @@ def test_relationen_gegen_transkript():
     assert "Satz 214 " in k.nutzer[0] and "Satz 218 " in k.nutzer[0] and "Satz 230 " not in k.nutzer[0]
     assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"]
     assert aus[0]["claims"][0]["exakt"] is True and aus[0]["claims"][0]["zitatBelegt"] is True
+    assert aus[0]["claims"][0]["gegenbelegBelegt"] is True
     assert aus[0]["claims"][0]["sourceIds"] == ["L0216"] and "Nehmt mein Schwert" in aus[0]["claims"][0]["zitat"]
     assert aus[1]["urteil"] == "stimmt"
     assert befund[0]["verdict"] == "contradicted" and befund[0]["relation_contradicted"] is True
@@ -799,3 +800,166 @@ def test_relationspatch_wird_bei_unsicherer_nachpruefung_zurueckgenommen():
     claim = ablauf.letzte_relationen_vorher[0]["claims"][0]
     assert claim["gepatcht"] is False and claim["zurueckgenommen"] is True
     assert not any(s.startswith("Du überarbeitest einzelne Absätze") for s in k.systeme)
+
+
+def test_relationen_patchen_nicht_bei_blobem_fehlenden_beleg_im_fenster():
+    """0.4.51: Eine echte Source-ID reicht nicht. Ohne positiven Gegenbeleg ist 'widerspricht' nur 'unklar'."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            return Antwort(json.dumps({"claims": [{
+                "claim": "Orasilas hatte Besuch von seiner Schwester.",
+                "urteil": "widerspricht",
+                "korrektur": "Orasilas hatte keinen Besuch.",
+                "begruendung": "Im Ausschnitt ist kein Besuch zu sehen.",
+                "sourceIds": ["L0216"],
+            }]}), 1, 1)
+
+    ein = _ein(400)
+    ein["transkript"][215]["text"] = "Wir sind seit zehn Tagen im Kerker."
+    text = "Orasilas hatte Besuch von seiner Schwester."
+    befund = [{"index": 0, "verdict": "supported", "note": None,
+               "evidence": [{"start": 4300.0, "quote": "Kerker"}]}]
+    rel = Ablauf(Klient()).relationen(ein, text, befund)
+    claim = rel[0]["claims"][0]
+    assert claim["zitatBelegt"] is True and claim["gegenbelegBelegt"] is False
+    assert claim["urteil"] == "unklar" and rel[0]["urteil"] == "unklar"
+    assert befund[0]["verdict"] == "supported"
+    assert Ablauf(Klient()).relationen_patchen(text, rel) is None
+
+
+def test_gegenpruefung_wird_in_kleine_bloecke_geteilt_und_faellt_nur_lokal_aus():
+    """0.4.51: Eine abgeschnittene strukturierte Antwort darf nicht mehr den kompletten Review verwerfen."""
+    from app.sprachmodell import Ablauf, Antwort, PRUEF_BATCH
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = []
+
+        def chat(self, system, nutzer):
+            self.aufrufe.append(nutzer)
+            if "P5" in nutzer:  # mittleres Paket: beide Harness-Versuche werden abgeschnitten
+                return Antwort('{"absaetze": [', 1, 1, done_reason="length")
+            n = nutzer.count("Absatz ")
+            return Antwort(json.dumps({"absaetze": [
+                {"nr": i + 1, "urteil": "belegt", "stellen": [], "begruendung": ""} for i in range(n)
+            ]}), 1, 1)
+
+    assert PRUEF_BATCH == 4
+    text = "\n\n".join(f"P{i}: belegter Absatz." for i in range(1, 10))
+    k = Klient()
+    befund = Ablauf(k).pruefen(_ein(2), "Transkript", "[0:00] Grundlage", text)
+    assert len(befund) == 9
+    assert [b["verdict"] for b in befund[:4]] == ["supported"] * 4
+    assert [b["verdict"] for b in befund[4:8]] == ["unchecked"] * 4
+    assert befund[8]["verdict"] == "supported"
+    assert len(k.aufrufe) == 4  # 1. Paket, mittleres Paket + Repair, letztes Paket
+
+
+def _ledger_event(source_ids, summary, *, subject="Alrik", value="alive", epistemic="observed"):
+    return {
+        "sourceIds": source_ids,
+        "summary": summary,
+        "kinds": ["state_change"],
+        "actors": [subject],
+        "targets": [],
+        "objects": [],
+        "locations": [],
+        "factions": [],
+        "assertions": [{
+            "subject": subject,
+            "property": "life_status",
+            "value": value,
+            "epistemic": epistemic,
+            "certainty": "high",
+        }],
+        "epistemic": epistemic,
+        "modality": "actual",
+        "importance": "critical",
+        "tags": [],
+    }
+
+
+def test_ledger_verwirft_erfundene_source_ids_und_loest_echte_belege_auf():
+    from app.sprachmodell import Ablauf, Antwort, SYSTEM_LEDGER_EVENTS, transkript_zeilen_mit_ids
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            return Antwort(json.dumps({"events": [
+                _ledger_event(["L0001"], "Alrik erscheint lebendig."),
+                _ledger_event(["L9999"], "Ein erfundener Beleg."),
+            ]}), 1, 1)
+
+    ein = _ein(2)
+    ein["transkript"][0]["text"] = "Alrik steht plötzlich lebendig vor euch."
+    events = Ablauf(Klient())._ledger_pass(
+        ein, SYSTEM_LEDGER_EVENTS, transkript_zeilen_mit_ids(ein["transkript"]))
+    assert len(events) == 1 and events[0]["sourceIds"] == ["L0001"]
+    assert events[0]["evidence"][0]["sourceId"] == "L0001"
+    assert "Alrik steht plötzlich lebendig" in events[0]["evidence"][0]["text"]
+
+
+def test_ledger_state_history_unterscheidet_revision_von_echtem_zustandswechsel():
+    from app.sprachmodell import Ablauf
+
+    geglaubt_tot = _ledger_event(["L0001"], "Alrik gilt als tot.", value="dead", epistemic="believed")
+    geglaubt_tot.update(eventId="E0001", time=10.0)
+    lebendig = _ledger_event(["L0002"], "Alrik erscheint lebendig.", value="alive", epistemic="observed")
+    lebendig.update(eventId="E0002", time=20.0)
+    states = Ablauf._ledger_states([geglaubt_tot, lebendig])
+    hist = states[0]["history"]
+    assert hist[0]["resolution"] == "initial" and hist[0]["resolvedBy"] == "E0002"
+    assert hist[1]["resolution"] == "revision" and states[0]["current"]["value"] == "alive"
+
+    wirklich_tot = _ledger_event(["L0001"], "Alrik stirbt.", value="dead", epistemic="observed")
+    wirklich_tot.update(eventId="E0001", time=10.0)
+    wieder_da = _ledger_event(["L0002"], "Alrik lebt wieder.", value="alive", epistemic="observed")
+    wieder_da.update(eventId="E0002", time=20.0)
+    states = Ablauf._ledger_states([wirklich_tot, wieder_da])
+    assert states[0]["history"][1]["resolution"] == "state_change"
+
+
+def test_ledger_historie_wird_nur_fuer_aktuelle_entitaeten_geholt_und_ids_validiert():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            assert system.startswith("Du ordnest aktuelle")
+            return Antwort(json.dumps({"links": [{
+                "eventId": "E0001",
+                "relation": "revises",
+                "historyIds": ["H0001", "H9999"],
+                "reason": "Der frühere Todesstatus wird durch das lebendige Auftauchen revidiert.",
+            }]}), 1, 1)
+
+    ein = _ein(1)
+    ein["bibel"] = [
+        {"id": "a", "typ": "npc", "name": "Alrik", "zusammenfassung": "Galt zuletzt als tot."},
+        {"id": "b", "typ": "npc", "name": "Berta", "zusammenfassung": "Lebt in Havena."},
+    ]
+    ein["_historie"] = [
+        {"session": 4, "title": "Der Fall", "text": "Die Gruppe hielt Alrik für tot.", "openThreads": []},
+        {"session": 5, "title": "Markt", "text": "Berta kaufte Brot.", "openThreads": []},
+    ]
+    ev = _ledger_event(["L0001"], "Alrik erscheint lebendig.")
+    ev["eventId"] = "E0001"
+    ablauf = Ablauf(Klient())
+    sources, event_map = ablauf._ledger_history_sources(ein, [ev])
+    assert sources and all("Berta" not in x["text"] for x in sources)
+    assert set(event_map) == {"E0001"}
+    links = ablauf._ledger_history_links(ein, [ev], sources, event_map)
+    assert links == [{
+        "eventId": "E0001",
+        "relation": "revises",
+        "historyIds": ["H0001"],
+        "reason": "Der frühere Todesstatus wird durch das lebendige Auftauchen revidiert.",
+    }]
