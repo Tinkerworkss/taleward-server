@@ -819,7 +819,7 @@ def test_relationen_patchen_nicht_bei_blobem_fehlenden_beleg_im_fenster():
             }]}), 1, 1)
 
     ein = _ein(400)
-    ein["transkript"][215]["text"] = "Wir sind seit zehn Tagen im Kerker."
+    ein["transkript"][215]["text"] = "Orasilas sitzt seit zehn Tagen im Kerker."
     text = "Orasilas hatte Besuch von seiner Schwester."
     befund = [{"index": 0, "verdict": "supported", "note": None,
                "evidence": [{"start": 4300.0, "quote": "Kerker"}]}]
