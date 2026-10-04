@@ -710,7 +710,7 @@ def _relations_patch_klient(zweiter_befund: str):
             if system.startswith("Du prüfst den Recap"):
                 return Antwort(json.dumps({"absaetze": [{
                     "nr": 1, "urteil": "belegt",
-                    "stellen": [{"zeit": "1:11:40", "sourceIds": ["L0216"]}],
+                    "stellen": [{"zeit": "1:11:40", "zitat": "Nehmt es"}],
                     "begruendung": ""
                 }]}), 1, 1)
             if system.startswith("Du prüfst genau EINEN Absatz"):
