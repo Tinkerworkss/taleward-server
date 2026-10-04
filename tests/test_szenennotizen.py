@@ -484,7 +484,7 @@ def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
     assert d["text"] == "Die Gruppe ritt zum Ereignis. Jemand löste mit einem Dolch ihre Handfesseln.\n\nDann rasteten alle lange."
     assert ablauf.letztes_kapitel2 == d["text"]
     assert [(f["belegt"], f["ergaenzt"]) for f in ablauf.letzter_befund_fehlend] == [(True, True), (False, False)]
-    assert ablauf.letzter_befund_fehlend[0]["davor"].startswith("[") and ablauf.letzter_befund_fehlend[0]["wichtigkeit"] == "wichtig"
+    assert ablauf.letzter_befund_fehlend[0]["davor"].startswith("[") and ablauf.letzter_befund_fehlend[0]["wichtigkeit"] == "kritisch"
     assert sum(1 for s, _ in k.aufrufe if s.startswith("Du ergänzt")) == 1
     # Reihenfolge: Recap → Vollständigkeit → Ergänzung → Prüfung
     arten = [s.split(" ")[1] for s, _ in k.aufrufe if s.startswith("Du ")]
