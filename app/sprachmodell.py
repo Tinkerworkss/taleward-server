@@ -691,6 +691,16 @@ encounters beschreibt nur RECAP-RELEVANTE, SUBSTANTIELLE zusammenhängende Konfl
 Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
 Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
+SYSTEM_LEDGER_ANCHOR_RESOLVE = """Du löst NUR wenige strittige oder fehlende Hochrisiko-Fakten eines Pen-&-Paper-Ledgers gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS auf. Ein HINWEIS ist ausdrücklich KEINE Wahrheit, sondern nur ein Prüfauftrag.
+Für jeden Hinweis:
+- verdict = confirmed nur wenn der Quellausschnitt die atomare Relation bzw. den Zustand belastbar trägt.
+- verdict = rejected wenn der Hinweis dem Ausschnitt widerspricht.
+- verdict = unclear wenn weder sicher bestätigt noch verworfen werden kann.
+- event: nur bei confirmed ein vollständiges, source-belegtes Ledger-Event mit relevance; sonst null.
+Sprecherlabels sind automatisch erkannt und können falsch sein. Berücksichtige die Gesprächsrolle: Fragt ein Spieler unmittelbar nach Zustand/Handlung eines NPCs oder der Spielwelt und folgt genau eine unbestrittene autoritative Weltantwort, kann deren Sprecherlabel falsch sein. Markiere ein bestätigtes Event dann mit tag "speaker_conflict". Bei konkurrierenden Antworten, Scherz/Meinung oder unklarer Gesprächsrolle nicht zur Weltwahrheit hochstufen.
+Wer gibt wem was, wer ist wer und wer schuldet wem was niemals umdrehen. Eine Anrede macht Angesprochenen und Sprecher nicht identisch. Reine Regelmechanik ist keine Weltwahrheit.
+Antworte nur mit JSON {"resolutions":[{"anchorId":"A0001","verdict":"confirmed|rejected|unclear","event":{...}|null,"reason":"..."}]}. Sprache: {sprache}."""
+
 SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
 Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
 "Spielleitung" ist keine Figur; löse NPCs nur aus dem lokalen Kontext auf. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit. sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen.
@@ -918,6 +928,14 @@ S_LEDGER_ANCHOR = _obj({
     "certainty": {"type": "string", "enum": ["high", "medium", "low"]},
     "importance": {"type": "string", "enum": ["critical", "important"]},
 }, ["originIds", "sourceIds", "subject", "property", "value", "epistemic", "certainty", "importance"])
+S_LEDGER_ANCHOR_RESOLUTION = _obj({
+    "resolutions": {"type": "array", "items": _obj({
+        "anchorId": {"type": "string", "pattern": "^A[0-9]{4,6}$"},
+        "verdict": {"type": "string", "enum": ["confirmed", "rejected", "unclear"]},
+        "event": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
+        "reason": S_STR,
+    }, ["anchorId", "verdict", "event", "reason"])},
+}, ["resolutions"])
 S_LEDGER_ENCOUNTER_FRAGMENT = _obj({
     "sourceIds": {"type": "array", "minItems": 1, "maxItems": 12,
                   "items": {"type": "string", "pattern": "^L[0-9]{4,6}$"}},
@@ -976,6 +994,7 @@ S_SCHEMAS = {
         "anchors": {"type": "array", "maxItems": 4, "items": S_LEDGER_ANCHOR},
         "encounters": {"type": "array", "maxItems": 1, "items": S_LEDGER_ENCOUNTER_FRAGMENT},
     }, ["reviews", "coverage", "anchors", "encounters"]),
+    "ledger_anchor_resolution": S_LEDGER_ANCHOR_RESOLUTION,
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
         "relation": {"type": "string", "enum": ["confirms", "extends", "contradicts", "revises", "none"]},
@@ -1008,6 +1027,8 @@ def _schema_fuer(system: str) -> dict | None:
         return S_SCHEMAS["ledger"]
     if system.startswith("Du prüfst Ledger-Kandidaten"):
         return S_SCHEMAS["ledger_review"]
+    if system.startswith("Du löst NUR wenige strittige"):
+        return S_SCHEMAS["ledger_anchor_resolution"]
     if system.startswith("Du ordnest aktuelle"):
         return S_SCHEMAS["ledger_history"]
     if system.startswith("Du prüfst genau EINEN Absatz"):
