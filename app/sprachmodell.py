@@ -671,17 +671,23 @@ Melde in reviews NUR Kandidaten, die geändert werden müssen; nicht genannte Ka
 Prüfe besonders:
 - Wer tut was wem? actor/target und Besitzrichtung niemals vertauschen.
 - Pronomen nur auflösen, wenn der lokale Kontext es trägt; sonst die Entität allgemeiner lassen.
-- "Spielleitung" ist keine Figur. Sie erzählt oder spricht für NPCs. Trenne mehrere NPCs in derselben Spielleitungszeile, wenn der Dialog das zeigt.
-- Personen nicht verschmelzen: "Danke, Satuna. Ich bin der Altvater." bedeutet zwei Rollen, nicht Satuna = Altvater.
+- "Spielleitung", "Game Master" und vergleichbare Tischrollen sind keine Figuren der Spielwelt. Sie erzählen oder sprechen für NPCs. Verwende eine Tischrolle niemals als actor, target oder assertion.subject eines Weltfakts.
+- Personen nicht verschmelzen. Eine Anrede an Person A unmittelbar vor "ich bin B" macht A nicht zu B.
 - beobachtet/gesagt/geglaubt/erinnert/Vision sauber trennen; geplant/versucht ist nicht automatisch geschehen.
+- reine Spielmechanik (Würfel, Initiative, Regelwerte, Schadenszahlen) ist kein Weltfakt, solange daraus keine erzählerische Folge entsteht.
 - gleiche oder nahezu gleiche Kandidaten zusammenführen.
 Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" oder "reject". Bei repair/merge MUSS replacement ein vollständig source-belegtes Event im normalen Ledger-Schema sein. Bei reject ist replacement null. replacement.sourceIds dürfen ausschließlich aus dem bereitgestellten Abschnitt stammen und müssen die Aussage direkt tragen.
 
-coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Fakten. Gib dort ausschließlich importance "critical" oder "important" zurück, keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Ein kurzer Nebensatz darf aufgenommen werden, wenn er einen dauerhaften Zustand, eine Beziehung oder Verpflichtung festlegt. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
-Auch coverage.sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
-Antworte nur mit JSON {"reviews": [...], "coverage": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
+coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Ereignisse. Gib dort ausschließlich importance "critical" oder "important" zurück, keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
 
-SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
+anchors sind eine zweite, knappe Sicherheitslinie für DAUERHAFTE ODER FOLGENREICHE Zustände/Relationen. Gib einen Anchor auch dann aus, wenn ein Kandidat ihn bereits abbildet. Jeder Anchor ist atomar: subject + property + value, source-belegt, importance nur critical/important. originIds enthält die C-IDs der Kandidaten, die genau diesen Fakt abzubilden versuchen; wenn er komplett fehlt, ist originIds leer. Nutze nur universelle Eigenschaften aus dem Assertion-Schema. Keine Regelmechanik, keine bloße Atmosphäre, keine Routinebewegung. Wenn Identität, Besitz, Beziehung oder Verpflichtung nicht sicher aufgelöst werden kann, setze keine scheinbar präzise Relation.
+
+encounters beschreibt nur SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen/Kämpfe im Abschnitt. Kein einzelner Angriff und keine Würfelabfolge. Ein Fragment fasst eine erzählerische Phase zusammen: Beteiligte, Orte, Ziele, frei benannte domains (z. B. unterschiedliche Schauplätze/Ebenen), Wendepunkte, Ausgang/Folgen/offene Punkte. boundary ist start/middle/end/complete/unknown. Bei keinem substanziellen Encounter: leere Liste. Die Kategorien sind systemagnostisch; erfinde keine systemspezifischen Ebenen.
+
+Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
+Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
+
+SYSTEM_LEDGER_COVERAGE = """SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
 Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
 "Spielleitung" ist keine Figur; löse NPCs nur aus dem lokalen Kontext auf. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit. sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen.
 Wenn nichts Relevantes fehlt, events leer. Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -887,6 +893,30 @@ S_LEDGER_EVENT = _obj({
     "tags": S_ARR_STR,
 }, ["sourceIds", "summary", "kinds", "actors", "targets", "objects", "locations", "factions", "assertions",
     "epistemic", "modality", "importance", "tags"])
+S_LEDGER_ANCHOR = _obj({
+    "originIds": {"type": "array", "items": {"type": "string", "pattern": "^C[0-9]{4,6}$"}},
+    "sourceIds": {"type": "array", "minItems": 1, "maxItems": 6,
+                  "items": {"type": "string", "pattern": "^L[0-9]{4,6}$"}},
+    "subject": S_STR,
+    "property": {"type": "string", "enum": ["life_status", "physical_condition", "location", "possession",
+                                               "relationship", "identity", "knowledge", "allegiance", "goal",
+                                               "obligation", "reputation", "control", "role_status"]},
+    "value": S_STR,
+    "epistemic": {"type": "string", "enum": ["observed", "stated", "reported", "believed", "suspected",
+                                                "remembered", "vision", "dream", "inferred", "unknown"]},
+    "certainty": {"type": "string", "enum": ["high", "medium", "low"]},
+    "importance": {"type": "string", "enum": ["critical", "important"]},
+}, ["originIds", "sourceIds", "subject", "property", "value", "epistemic", "certainty", "importance"])
+S_LEDGER_ENCOUNTER_FRAGMENT = _obj({
+    "sourceIds": {"type": "array", "minItems": 1, "maxItems": 12,
+                  "items": {"type": "string", "pattern": "^L[0-9]{4,6}$"}},
+    "kind": {"type": "string", "enum": ["combat", "chase", "conflict", "social_conflict", "other"]},
+    "boundary": {"type": "string", "enum": ["start", "middle", "end", "complete", "unknown"]},
+    "participants": S_ARR_STR, "locations": S_ARR_STR, "objectives": S_ARR_STR, "domains": S_ARR_STR,
+    "summary": S_STR,
+    "turningPoints": S_ARR_STR, "outcomes": S_ARR_STR, "consequences": S_ARR_STR, "unresolved": S_ARR_STR,
+}, ["sourceIds", "kind", "boundary", "participants", "locations", "objectives", "domains", "summary",
+    "turningPoints", "outcomes", "consequences", "unresolved"])
 S_SCHEMAS = {
     "notes": _obj({"notizen": {"type": "array", "items": S_STR}, "_gerettet": {"type": "boolean"}}, ["notizen"]),
     "plan": _obj({
@@ -932,7 +962,9 @@ S_SCHEMAS = {
             "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
         }, ["originIds", "verdict", "reason", "replacement"])},
         "coverage": {"type": "array", "items": S_LEDGER_EVENT},
-    }, ["reviews", "coverage"]),
+        "anchors": {"type": "array", "items": S_LEDGER_ANCHOR},
+        "encounters": {"type": "array", "items": S_LEDGER_ENCOUNTER_FRAGMENT},
+    }, ["reviews", "coverage", "anchors", "encounters"]),
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
         "relation": {"type": "string", "enum": ["confirms", "extends", "contradicts", "revises", "none"]},
@@ -1823,9 +1855,16 @@ class Ablauf:
         }
         return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
 
-    def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
-        """0.4.53: Genau ein source-grounded Review je Quellblock. Derselbe Call repariert Kandidaten und schließt
-        nur critical/important Coverage-Lücken; dadurch entfallen der zweite Vollpass und der separate Coverage-Pass."""
+    @staticmethod
+    def _ledger_meta_entitaet(wert: str) -> bool:
+        """Tischrollen sind niemals Entitäten der Spielwelt. Absichtlich nur Rollenbezeichnungen, keine Systembegriffe."""
+        k = " ".join(re.findall(r"\w+", klartext(wert).casefold()))
+        return k in {"spielleitung", "game master", "gamemaster", "dungeon master"}
+
+    def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[
+            list[dict], dict, list[dict], list[dict]]:
+        """0.4.54: Ein source-grounded Review je Quellblock. Zusätzlich zu Reparatur/Coverage liefert derselbe Call
+        kanonische Zustands-/Relationsanker und systemagnostische Encounter-Fragmente; kein weiterer Vollpass."""
         quelle = {lid: z for lid, z in zeilen}
         teile = self._ledger_quellteile(zeilen)
         chunk_von = {}
@@ -1842,7 +1881,10 @@ class Ablauf:
 
         ersetzt: dict[str, dict | None] = {}
         coverage_neu: list[dict] = []
+        anchors_neu: list[dict] = []
+        encounter_fragmente: list[dict] = []
         coverage_seen: set[tuple] = set()
+        anchor_seen: set[tuple] = set()
         vorhandene_keys = {
             (tuple(e.get("sourceIds") or []), _notizkern(e.get("summary") or "")) for e in kandidaten
         }
@@ -1850,13 +1892,14 @@ class Ablauf:
                 "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageErrors": 0,
                 "coverageAdded": 0, "reviewCalls": 0, "sourceChunks": len(teile), "actions": []}
         system = SYSTEM_LEDGER_REVIEW.replace("{sprache}", _sprache(ein))
+        anchor_props = {"life_status", "physical_condition", "location", "possession", "relationship", "identity",
+                        "knowledge", "allegiance", "goal", "obligation", "reputation", "control", "role_status"}
 
         def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
             block = teile[chunk_nr]
             erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
             kandidaten_text = "\n".join(
                 f"{e['candidateId']} | {self._ledger_candidate_text(e)}" for e in batch) or "(keine)"
-            # Extrem dichte Blöcke werden nur bei Bedarf geteilt. Normalfall: exakt ein Review-Call je Quellblock.
             if len(batch) > LEDGER_REVIEW_BATCH and tokens(kandidaten_text) > 3500:
                 mitte = len(batch) // 2
                 pruefen(batch[:mitte], chunk_nr, suffix + "a")
@@ -1942,8 +1985,44 @@ class Ablauf:
                     "replacement": {"sourceIds": event.get("sourceIds") or [], "summary": event.get("summary") or ""},
                 })
 
-        # Auch Blöcke ohne Primärkandidaten werden genau einmal geprüft: so bleibt z. B. ein komplett übersehener Tod
-        # auffindbar, ohne einen dritten Vollpass über das Transkript zu bezahlen.
+            for roh in d.get("anchors") or []:
+                if not isinstance(roh, dict):
+                    continue
+                ids = [str(x) for x in roh.get("sourceIds") or [] if str(x) in erlaubte_ids][:6]
+                subject, prop, value = klartext(roh.get("subject")), str(roh.get("property") or ""), klartext(roh.get("value"))
+                importance = str(roh.get("importance") or "")
+                if not ids or not subject or not value or prop not in anchor_props or importance not in ("critical", "important"):
+                    continue
+                epistemic = str(roh.get("epistemic") or "unknown")
+                certainty = str(roh.get("certainty") or "medium")
+                origin = [str(x) for x in roh.get("originIds") or [] if str(x) in erlaubt_c]
+                key = (tuple(ids), _notizkern(subject), prop, _notizkern(value), epistemic)
+                if key in anchor_seen:
+                    continue
+                anchor_seen.add(key)
+                anchors_neu.append({"originIds": origin, "sourceIds": ids, "subject": subject, "property": prop,
+                                    "value": value, "epistemic": epistemic, "certainty": certainty,
+                                    "importance": importance, "chunk": chunk_nr})
+
+            for roh in d.get("encounters") or []:
+                if not isinstance(roh, dict):
+                    continue
+                ids = [str(x) for x in roh.get("sourceIds") or [] if str(x) in erlaubte_ids][:12]
+                summary = klartext(roh.get("summary") or "")[:500]
+                kind, boundary = str(roh.get("kind") or ""), str(roh.get("boundary") or "")
+                if not ids or not summary or kind not in ("combat", "chase", "conflict", "social_conflict", "other"):
+                    continue
+                if boundary not in ("start", "middle", "end", "complete", "unknown"):
+                    boundary = "unknown"
+                def liste(name: str, max_n: int = 12) -> list[str]:
+                    return [klartext(x)[:240] for x in roh.get(name) or [] if klartext(x)][:max_n]
+                encounter_fragmente.append({
+                    "sourceIds": ids, "kind": kind, "boundary": boundary, "participants": liste("participants"),
+                    "locations": liste("locations"), "objectives": liste("objectives"), "domains": liste("domains"),
+                    "summary": summary, "turningPoints": liste("turningPoints"), "outcomes": liste("outcomes"),
+                    "consequences": liste("consequences"), "unresolved": liste("unresolved"), "chunk": chunk_nr,
+                })
+
         for chunk_nr in range(len(teile)):
             pruefen(gruppen.get(chunk_nr, []), chunk_nr)
 
@@ -1958,9 +2037,145 @@ class Ablauf:
             x["_review"] = {"verdict": "accepted", "originIds": [cid], "reason": ""}
             aus.append(x)
             diag["accepted"] += 1
-        return aus + coverage_neu, diag
+        return aus + coverage_neu, diag, anchors_neu, encounter_fragmente
 
-    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
+    def _ledger_integrity(self, events: list[dict], anchors: list[dict],
+                          zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
+        """Kanonische Anchor-Fakten durchsetzen, ohne Sprach-/Systemregeln. Verknüpfte Kandidaten mit widersprechender
+        Assertion werden quarantänisiert; fehlende Anchor-Fakten werden als atomare source-grounded Events ergänzt."""
+        quelle = {lid: z for lid, z in zeilen}
+        alle_ids = set(quelle)
+        diag = {"anchors": len(anchors), "anchorAdded": 0, "anchorConflicts": 0, "metaRejected": 0,
+                "quarantined": []}
+        behalten: list[dict] = []
+
+        def meta_im_event(e: dict) -> bool:
+            for feld in ("actors", "targets"):
+                if any(self._ledger_meta_entitaet(x) for x in e.get(feld) or []):
+                    return True
+            return any(self._ledger_meta_entitaet(a.get("subject") or "")
+                       for a in e.get("assertions") or [] if isinstance(a, dict))
+
+        for e in events:
+            if meta_im_event(e):
+                diag["metaRejected"] += 1
+                diag["quarantined"].append({"reason": "table_role_as_world_entity",
+                                            "sourceIds": e.get("sourceIds") or [], "summary": e.get("summary") or ""})
+                continue
+            behalten.append(e)
+
+        def norm(x: str) -> str:
+            return _notizkern(klartext(x))
+
+        def passt(a: dict, h: dict) -> bool:
+            return (norm(a.get("subject") or "") == norm(h["subject"])
+                    and str(a.get("property") or "") == h["property"]
+                    and norm(a.get("value") or "") == norm(h["value"]))
+
+        for h in anchors:
+            if self._ledger_meta_entitaet(h.get("subject") or ""):
+                continue
+            origins = set(h.get("originIds") or [])
+            konflikte = []
+            if origins:
+                for e in behalten:
+                    e_origins = set((e.get("_review") or {}).get("originIds") or [])
+                    if not (origins & e_origins):
+                        continue
+                    for a in e.get("assertions") or []:
+                        if isinstance(a, dict) and str(a.get("property") or "") == h["property"] and not passt(a, h):
+                            konflikte.append(e)
+                            break
+            if konflikte:
+                for e in konflikte:
+                    if e in behalten:
+                        behalten.remove(e)
+                        diag["anchorConflicts"] += 1
+                        diag["quarantined"].append({"reason": "canonical_anchor_conflict",
+                                                    "sourceIds": e.get("sourceIds") or [],
+                                                    "summary": e.get("summary") or ""})
+
+            if any(passt(a, h) for e in behalten for a in e.get("assertions") or [] if isinstance(a, dict)):
+                continue
+            event = {
+                "sourceIds": h["sourceIds"],
+                "summary": f"{h['subject']}: {h['property']} = {h['value']}.",
+                "kinds": [{"life_status": "death_return", "physical_condition": "condition",
+                           "location": "location_change", "possession": "possession", "relationship": "relationship",
+                           "identity": "identity", "knowledge": "knowledge", "goal": "goal",
+                           "obligation": "commitment"}.get(h["property"], "state_change")],
+                "actors": [], "targets": [], "objects": [h["subject"]] if h["property"] == "possession" else [],
+                "locations": [], "factions": [],
+                "assertions": [{"subject": h["subject"], "property": h["property"], "value": h["value"],
+                                "epistemic": h["epistemic"], "certainty": h["certainty"]}],
+                "epistemic": h["epistemic"],
+                "modality": "actual" if h["epistemic"] == "observed" else "alleged",
+                "importance": h["importance"], "tags": ["integrity_anchor"],
+            }
+            event = self._ledger_event_normalisieren(event, alle_ids, quelle)
+            if event is None:
+                continue
+            event["extractionPass"] = "integrity_anchor"
+            event["_review"] = {"verdict": "anchor_added", "originIds": h.get("originIds") or [],
+                                "reason": "kanonischer Zustand/Relation fehlte oder widersprach Kandidat"}
+            behalten.append(event)
+            diag["anchorAdded"] += 1
+        return behalten, diag
+
+    @staticmethod
+    def _ledger_encounters(fragmente: list[dict]) -> list[dict]:
+        """Benachbarte source-grounded Encounter-Fragmente konservativ zu längeren Encounters verbinden."""
+        if not fragmente:
+            return []
+        fragmente = sorted(fragmente, key=lambda f: (int(f.get("chunk") or 0), (f.get("sourceIds") or [""])[0]))
+        gruppen: list[list[dict]] = []
+
+        def signatur(fs: list[dict]) -> set[str]:
+            aus = set()
+            for f in fs:
+                for feld in ("participants", "locations", "domains"):
+                    aus.update(_notizkern(str(x)) for x in f.get(feld) or [] if _notizkern(str(x)))
+            return aus
+
+        for f in fragmente:
+            if not gruppen:
+                gruppen.append([f])
+                continue
+            g = gruppen[-1]
+            prev = g[-1]
+            adjacent = int(f.get("chunk") or 0) <= int(prev.get("chunk") or 0) + 1
+            abgeschlossen = prev.get("boundary") in ("end", "complete") or f.get("boundary") == "complete"
+            neuer_start = f.get("boundary") == "start" and prev.get("boundary") not in ("start", "middle", "unknown")
+            overlap = bool(signatur(g) & signatur([f]))
+            if adjacent and not abgeschlossen and not neuer_start and (overlap or not signatur(g) or not signatur([f])):
+                g.append(f)
+            else:
+                gruppen.append([f])
+
+        def uniq(xs):
+            return list(dict.fromkeys(x for x in xs if x))
+
+        aus = []
+        for nr, g in enumerate(gruppen, 1):
+            def sammeln(feld):
+                return uniq([x for f in g for x in f.get(feld) or []])
+            def belegt(feld):
+                return [{"sourceIds": f.get("sourceIds") or [], "text": x}
+                        for f in g for x in f.get(feld) or [] if x]
+            aus.append({
+                "encounterId": f"EN{nr:04d}",
+                "kind": g[0].get("kind") or "other",
+                "sourceIds": uniq([x for f in g for x in f.get("sourceIds") or []]),
+                "participants": sammeln("participants"), "locations": sammeln("locations"),
+                "objectives": sammeln("objectives"), "domains": sammeln("domains"),
+                "phases": [{"sourceIds": f.get("sourceIds") or [], "summary": f.get("summary") or "",
+                            "boundary": f.get("boundary") or "unknown"} for f in g],
+                "turningPoints": belegt("turningPoints"), "outcomes": belegt("outcomes"),
+                "consequences": belegt("consequences"), "unresolved": belegt("unresolved"),
+            })
+        return aus
+
+    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict)    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
         """Dritter, enger Pass: nur fehlende critical/important Fakten. So kann Review auch reine Auslassungen finden."""
         quelle = {lid: z for lid, z in zeilen}
         teile = self._ledger_quellteile(zeilen)
@@ -2148,12 +2363,13 @@ class Ablauf:
         return aus
 
     def ledger(self, ein: dict) -> dict:
-        """0.4.53 Schatten-Ledger v2: ein Primärpass, danach pro Quellblock kombinierter Review+Coverage und Historie.
+        """0.4.54 Schatten-Ledger v3: Primärpass + kombinierter Review mit kanonischen Anchors und Encounter-Fragmenten.
         Der geprüfte Ledger beeinflusst weiterhin weder Recap noch Bibelvorschläge."""
         zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
         if not zeilen:
-            return {"version": 2, "state": "empty", "events": [], "states": [], "historySources": [],
-                    "historyLinks": [], "review": {"state": "empty"}}
+            return {"version": 3, "state": "empty", "events": [], "states": [], "encounters": [],
+                    "historySources": [], "historyLinks": [], "review": {"state": "empty"},
+                    "integrity": {"anchors": 0, "anchorAdded": 0, "anchorConflicts": 0, "metaRejected": 0}}
         self._schritt("ledger")
         # 0.4.53: Kein zweiter Volltranskript-Pass mehr. Der Primärpass sammelt Ereignisse; der anschließende
         # source-grounded Review schließt im selben Quellblock gezielt wichtige Kontinuitäts-/Coverage-Lücken.
@@ -2170,7 +2386,9 @@ class Ablauf:
             e["candidateId"] = f"C{len(kandidaten) + 1:04d}"
             kandidaten.append(e)
 
-        events, review = self._ledger_review(ein, kandidaten, zeilen)
+        events, review, anchors, encounter_fragmente = self._ledger_review(ein, kandidaten, zeilen)
+        events, integrity = self._ledger_integrity(events, anchors, zeilen)
+        encounters = self._ledger_encounters(encounter_fragmente)
         events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
 
         for nr, e in enumerate(events, 1):
@@ -2189,9 +2407,11 @@ class Ablauf:
             link_map.setdefault(x["eventId"], []).append(x)
         for e in events:
             e["history"] = link_map.get(e["eventId"], [])
-        return {"version": 2, "state": "ok", "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
-                "events": events, "states": states, "historySources": sources, "historyLinks": links,
-                "review": review}
+        review["anchorsFound"] = len(anchors)
+        review["encounterFragments"] = len(encounter_fragmente)
+        return {"version": 3, "state": "ok", "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
+                "events": events, "states": states, "encounters": encounters,
+                "historySources": sources, "historyLinks": links, "review": review, "integrity": integrity}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
@@ -2262,8 +2482,9 @@ class Ablauf:
                 self.letztes_ledger = self.ledger(recap_ein)
             except SprachmodellFehler as e:
                 log.warning("Schatten-Ledger übersprungen: %s", e)
-                self.letztes_ledger = {"version": 2, "state": "failed", "error": str(e), "events": [], "states": [],
-                                       "historySources": [], "historyLinks": [], "review": {"state": "failed"}}
+                self.letztes_ledger = {"version": 3, "state": "failed", "error": str(e), "events": [], "states": [],
+                                       "encounters": [], "historySources": [], "historyLinks": [],
+                                       "review": {"state": "failed"}, "integrity": {"state": "failed"}}
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
                "tokensOut": self.zaehler.tokens_out}
