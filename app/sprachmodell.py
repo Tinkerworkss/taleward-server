@@ -655,7 +655,7 @@ Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur"
 
 
 SYSTEM_LEDGER_EVENTS = """Du extrahierst ein Ereignis-Ledger aus EINEM Abschnitt des ORIGINALTRANSKRIPTS einer Pen-&-Paper-Session. Jede Zeile hat eine unveränderliche Source-ID Lxxxx. Schreibe keine Chronik und keine Prosa, sondern atomare, belegte Ereignisse.
-Erfasse NUR Fakten, die später mindestens einen konkreten Zweck erfüllen: recap = wichtig für den erzählten Verlauf/Wendepunkt/Ausgang; openThread = am Sitzungsende noch offen und für eine spätere Runde relevant; bible = dauerhaftes Wissen über NPC, Ort, Fraktion, Gegenstand, Identität, Beziehung, Rolle oder Verpflichtung. Setze relevance mit diesen drei Booleans. Wenn alle drei false wären, gib das Ereignis NICHT aus.
+Erfasse NUR Fakten, die später mindestens einen konkreten Zweck erfüllen: recap = wichtig für den erzählten Verlauf/Wendepunkt/Ausgang; openThread = wird später gebraucht, um einen offenen Faden zu erkennen oder als gelöst zu markieren (Ziel, Verpflichtung, Gefahr, ungelöste Frage/Folge); bible = dauerhaftes Wissen über NPC, Ort, Fraktion, Gegenstand, Identität, Beziehung, Rolle oder Verpflichtung. Setze relevance mit diesen drei Booleans. Wenn alle drei false wären, gib das Ereignis NICHT aus.
 Erfasse besonders Wendepunkte, Handlungen mit Folgen, Rettung/Tod/Verletzung, relevante Orts- und Besitzwechsel, Entdeckungen, Abmachungen, Ziele, Identitäten und Transformationen. Atmosphäre, Routine, bloße Anwesenheit und folgenlose Kleinschritte gehören nicht in den finalen Ledger. Ein Ereignis darf mehrere kinds haben.
 Für Zustände nutze assertions: subject = betroffene Entität, property = eine der universellen Eigenschaften life_status, physical_condition, location, possession, relationship, identity, knowledge, allegiance, goal, obligation, reputation, control, role_status oder other; value = der konkrete Zustand. epistemic hält fest, ob etwas beobachtet, nur gesagt/berichtet/geglaubt/vermutet/erinnert, Vision/Traum oder unklar ist.
 Wichtig: "für tot gehalten" ist NICHT dasselbe wie tatsächlich tot. Geplant ist nicht geschehen, versucht ist nicht gelungen. Eine spätere Enthüllung darf einem früheren Eindruck widersprechen; beide Ereignisse bleiben im Ledger. Sprecherlabels stammen aus automatischer Erkennung und können falsch sein; erfinde deshalb keine Identität nur aus einem Label.
@@ -1902,7 +1902,7 @@ class Ablauf:
 
     def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[
             list[dict], dict, list[dict], list[dict]]:
-        """0.4.54: Ein source-grounded Review je Quellblock. Zusätzlich zu Reparatur/Coverage liefert derselbe Call
+        """0.4.55: Ein source-grounded Review je Quellblock. Zusätzlich zu Reparatur/Coverage liefert derselbe Call
         kanonische Zustands-/Relationsanker und systemagnostische Encounter-Fragmente; kein weiterer Vollpass."""
         quelle = {lid: z for lid, z in zeilen}
         teile = self._ledger_quellteile(zeilen)
@@ -2031,6 +2031,8 @@ class Ablauf:
                 subject, prop, value = klartext(roh.get("subject")), str(roh.get("property") or ""), klartext(roh.get("value"))
                 importance = str(roh.get("importance") or "")
                 if not ids or not subject or not value or prop not in anchor_props or importance not in ("critical", "important"):
+                    continue
+                if prop == "physical_condition" and importance != "critical":
                     continue
                 epistemic = str(roh.get("epistemic") or "unknown")
                 certainty = str(roh.get("certainty") or "medium")
@@ -2470,6 +2472,9 @@ class Ablauf:
         minor_trotzdem = {"life_status", "possession", "relationship", "identity", "allegiance", "obligation",
                           "role_status"}
         for e in events:
+            rel = e.get("relevance") or {}
+            if not (rel.get("bible") or rel.get("openThread") or e.get("importance") == "critical"):
+                continue
             props = {str(a.get("property") or "") for a in e.get("assertions") or [] if isinstance(a, dict)}
             # Frühere Recaps sind kein Suchindex für jede Handlung derselben Figur. Nur echte Zustands-/Kontinuitäts-
             # Eigenschaften dürfen einen History-Modellcall auslösen; bei minor nur die dauerhaft wichtigen Typen.
