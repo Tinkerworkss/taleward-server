@@ -963,3 +963,127 @@ def test_ledger_historie_wird_nur_fuer_aktuelle_entitaeten_geholt_und_ids_validi
         "historyIds": ["H0001"],
         "reason": "Der frühere Todesstatus wird durch das lebendige Auftauchen revidiert.",
     }]
+
+
+def test_ledger_truncation_teilt_nur_betroffenen_quellblock_statt_ihn_zu_verlieren():
+    """0.4.52: Nach zwei length-Antworten wird der Ledger-Block halbiert und beide Hälften werden weiter verarbeitet."""
+    from app.sprachmodell import Ablauf, Antwort, SYSTEM_LEDGER_EVENTS, transkript_zeilen_mit_ids
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = 0
+
+        def chat(self, system, nutzer):
+            self.aufrufe += 1
+            ids = re.findall(r"(?m)^(L\\d{4,6}) \\|", nutzer)
+            if len(ids) > 3:
+                return Antwort('{"events":[', 1, 1, done_reason="length")
+            return Antwort(json.dumps({"events": [
+                _ledger_event([ids[0]], f"Ereignis {ids[0]}.")
+            ]}), 1, 1)
+
+    ein = _ein(8)
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    k = Klient()
+    events = Ablauf(k)._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
+    assert len(events) >= 2
+    assert {e["sourceIds"][0] for e in events}.issubset({lid for lid, _ in zeilen})
+    assert k.aufrufe >= 4  # voller Block: 2 Reparaturversuche, danach mindestens zwei erfolgreiche Teilblöcke
+
+
+def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_reparieren():
+    """0.4.52: Zwei Pässe dürfen nicht als widersprüchliche Wahrheit nebeneinander stehen bleiben."""
+    from app.sprachmodell import Ablauf, Antwort, transkript_zeilen_mit_ids
+
+    replacement = {
+        "sourceIds": ["L0001"],
+        "summary": "Pipo gibt der Gruppe sein Schwert.",
+        "kinds": ["possession"],
+        "actors": ["Pipo"],
+        "targets": ["Gruppe"],
+        "objects": ["Schwert"],
+        "locations": [],
+        "factions": [],
+        "assertions": [{
+            "subject": "Schwert", "property": "possession", "value": "bei der Gruppe",
+            "epistemic": "observed", "certainty": "high",
+        }],
+        "epistemic": "observed",
+        "modality": "actual",
+        "importance": "critical",
+        "tags": [],
+    }
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            assert system.startswith("Du prüfst Ledger-Kandidaten")
+            return Antwort(json.dumps({"reviews": [{
+                "originIds": ["C0001", "C0002"],
+                "verdict": "merge",
+                "reason": "Beide Kandidaten beschreiben dieselbe Übergabe; einer hatte die Richtung vertauscht.",
+                "replacement": replacement,
+            }]}), 1, 1)
+
+    ein = _ein(2)
+    ein["transkript"][0]["sprecher"] = "Spielleitung"
+    ein["transkript"][0]["text"] = "Pipo reicht euch sein Schwert. Nehmt es."
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    falsch = {**replacement, "summary": "Die Gruppe gibt Pipo das Schwert.", "actors": ["Gruppe"],
+              "targets": ["Pipo"], "candidateId": "C0001", "extractionPass": "events"}
+    richtig = {**replacement, "candidateId": "C0002", "extractionPass": "continuity"}
+    events, diag = Ablauf(Klient())._ledger_review(ein, [falsch, richtig], zeilen)
+    assert len(events) == 1
+    assert events[0]["actors"] == ["Pipo"] and events[0]["targets"] == ["Gruppe"]
+    assert events[0]["_review"]["verdict"] == "merge"
+    assert diag["merged"] == 1
+
+
+def test_ledger_coverage_kann_vollstaendig_fehlenden_kritischen_status_nachtragen():
+    """0.4.52: Review vorhandener Events reicht nicht; Coverage darf source-belegte wichtige Auslassungen ergänzen."""
+    from app.sprachmodell import Ablauf, Antwort, transkript_zeilen_mit_ids
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            assert system.startswith("Du suchst im ORIGINALTRANSKRIPT")
+            return Antwort(json.dumps({"events": [
+                _ledger_event(["L0001"], "Kano stirbt.", subject="Kano", value="dead", epistemic="observed")
+            ]}), 1, 1)
+
+    ein = _ein(2)
+    ein["transkript"][0]["text"] = "Kano bricht tot zusammen."
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    diag = {"coverageAdded": 0}
+    events = Ablauf(Klient())._ledger_coverage(ein, [], zeilen, diag)
+    assert len(events) == 1
+    assert events[0]["assertions"][0]["subject"] == "Kano"
+    assert events[0]["assertions"][0]["value"] == "dead"
+    assert events[0]["_review"]["verdict"] == "coverage_added"
+    assert diag["coverageAdded"] == 1
+
+
+def test_ledger_bibelhistorie_nicht_mehr_nur_wegen_gleichem_namen():
+    """0.4.52: Eine beliebige Handlung von Lysander darf nicht seine Rollenbeschreibung als History-Link anbieten."""
+    from app.sprachmodell import Ablauf
+
+    ein = _ein(1)
+    ein["bibel"] = [{"id": "l", "typ": "npc", "name": "Lysander", "zusammenfassung": "berühmter Schriftsteller"}]
+    ziel = {
+        "eventId": "E0001", "sourceIds": ["L0001"], "summary": "Lysander verspricht Pipo eine Ode.",
+        "actors": ["Lysander"], "targets": ["Pipo"], "objects": [], "locations": [], "factions": [],
+        "assertions": [{"subject": "Lysander", "property": "goal", "value": "Ode schreiben",
+                        "epistemic": "stated", "certainty": "high"}],
+    }
+    sources, event_map = Ablauf._ledger_history_sources(Ablauf.__new__(Ablauf), ein, [ziel])
+    assert sources == [] and event_map == {}
+
+    ident = {**ziel, "assertions": [{"subject": "Lysander", "property": "identity", "value": "Schriftsteller",
+                                     "epistemic": "stated", "certainty": "high"}]}
+    ablauf = Ablauf.__new__(Ablauf)
+    sources, event_map = ablauf._ledger_history_sources(ein, [ident])
+    assert len(sources) == 1 and event_map == {"E0001": ["H0001"]}
