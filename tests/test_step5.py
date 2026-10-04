@@ -143,7 +143,7 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     # zweite Prüfung, zweite Relationsprüfung, Vorschläge (0.4.6)
     assert len(api.aufrufe) == 8 and recap["body"]["response_format"] == {"type": "json_object"}
     assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
-    assert api.aufrufe[3]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
+    assert api.aufrufe[3]["system"].startswith("Du prüfst genau EINEN Absatz") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
     for a in api.aufrufe[1:7]:  # Vollständigkeit, Prüfungen und Nachbesserung sehen nur, was der Recap sah
         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
             assert verboten not in a["nutzer"] + a["system"], verboten
