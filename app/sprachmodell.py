@@ -819,7 +819,20 @@ S_SCHEMAS = {
         "urteil": {"type": "string", "enum": ["belegt", "teilweise", "unbelegt", "widerspricht", "witz"]},
         "stellen": {"type": "array", "items": _obj({"zeit": S_STR, "zitat": S_STR}, ["zeit", "zitat"])},
         "begruendung": S_STR
-    }, ["nr", "urteil", "stellen", "begruendung"])}}, ["absaetze"]),
+    }, ["nr", "urteil"])}}, ["absaetze"]),
+    "part": _obj({"zusammenfassung": S_STR}, ["zusammenfassung"]),
+    "proposals": _obj({"proposals": {"type": "array", "items": _obj({
+        "entryType": {"type": "string", "enum": ["npc", "location", "quest", "item", "faction", "other"]},
+        "action": {"type": "string", "enum": ["create", "update", "reveal"]},
+        "targetEntryId": {"type": ["string", "null"]},
+        "title": S_STR, "detail": S_STR,
+        "gmNotes": {"type": ["string", "null"]},
+        "suggestedVisibility": {"type": "string", "enum": ["public", "gm_only"]},
+        "visibilityReason": {"type": ["string", "null"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": _obj({"start": S_STR, "quote": S_STR}, ["start", "quote"])}
+    }, ["entryType", "action", "title", "detail"])}}, ["proposals"]),
     "relations": _obj({"claims": {"type": "array", "items": _obj({
         "claim": S_STR,
         "urteil": {"type": "string", "enum": ["stimmt", "widerspricht", "unklar"]},
@@ -834,8 +847,12 @@ def _schema_fuer(system: str) -> dict | None:
         return S_SCHEMAS["notes"]
     if system.startswith("Du klassifizierst die Szenennotizen"):
         return S_SCHEMAS["plan"]
+    if system.startswith("Du hilfst bei der Nachbereitung einer langen"):
+        return S_SCHEMAS["part"]
     if "Was bisher geschah" in system:
         return S_SCHEMAS["recap"]
+    if system.startswith("Du pflegst die Kampagnen-Bibel"):
+        return S_SCHEMAS["proposals"]
     if system.startswith("Du vergleichst den Recap"):
         return S_SCHEMAS["missing"]
     if system.startswith("Du prüfst genau EINEN Absatz"):
