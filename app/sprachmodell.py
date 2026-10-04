@@ -663,7 +663,7 @@ Bei längeren Konflikten, Kämpfen oder Verfolgungen NICHT jede Runde, jeden Ang
 sourceIds müssen die Aussage direkt tragen und dürfen ausschließlich aus diesem Abschnitt stammen. Keine Source-ID erfinden. Lieber zwei kleine Events als ein vermischtes.
 Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
-SYSTEM_LEDGER_CONTINUITY = """Du extrahierst aus EINEM Abschnitt des ORIGINALTRANSKRIPTS die leicht übersehenen Kontinuitätsfakten einer Pen-&-Paper-Session. Jede Zeile hat eine Source-ID Lxxxx.
+SYSTEM_LEDGER_CONTINUITY = """Du extrahierst aus EINEM Abschnitt des ORIGINALTRANSKRIPTS die leicht übersehenen Kontinuitätsfakten einer Pen-&-Paper-Session. Jede Zeile hat eine Source-ID Lxxxx. Jedes Event braucht relevance mit recap/openThread/bible und darf nur ausgegeben werden, wenn mindestens eines davon true ist.
 Suche ausdrücklich nach Beziehungen ("wir kennen uns seit …", Verwandtschaft, Loyalität, Feindschaft), Besitz und Übergaben mit Richtung, Versprechen/Schulden/Deals, Wissen und Enthüllungen, Identität/Verkleidung, scheinbaren oder behaupteten Zuständen, benannten Gegenständen sowie Unterschieden zwischen Person A und Person B. Erfasse auch einen kurzen Nebensatz, wenn er später wichtig werden kann.
 Nutze dieselbe Event-Struktur wie das Ereignis-Ledger. assertions tragen subject/property/value und den epistemischen Status. Erfinde nichts und leite keine Weltwahrheit aus einem bloßen Gerücht ab. sourceIds müssen die Aussage direkt belegen und im Abschnitt vorhanden sein.
 Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -701,7 +701,7 @@ Sprecherlabels sind automatisch erkannt und können falsch sein. Berücksichtige
 Wer gibt wem was, wer ist wer und wer schuldet wem was niemals umdrehen. Eine Anrede macht Angesprochenen und Sprecher nicht identisch. Reine Regelmechanik ist keine Weltwahrheit.
 Antworte nur mit JSON {"resolutions":[{"anchorId":"A0001","verdict":"confirmed|rejected|unclear","event":{...}|null,"reason":"..."}]}. Sprache: {sprache}."""
 
-SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
+SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Jedes Event braucht relevance mit recap/openThread/bible und darf nur ausgegeben werden, wenn mindestens eines davon true ist. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
 Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
 "Spielleitung" ist keine Figur; löse NPCs nur aus dem lokalen Kontext auf. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit. sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen.
 Wenn nichts Relevantes fehlt, events leer. Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -1896,9 +1896,9 @@ class Ablauf:
 
     @staticmethod
     def _ledger_meta_entitaet(wert: str) -> bool:
-        """Tischrollen sind niemals Entitäten der Spielwelt. Absichtlich nur Rollenbezeichnungen, keine Systembegriffe."""
-        k = " ".join(re.findall(r"\w+", klartext(wert).casefold()))
-        return k in {"spielleitung", "game master", "gamemaster", "dungeon master"}
+        """Tischrollen sind niemals Entitäten der Spielwelt; Zusätze wie „Spielleitung (NPC)“ zählen ebenfalls."""
+        k = klartext(wert)
+        return bool(re.search(r"\b(?:Spielleitung|Game\s*Master|Gamemaster|Dungeon\s*Master)\b", k, re.IGNORECASE))
 
     def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[
             list[dict], dict, list[dict], list[dict]]:
@@ -1932,8 +1932,7 @@ class Ablauf:
                 "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageErrors": 0,
                 "coverageAdded": 0, "reviewCalls": 0, "sourceChunks": len(teile), "actions": []}
         system = SYSTEM_LEDGER_REVIEW.replace("{sprache}", _sprache(ein))
-        anchor_props = {"life_status", "physical_condition", "location", "possession", "relationship", "identity",
-                        "knowledge", "allegiance", "goal", "obligation", "reputation", "control", "role_status"}
+        anchor_props = {"life_status", "identity", "possession", "relationship", "obligation", "physical_condition"}
 
         def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
             block = teile[chunk_nr]
@@ -2533,16 +2532,18 @@ class Ablauf:
         return aus
 
     def ledger(self, ein: dict) -> dict:
-        """0.4.54 Schatten-Ledger v3: Primärpass + kombinierter Review mit kanonischen Anchors und Encounter-Fragmenten.
-        Der geprüfte Ledger beeinflusst weiterhin weder Recap noch Bibelvorschläge."""
+        """0.4.55 Schatten-Ledger v4: relevance-first, kombinierter Review, Anchors nur als Prüfhinweise,
+        gezielter Micro-Resolver und konservative Encounter. Noch ohne Einfluss auf Recap/Bibel."""
         zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
         if not zeilen:
-            return {"version": 3, "state": "empty", "events": [], "states": [], "encounters": [],
+            return {"version": 4, "state": "empty", "events": [], "states": [], "encounters": [],
                     "historySources": [], "historyLinks": [], "review": {"state": "empty"},
-                    "integrity": {"anchors": 0, "anchorAdded": 0, "anchorConflicts": 0, "metaRejected": 0}}
+                    "integrity": {"anchors": 0, "anchorAdded": 0, "anchorConflicts": 0, "anchorMissing": 0,
+                                  "metaSanitized": 0, "metaRejected": 0},
+                    "relevance": {"recap": 0, "openThread": 0, "bible": 0}}
         self._schritt("ledger")
-        # 0.4.54 behält den 0.4.53-Effizienzpfad: kein zweiter Volltranskript-Pass. Primärpass und derselbe
-        # source-grounded Review liefern Events, wichtige Anchors und Encounter-Fragmente.
+        # Kein zweiter Volltranskript-Pass: Primärpass + source-grounded Review. Nur strittige Hochrisiko-Anchors
+        # bekommen danach einen kleinen Micro-Review mit wenigen Nachbarzeilen.
         roh = self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
 
         # Nur wirklich identische Kandidaten vor dem Review entfernen. Semantisch ähnliche/konfligierende Kandidaten
@@ -2557,6 +2558,7 @@ class Ablauf:
             kandidaten.append(e)
 
         events, review, anchors, encounter_fragmente = self._ledger_review(ein, kandidaten, zeilen)
+        events, anchor_resolution = self._ledger_anchor_resolve(ein, events, anchors, zeilen)
         events, integrity = self._ledger_integrity(events, anchors, zeilen)
         encounters = self._ledger_encounters(encounter_fragmente)
         events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
@@ -2578,9 +2580,12 @@ class Ablauf:
         for e in events:
             e["history"] = link_map.get(e["eventId"], [])
         review["anchorsFound"] = len(anchors)
+        review["anchorResolution"] = anchor_resolution
         review["encounterFragments"] = len(encounter_fragmente)
-        return {"version": 3, "state": "ok", "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
-                "events": events, "states": states, "encounters": encounters,
+        relevance = {k: sum(1 for e in events if (e.get("relevance") or {}).get(k) is True)
+                     for k in ("recap", "openThread", "bible")}
+        return {"version": 4, "state": "ok", "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
+                "events": events, "states": states, "encounters": encounters, "relevance": relevance,
                 "historySources": sources, "historyLinks": links, "review": review, "integrity": integrity}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
@@ -2652,8 +2657,9 @@ class Ablauf:
                 self.letztes_ledger = self.ledger(recap_ein)
             except SprachmodellFehler as e:
                 log.warning("Schatten-Ledger übersprungen: %s", e)
-                self.letztes_ledger = {"version": 3, "state": "failed", "error": str(e), "events": [], "states": [],
-                                       "encounters": [], "historySources": [], "historyLinks": [],
+                self.letztes_ledger = {"version": 4, "state": "failed", "error": str(e), "events": [], "states": [],
+                                       "encounters": [], "relevance": {"recap": 0, "openThread": 0, "bible": 0},
+                                       "historySources": [], "historyLinks": [],
                                        "review": {"state": "failed"}, "integrity": {"state": "failed"}}
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
