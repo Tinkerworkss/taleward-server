@@ -143,6 +143,19 @@ def eingabe_aus_schnittstelle(server: Server, session_id: str) -> tuple[dict, di
                     bibel=bibel, geheim=geheim)
     recap_ein = basis.als_dict()
     recap_ein["geheim"] = []
+    # 0.4.51 Schatten-Ledger: frühere Recaps bleiben lokal im Vergleichswerkzeug und werden nie komplett in einen
+    # Modellprompt gekippt. Der Ledger extrahiert erst die aktuelle Session und holt danach nur passende Ausschnitte.
+    historie = []
+    for alt in server.holen(f"/campaigns/{c['id']}/sessions"):
+        if int(alt.get("number") or 0) >= int(s["number"]) or alt.get("state") not in ("published", "awaiting_review"):
+            continue
+        try:
+            rr = server.holen(f"/sessions/{alt['id']}/recap")
+        except VergleichFehler:
+            continue
+        historie.append({"session": alt.get("number"), "title": rr.get("title") or alt.get("title") or "",
+                          "text": rr.get("text") or "", "openThreads": rr.get("openThreads") or []})
+    recap_ein["_historie"] = historie
     vorschlag_ein = basis.als_dict()
     vorschlag_ein["bibel"] = [{"id": e["id"], "typ": e["type"], "name": e["name"],
                                "zusammenfassung": e.get("summary") or "", "gm_notes": e.get("gmNotes") or None}
@@ -189,6 +202,7 @@ class Ergebnis:
     richter: dict = field(default_factory=dict)  # Bewertung des fertigen Textes durch den festen Richter
     richter_absaetze: list[dict] = field(default_factory=list)
     pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
+    ledger: dict = field(default_factory=dict)  # 0.4.51: source-belegter Schatten-Ledger; beeinflusst den Recap nicht
 
     @property
     def token_s(self) -> float:
@@ -261,6 +275,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
                               stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
                               gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
     ablauf.notizen_vorgabe = einst.notizen
+    ablauf.ledger_shadow = True
     t0 = time.monotonic()
     try:
         d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
@@ -288,6 +303,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         erg.fehlend = list(getattr(ablauf, "letzter_befund_fehlend", []) or [])
         erg.pruefung_vorher = list(getattr(ablauf, "letzte_pruefung_vorher", []) or [])
         erg.pruefung_nachher = list(getattr(ablauf, "letzte_pruefung_nachher", []) or [])
+        erg.ledger = dict(getattr(ablauf, "letztes_ledger", {}) or {})
         if einst.pruefliste:
             erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
         k.entladen()
@@ -325,7 +341,7 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 # ---------------------------------------------------------------- Bericht
 # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
-STUFEN = ("Transkript", "Notizen", "Plan", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
+STUFEN = ("Transkript", "Notizen", "Plan", "Ledger", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
 
 
 def pruefliste_lesen(text: str) -> list[dict]:
@@ -364,6 +380,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
         "Transkript": "\n".join(transkript_zeilen(recap_ein.get("transkript") or [])),
         "Notizen": e.notizen,
         "Plan": "\n".join(p.get("notiz", "") for p in e.plan),
+        "Ledger": "",
         "Teile": e.verlauf,
         "Kapitel 1": e.kapitel1,
         "Kapitel 2": e.kapitel2,
@@ -375,7 +392,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
     for p in punkte:
         vorkommen = {}
         for name in STUFEN:
-            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
+            if p["bereich"] == "Vorschläge" and name in ("Ledger", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
                 vorkommen[name] = None  # für Vorschläge nicht gefragt
             elif name == "Kapitel 1" and not e.kapitel1:
                 vorkommen[name] = None
@@ -385,6 +402,20 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
                 vorkommen[name] = None  # kurze Runde: keine Notizen
             elif name == "Plan" and not e.plan:
                 vorkommen[name] = None  # kurze Runde oder Plan-Aufruf ohne gültige Auswahl
+            elif name == "Ledger":
+                events = (e.ledger or {}).get("events") or []
+                if not events:
+                    vorkommen[name] = None
+                else:
+                    # Strenger als der alte Stichwortcheck: alle Gruppen müssen im SELBEN source-belegten Event
+                    # vorkommen. Evidence-Originaltext zählt absichtlich nicht, sonst würde Extraktionsverlust verdeckt.
+                    def event_text(ev):
+                        felder = [ev.get("summary", "")] + list(ev.get("actors") or []) + list(ev.get("targets") or [])
+                        felder += list(ev.get("objects") or []) + list(ev.get("locations") or []) + list(ev.get("factions") or [])
+                        felder += [f"{a.get('subject', '')} {a.get('property', '')} {a.get('value', '')}"
+                                   for a in ev.get("assertions") or [] if isinstance(a, dict)]
+                        return " ".join(str(x) for x in felder)
+                    vorkommen[name] = any(_kommt_vor(p["woerter"], event_text(ev)) for ev in events)
             elif name == "Teile" and not e.verlauf:
                 vorkommen[name] = None  # direkt, ohne Teil-Zusammenfassungen
             else:
@@ -635,6 +666,10 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                        f"{belegt} belegt, {ergaenzt} ergänzt; Relationen (Transkript): {wider} von "
                        f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
+                if erg.ledger:
+                    melden(f"  Ledger (Schatten): {len(erg.ledger.get('events') or [])} Events, "
+                           f"{len(erg.ledger.get('states') or [])} States, "
+                           f"{len(erg.ledger.get('historyLinks') or [])} History-Links")
             if erg.pruefliste:
                 for name in STUFEN:
                     werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
