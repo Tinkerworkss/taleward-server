@@ -273,7 +273,9 @@ def test_fehlender_recap_nennt_nur_die_form():
     try:
         Ablauf(K()).recap(ein, "Transkript", "…")
     except SprachmodellFehler as e:
-        assert "title:str[9]" in str(e) and "summary_de:{a}" in str(e) and "Kapitel" not in str(e)
+        meldung = str(e)
+        assert "text" in meldung and "required" in meldung and "summary_de" in meldung
+        assert "Kapitel 3" not in meldung  # keine Modellinhalte in Fehlermeldungen
     else:
         raise AssertionError("kein Fehler")
 
