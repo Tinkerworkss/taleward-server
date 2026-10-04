@@ -746,6 +746,7 @@ def modellvergleich(
     temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
     pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
     notizen: Path = typer.Option(None, "--notizen", help="Fertige notizen.txt eines früheren Laufs statt neuer Szenennotizen – für Vergleiche auf identischer Grundlage"),
+    nur_ledger: bool = typer.Option(False, "--nur-ledger", help="Nur den 0.4.52-Schatten-Ledger aus dem Originaltranskript testen; überspringt Notizen, Plan, Recap, Reviews und Vorschläge"),
 ):
     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
     Vergleichen am eigenen PC. Liest nur über die Schnittstelle, ändert nichts auf dem Server."""
@@ -769,11 +770,13 @@ def modellvergleich(
                                          "oder den vollen Pfad angeben.")
         einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
                                  pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [],
-                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "")
+                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "", nur_ledger=nur_ledger)
         if pruefliste:
             typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
         if notizen:
             typer.echo(f"Szenennotizen aus {notizen} ({len(einst.notizen.splitlines())} Zeilen), keine neue Extraktion")
+        if nur_ledger:
+            typer.echo("Ledger-only: Originaltranskript → Extraktion → Review → Coverage → States/History; Recap-Pipeline übersprungen")
         ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
                                einst=einst)
     except mv.VergleichFehler as e:
