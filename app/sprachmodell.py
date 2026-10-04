@@ -810,7 +810,7 @@ S_SCHEMAS = {
     "missing": _obj({"fehlend": {"type": "array", "items": _obj({
         "zeit": S_STR, "wichtigkeit": {"type": "string", "enum": ["kritisch", "wichtig", "nebensächlich"]},
         "notiz": S_STR
-    }, ["zeit", "wichtigkeit", "notiz"])}}, ["fehlend"]),
+    }, ["zeit", "notiz"])}}, ["fehlend"]),
     "paragraphs": _obj({"absaetze": {"type": "array", "items": _obj({
         "nr": {"type": "integer"}, "text": S_STR
     }, ["nr", "text"])}}, ["absaetze"]),
