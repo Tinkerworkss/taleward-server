@@ -745,6 +745,7 @@ def modellvergleich(
     grundlage: str = typer.Option("auto", "--grundlage", help="Lange Runden: auto | direkt (Notizen in Zeitabschnitten) | teile (Teil-Zusammenfassungen)"),
     temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
     pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
+    notizen: Path = typer.Option(None, "--notizen", help="Fertige notizen.txt eines früheren Laufs statt neuer Szenennotizen – für Vergleiche auf identischer Grundlage"),
 ):
     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
     Vergleichen am eigenen PC. Liest nur über die Schnittstelle, ändert nichts auf dem Server."""
@@ -762,10 +763,17 @@ def modellvergleich(
         typer.echo(f"Ollama unter {url}")
         if grundlage not in ("auto", "direkt", "teile"):
             raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
+        for name, datei in (("Prüfliste", pruefliste), ("Notizen", notizen)):
+            if datei is not None and not datei.is_file():
+                raise mv.VergleichFehler(f"{name} nicht gefunden: {datei.resolve()} – Datei in diesen Ordner legen "
+                                         "oder den vollen Pfad angeben.")
         einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
-                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [])
+                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [],
+                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "")
         if pruefliste:
             typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
+        if notizen:
+            typer.echo(f"Szenennotizen aus {notizen} ({len(einst.notizen.splitlines())} Zeilen), keine neue Extraktion")
         ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
                                einst=einst)
     except mv.VergleichFehler as e:

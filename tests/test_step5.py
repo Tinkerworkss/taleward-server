@@ -32,7 +32,7 @@ class Modell:
             return {"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "0:40", "zitat": "reiten nach"}]}]}
         if system.startswith("Du überarbeitest"):  # Nachbesserung: unbelegter Absatz fällt weg
             return {"absaetze": [{"nr": 2, "text": ""}]}
-        if "Szenennotizen" in system:
+        if "Schreibe Szenennotizen" in system:
             return {"notizen": ["[0:00] Die Gruppe reitet nach Rabenfels."]}
         if "Recap" in system:
             return {"title": "Kapitel 1: Der Ritt", "text": "Die Gruppe ritt nach Rabenfels.\n\nDort wartete Regen.",
@@ -139,9 +139,10 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
 
     recap, vorschlag = api.recap_aufruf(), api.vorschlags_aufruf()
-    # Recap, Gegenprüfung, Nachbesserung, zweite Prüfung, Vorschläge (0.4.6)
-    assert len(api.aufrufe) == 5 and recap["body"]["response_format"] == {"type": "json_object"}
-    for a in api.aufrufe[1:4]:  # Prüfung und Nachbesserung sehen nur, was der Recap sah
+    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Nachbesserung, zweite Prüfung, Vorschläge (0.4.6)
+    assert len(api.aufrufe) == 6 and recap["body"]["response_format"] == {"type": "json_object"}
+    assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
+    for a in api.aufrufe[1:5]:  # Vollständigkeit, Prüfung und Nachbesserung sehen nur, was der Recap sah
         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
             assert verboten not in a["nutzer"] + a["system"], verboten
     # Recap: nichts Geheimes, nicht einmal der Name des geheimen Eintrags
@@ -179,8 +180,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert "geheimen Notizen" in vs["Rabenfels"]["visibilityReason"] and "low_confidence" in vs["Rabenfels"]["flags"]
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
     assert (log.engine, log.model, log.tokens_in, log.tokens_out) == ("external", "mistral-large-latest",
-                                                                     500_000, 20_000)
-    assert log.cost_cents == round((500_000 * 50 + 20_000 * 150) / 1e6)  # Preistabelle Mistral Large
+                                                                     600_000, 24_000)  # 6 Aufrufe (0.4.46)
+    assert log.cost_cents == round((600_000 * 50 + 24_000 * 150) / 1e6)  # Preistabelle Mistral Large
     # Spieler sehen weiterhin nichts davon
     assert client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["pl"]).status_code == 404
 
@@ -361,6 +362,6 @@ def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
     einstellen(dbs, art="aus", api_key="sk-test-schluessel-1234")
     r = CliRunner().invoke(app, ["recap-probe", s["id"], "--modell", "mistral-small-latest"])
     assert r.exit_code == 0, r.output
-    assert "Die Gruppe ritt nach Rabenfels." in r.output and "2 Aufrufe" in r.output
+    assert "Die Gruppe ritt nach Rabenfels." in r.output and "3 Aufrufe" in r.output  # Recap, Vollständigkeit, Vorschläge
     assert api.aufrufe[0]["body"]["model"] == "mistral-small-latest"
     assert dbs.query(Recap).count() == 0

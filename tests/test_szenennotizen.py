@@ -144,7 +144,7 @@ def test_lange_runde_recap_aus_teilen():
             if "4 bis 8 Sätzen" in system:
                 nr = nutzer.split("Teil ")[1].split(" ")[0]
                 return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
-            if "Szenennotizen" in system:
+            if "Schreibe Szenennotizen" in system:
                 return Antwort(json.dumps({"notizen": [f"[{len(self.aufrufe)}:00] Ereignis {len(self.aufrufe)}-{j} "
                                                        + "mit vielen Worten " * 10 for j in range(12)]}), 1, 1)
             if "Recap" in system and "prüfst" not in system:
@@ -363,7 +363,7 @@ def _klient_lange_runde():
             if "4 bis 8 Sätzen" in system:
                 nr = nutzer.split("Teil ")[1].split(" ")[0]
                 return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
-            if "Szenennotizen" in system:
+            if "Schreibe Szenennotizen" in system:
                 zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
                 return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht."
                                                        for z in zeilen[::6]]}), 1, 1)
@@ -411,7 +411,7 @@ def test_temperatur_nur_fuer_notizen():
     chat = k.chat
 
     def merken(system, nutzer):
-        gesehen.append((("Szenennotizen" in system), k.temperatur))
+        gesehen.append((("Schreibe Szenennotizen" in system), k.temperatur))
         return chat(system, nutzer)
 
     k.chat = merken
@@ -419,3 +419,71 @@ def test_temperatur_nur_fuer_notizen():
     Ablauf(k, max_transkript_tokens=300, stueck_tokens=1500, temperatur_notizen=0.1).ausfuehren(ein, ein)
     assert all(t == 0.1 for notiz, t in gesehen if notiz) and all(t is None for notiz, t in gesehen if not notiz)
     assert k.temperatur is None
+
+
+def test_fehlend_lesen_nur_belegte_punkte():
+    """Die Vollständigkeitsprüfung darf keine neue Wahrheit erzeugen: Nur Punkte, die in der Grundlage stehen."""
+    from app.sprachmodell import fehlend_lesen
+
+    grundlage = ("Abschnitt 1 von 2 (0:10–44:32):\n[0:10] Die Gruppe sitzt im Kerker.\n"
+                 "[44:32] Jemand löst mit einem Dolch ihre Handfesseln; sie liegen auf dem Podest.\n\n"
+                 "Abschnitt 2 von 2 (1:11:39–1:11:39):\n[1:11:39] Pipo gibt der Gruppe sein Schwert als Dank.")
+    d = {"fehlend": [
+        {"zeit": "44:32", "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},  # fast wörtlich → belegt
+        {"zeit": "1:11:39", "notiz": "Pipo gibt der Gruppe das Schwert."},  # gleiche Zeit, 4 von 6 Wörtern → belegt
+        {"zeit": "0:10", "notiz": "Die Gruppe wird gefoltert und verliert alle Erinnerung."},  # erfunden → nicht belegt
+        {"zeit": "2:00:00", "notiz": "Satuna erscheint."},  # Zeit gibt es nicht → nicht belegt
+        {"zeit": "x", "notiz": ""}, "kaputt",
+        {"zeit": "0:10", "notiz": "Kerker 6"}, {"zeit": "0:10", "notiz": "Kerker 7"}]}
+    aus = fehlend_lesen(d, grundlage)
+    assert len(aus) == 5  # höchstens FEHLEND_HOECHSTENS Einträge, leere und kaputte fallen weg
+    assert [f["belegt"] for f in aus[:4]] == [True, True, False, False]
+    assert aus[0]["zeit"] == 44 * 60 + 32 and aus[1]["zeit"] == 3600 + 11 * 60 + 39
+
+
+def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = []
+
+        def chat(self, system, nutzer):
+            self.aufrufe.append((system, nutzer))
+            if "Schreibe Szenennotizen" in system:
+                zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+                notizen = [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht." for z in zeilen[::6]]
+                notizen.append("[44:32] Jemand löst mit einem Dolch ihre Handfesseln.")
+                return Antwort(json.dumps({"notizen": notizen}), 1, 1)
+            if system.startswith("Du vergleichst den Recap"):
+                return Antwort(json.dumps({"fehlend": [
+                    {"zeit": "44:32", "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},
+                    {"zeit": "0:00", "notiz": "Ein Drache greift an."}]}), 1, 1)
+            if system.startswith("Du ergänzt den Recap"):
+                assert "Handfesseln" in nutzer and "Drache" not in nutzer  # nur belegte Punkte
+                return Antwort(json.dumps({"absaetze": [
+                    {"nr": 1, "text": "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln."},
+                    {"nr": 2, "text": "Kurz."}]}), 1, 1)  # Absatz 2 gekürzt → wird nicht übernommen
+            if system.startswith("Du prüfst den Recap"):
+                return Antwort(json.dumps({"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": []},
+                                                        {"nr": 2, "urteil": "belegt", "stellen": []}]}), 1, 1)
+            if "Recap" in system:
+                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.\n\nDann rasteten alle lange.",
+                                           "openThreads": []}), 1, 1)
+            return Antwort(json.dumps({"proposals": []}), 1, 1)
+
+    k = Klient()
+    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
+    ein = _ein(600)
+    d = ablauf.ausfuehren(ein, ein, gegenpruefen=True)
+    assert ablauf.letztes_kapitel1 == "Die Gruppe ritt.\n\nDann rasteten alle lange."
+    assert d["text"] == "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln.\n\nDann rasteten alle lange."
+    assert [f["belegt"] for f in ablauf.letzter_befund_fehlend] == [True, False]
+    assert sum(1 for s, _ in k.aufrufe if s.startswith("Du ergänzt")) == 1
+    # Reihenfolge: Recap → Vollständigkeit → Ergänzung → Prüfung
+    arten = [s.split(" ")[1] for s, _ in k.aufrufe if s.startswith("Du ")]
+    assert arten[-3:] == ["vergleichst", "ergänzt", "prüfst"] or arten[-4:-1] == ["vergleichst", "ergänzt", "prüfst"]
+    assert ablauf.letzte_pruefung_vorher and ablauf.letzte_pruefung_nachher == [] and d["review"]["revised"] is False
+    assert "Wer gibt wem was" in [s for s, _ in k.aufrufe if s.startswith("Du prüfst")][0]

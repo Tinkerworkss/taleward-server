@@ -172,6 +172,10 @@ class Ergebnis:
     letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
     notizen: str = ""  # Grundlage, wenn verdichtet (Szenennotizen) – zur Fehlersuche, bleibt lokal
     verlauf: str = ""  # Zusammenfassungen der Teile bei langen Runden
+    kapitel1: str = ""  # erster Entwurf des Recaps (vor Ergänzung und Nachbesserung)
+    fehlend: list[dict] = field(default_factory=list)  # Befund der Vollständigkeitsprüfung
+    pruefung_vorher: list[dict] = field(default_factory=list)  # Fakten-/Relationsprüfung vor der Nachbesserung
+    pruefung_nachher: list[dict] = field(default_factory=list)  # … danach (leer, wenn nicht nachgebessert)
     titel: str = ""
     text: str = ""
     offene_faeden: list[str] = field(default_factory=list)
@@ -202,11 +206,16 @@ def _ablauf_klasse():
     from app.sprachmodell import Ablauf
 
     class Merker(Ablauf):
-        """Wie im Betrieb, merkt sich aber die Grundlage für den Richter."""
+        """Wie im Betrieb, merkt sich aber die Grundlage für den Richter. Mit vorgegebenen Notizen (--notizen) entfällt
+        die Extraktion – so laufen zwei Varianten auf identischen Notizen."""
         letzte_grundlage: tuple[str, str] = ("", "")
+        notizen_vorgabe: str = ""
 
         def grundlage(self, ein, fortschritt):
-            self.letzte_grundlage = super().grundlage(ein, fortschritt)
+            if self.notizen_vorgabe.strip():
+                self.letzte_grundlage = ("Szenennotizen (vorgegeben)", self.notizen_vorgabe.strip())
+            else:
+                self.letzte_grundlage = super().grundlage(ein, fortschritt)
             return self.letzte_grundlage
 
     return Merker
@@ -225,6 +234,7 @@ class Einstellungen:
     gliederung: str = "auto"  # auto | direkt | teile (siehe Ablauf.gliederung)
     temperatur: float | None = None  # nur für die Szenennotizen
     pruefliste: list[dict] = field(default_factory=list)
+    notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
 
 
 def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschlag_ein: dict,
@@ -246,6 +256,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
     ablauf = _ablauf_klasse()(k, max_transkript_tokens=max(2000, kontext - 5000),
                               stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
                               gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
+    ablauf.notizen_vorgabe = einst.notizen
     t0 = time.monotonic()
     try:
         d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
@@ -265,6 +276,10 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         if erg.grundlage.startswith("Szenennotizen"):
             erg.notizen = ablauf.letzte_grundlage[1]
         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
+        erg.kapitel1 = getattr(ablauf, "letztes_kapitel1", "") or ""
+        erg.fehlend = list(getattr(ablauf, "letzter_befund_fehlend", []) or [])
+        erg.pruefung_vorher = list(getattr(ablauf, "letzte_pruefung_vorher", []) or [])
+        erg.pruefung_nachher = list(getattr(ablauf, "letzte_pruefung_nachher", []) or [])
         if einst.pruefliste:
             erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
         k.entladen()
@@ -302,7 +317,7 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 # ---------------------------------------------------------------- Bericht
 # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
-STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel", "Vorschläge")
+STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel 1", "Kapitel", "Vorschläge")
 
 
 def pruefliste_lesen(text: str) -> list[dict]:
@@ -341,6 +356,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
         "Transkript": "\n".join(transkript_zeilen(recap_ein.get("transkript") or [])),
         "Notizen": e.notizen,
         "Teile": e.verlauf,
+        "Kapitel 1": e.kapitel1,
         "Kapitel": "\n".join([e.titel, e.text] + list(e.offene_faeden)),
         "Vorschläge": "\n".join(f"{v.get('title', '')}\n{v.get('detail', '')}\n{v.get('gmNotes') or ''}"
                                 for v in e.vorschlaege),
@@ -349,8 +365,10 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
     for p in punkte:
         vorkommen = {}
         for name in STUFEN:
-            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel"):
+            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel 1", "Kapitel"):
                 vorkommen[name] = None  # für Vorschläge nicht gefragt
+            elif name == "Kapitel 1" and (not e.kapitel1 or e.kapitel1 == e.text):
+                vorkommen[name] = None  # kein eigener erster Entwurf (nichts ergänzt, nichts nachgebessert)
             elif name == "Notizen" and not e.notizen:
                 vorkommen[name] = None  # kurze Runde: keine Notizen
             elif name == "Teile" and not e.verlauf:
@@ -365,7 +383,8 @@ def pruefliste_md(e: Ergebnis) -> str:
     """Tabelle: Prüfpunkt × Stufe. ✓ Stichwörter kommen vor, – fehlen, · Stufe nicht gefragt/nicht vorhanden."""
     if not e.pruefliste:
         return ""
-    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt):", "",
+    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt; "
+              "Kapitel 1 = erster Entwurf, Kapitel = Endfassung nach Ergänzung und Nachbesserung):", "",
               "| Nr | Prüfpunkt | " + " | ".join(STUFEN) + " |", "|---|---|" + "---|" * len(STUFEN)]
     bereich = None
     for i, p in enumerate(e.pruefliste, 1):
@@ -490,6 +509,13 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
         d.mkdir(exist_ok=True)
         if e.pruefliste:
             (d / "pruefliste.md").write_text(pruefliste_md(e) + "\n", encoding="utf-8")
+        if e.ok:
+            if e.kapitel1 and e.kapitel1 != e.text:
+                (d / "kapitel-1.txt").write_text(f"{e.titel}\n\n{e.kapitel1}\n", encoding="utf-8")
+            (d / "fehlend.json").write_text(json.dumps(e.fehlend, ensure_ascii=False, indent=2), encoding="utf-8")
+            (d / "pruefung.json").write_text(json.dumps({"vorher": e.pruefung_vorher, "nachher": e.pruefung_nachher,
+                                                         "richter": e.richter_absaetze}, ensure_ascii=False, indent=2),
+                                             encoding="utf-8")
         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
         for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
                              ("verlauf.txt", e.verlauf)):
@@ -497,7 +523,10 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                 (d / name).write_text(inhalt, encoding="utf-8")
         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
-                                                     "pruefliste": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                                     "pruefliste": None, "kapitel1": None, "fehlend": len(e.fehlend),
+                                                     "ergaenzt": sum(1 for f in e.fehlend if f.get("belegt")),
+                                                     "pruefung_vorher": None, "pruefung_nachher": None,
+                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
@@ -563,6 +592,10 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
             erg, ablauf = modell_laufen(ollama_url, modell, kontext, recap_ein, vorschlag_ein, melden, client,
                                         einst, lauf)
             melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
+            if erg.ok:
+                belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
+                melden(f"  Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, {belegt} belegt und ergänzt; "
+                       f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
             if erg.pruefliste:
                 for name in STUFEN:
                     werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
