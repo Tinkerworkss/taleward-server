@@ -328,6 +328,23 @@ def test_teile_nach_spielzeit():
     assert TEIL_MINUTEN == 30
 
 
+def test_plan_teile_sind_feste_15_minuten_fenster():
+    from app.sprachmodell import _plan_teile_nach_zeit
+
+    notizen = [
+        "[0:00] Anfang.",
+        "[14:59] Noch im ersten Fenster.",
+        "[15:00] Zweites Fenster.",
+        "[29:59] Noch im zweiten Fenster.",
+        "[30:00] Drittes Fenster.",
+    ]
+    teile = _plan_teile_nach_zeit(notizen)
+    assert len(teile) == 3
+    assert "[14:59]" in teile[0] and "[15:00]" not in teile[0]
+    assert "[15:00]" in teile[1] and "[29:59]" in teile[1]
+    assert teile[2].startswith("[30:00]")
+
+
 def test_spielleitung_im_recap_wird_beanstandet():
     from app.sprachmodell import spielleitung_beanstanden, BEANSTANDET
 
@@ -582,9 +599,10 @@ def test_relationen_gegen_transkript():
     assert len(k.nutzer) == vor
 
 
-def test_recap_plan_nur_vorhandene_ids_und_im_recap_verbindlich():
-    """1.5c: Planung darf nur vorhandene Notiz-IDs wählen; der Recap bekommt die Auswahl zusätzlich zur Grundlage."""
-    from app.sprachmodell import Ablauf, Antwort
+def test_recap_plan_klassifiziert_alle_ids_in_kurzen_fenstern():
+    """0.4.49: Keine Top-N-Auswahl mehr. Jede Notiz wird klassifiziert; ungültige IDs fliegen raus und fehlende
+    gültige IDs fallen auf 'wichtig' zurück, damit der Plan keine Information still wegselektiert."""
+    from app.sprachmodell import Ablauf, Antwort, PLAN_MINUTEN
 
     class Klient:
         modell = "test"
@@ -594,33 +612,66 @@ def test_recap_plan_nur_vorhandene_ids_und_im_recap_verbindlich():
 
         def chat(self, system, nutzer):
             self.aufrufe.append((system, nutzer))
-            if system.startswith("Du planst den Recap"):
-                ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
-                assert ids
-                return Antwort(json.dumps({"required": [ids[-1], "N999", ids[0], ids[-1]]}), 1, 1)
-            return Antwort(json.dumps({"title": "Kapitel 1: Test", "text": "Pflichtpunkte sind erzählt.",
-                                       "openThreads": []}), 1, 1)
+            assert system.startswith("Du klassifizierst die Szenennotizen")
+            ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+            assert ids
+            # Erste ID kritisch, letzte nebensächlich; ggf. mittlere ID absichtlich weglassen -> Fallback wichtig.
+            antwort = {"critical": [ids[0], "N999"], "important": [], "minor": [ids[-1]]}
+            return Antwort(json.dumps(antwort), 1, 1)
 
     notizen = "\n".join([
         "[0:00] Die Gruppe wird eingesperrt.",
         "[10:00] Eine Wache nennt ihren Namen.",
         "[20:00] Ein Helfer löst die Fesseln.",
-        "[40:00] Eine Figur wird aus dem Wasser gerettet.",
-        "[50:00] Pipo übergibt sein Schwert.",
-        "[60:00] Die Gruppe schließt eine Abmachung.",
+        "[31:00] Kano ist tot.",
+        "[40:00] Orasilas rettet Arlekin aus dem Wasser.",
+        "[50:00] Pipo übergibt Lostriana.",
+        "[61:00] Die Gruppe schließt eine Abmachung.",
     ])
     k = Klient()
     ablauf = Ablauf(k)
     plan = ablauf.planen(_ein(10), notizen)
-    assert [p["id"] for p in plan] == ["N001", "N003", "N004", "N006"]
-    assert all(p["notiz"] in notizen for p in plan)
-    assert all(p["id"] != "N999" for p in plan)
 
-    ablauf.recap(_ein(10), "Szenennotizen", notizen, plan)
-    recap_nutzer = k.aufrufe[-1][1]
-    assert "Pflichtplan" in recap_nutzer
-    assert all(p["id"] in recap_nutzer and p["notiz"] in recap_nutzer for p in plan)
-    assert "N999" not in recap_nutzer
+    assert PLAN_MINUTEN == 15
+    assert len(plan) == 7 and {p["id"] for p in plan} == {f"N{i:03d}" for i in range(1, 8)}
+    assert all(p["id"] != "N999" for p in plan)
+    assert all(p["notiz"] in notizen for p in plan)
+    assert len(k.aufrufe) >= 4  # 0–15, 15–30, 30–45, 45–60, 60–75; leere Fenster werden übersprungen
+    # N005 liegt mit N004 im 30–45-Fenster und wird vom Modell dort ausgelassen -> sicherheitshalber wichtig.
+    n5 = next(p for p in plan if p["id"] == "N005")
+    assert n5["wichtigkeit"] == "wichtig" and n5["fallback"] is True
+    assert {p["wichtigkeit"] for p in plan} <= {"kritisch", "wichtig", "nebensächlich"}
+
+
+def test_recap_bekommt_nur_kritisch_und_wichtig_als_pflicht():
+    """Nebensächliche Klassifikationen bleiben in plan.json sichtbar, werden aber nicht als Pflicht in die Prosa gedrückt."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = ""
+
+        def chat(self, system, nutzer):
+            self.nutzer = nutzer
+            return Antwort(json.dumps({"title": "Kapitel 1: Test", "text": "Die Gruppe handelt.",
+                                       "openThreads": []}), 1, 1)
+
+    plan = [
+        {"id": "N001", "zeit": 0.0, "notiz": "[0:00] Kano ist tot.", "teil": 1,
+         "wichtigkeit": "kritisch", "fallback": False},
+        {"id": "N002", "zeit": 10.0, "notiz": "[0:10] Pipo übergibt Lostriana.", "teil": 1,
+         "wichtigkeit": "wichtig", "fallback": False},
+        {"id": "N003", "zeit": 20.0, "notiz": "[0:20] Die Gruppe isst Brot.", "teil": 1,
+         "wichtigkeit": "nebensächlich", "fallback": False},
+    ]
+    k = Klient()
+    Ablauf(k).recap(_ein(10), "Szenennotizen", "\n".join(p["notiz"] for p in plan), plan)
+    assert "N001" in k.nutzer and "N002" in k.nutzer
+    assert "N003" not in k.nutzer
+    assert "[kritisch]" in k.nutzer and "[wichtig]" in k.nutzer
+
 
 
 def test_posthoc_coverage_ergaenzt_nur_noch_kritisch():
