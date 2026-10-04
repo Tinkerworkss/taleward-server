@@ -1831,7 +1831,7 @@ class Ablauf:
         chunk_von = {}
         for nr, block in enumerate(teile):
             for z in block:
-                m = re.match(r"^(L\\d{4,6}) \\|", z)
+                m = re.match(r"^(L\d{4,6}) \|", z)
                 if m:
                     chunk_von[m.group(1)] = nr
         gruppen: dict[int, list[dict]] = {}
@@ -1853,8 +1853,8 @@ class Ablauf:
 
         def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
             block = teile[chunk_nr]
-            erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\\d{4,6}) \\|", z))}
-            kandidaten_text = "\\n".join(
+            erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
+            kandidaten_text = "\n".join(
                 f"{e['candidateId']} | {self._ledger_candidate_text(e)}" for e in batch) or "(keine)"
             # Extrem dichte Blöcke werden nur bei Bedarf geteilt. Normalfall: exakt ein Review-Call je Quellblock.
             if len(batch) > LEDGER_REVIEW_BATCH and tokens(kandidaten_text) > 3500:
@@ -1867,8 +1867,8 @@ class Ablauf:
             try:
                 d = self.zaehler.aufruf(
                     self.klient, system,
-                    f"{_kopf(ein)}\\n\\nORIGINALTRANSKRIPT:\\n" + "\\n".join(block)
-                    + f"\\n\\nKANDIDATEN:\\n{kandidaten_text}")
+                    f"{_kopf(ein)}\n\nORIGINALTRANSKRIPT:\n" + "\n".join(block)
+                    + f"\n\nKANDIDATEN:\n{kandidaten_text}")
             except AntwortFehler as e:
                 if len(batch) > 1:
                     mitte = len(batch) // 2
