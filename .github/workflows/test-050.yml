@@ -1,0 +1,30 @@
+name: Test 0.4.50 branch
+
+on:
+  push:
+    branches:
+      - "test/0.4.48-recap-plan-relations"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Syntax check
+        run: uv run python -m compileall -q app tests
+      - name: Harness tests
+        run: uv run pytest -q tests/test_ollama_laden.py tests/test_szenennotizen.py
+      - name: Recap regression tests
+        run: uv run pytest -q tests/test_modellvergleich.py tests/test_pruefung_046.py tests/test_step5.py
+      - name: Full suite
+        run: uv run pytest -q
