@@ -172,6 +172,7 @@ class Ergebnis:
     letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
     notizen: str = ""  # Grundlage, wenn verdichtet (Szenennotizen) – zur Fehlersuche, bleibt lokal
     verlauf: str = ""  # Zusammenfassungen der Teile bei langen Runden
+    plan: list[dict] = field(default_factory=list)  # vor der Prosa ausgewählte Pflichtnotizen (0.4.48)
     kapitel1: str = ""  # erster Entwurf des Recaps (vor Ergänzung und Nachbesserung)
     kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
     relationen_vorher: list[dict] = field(default_factory=list)  # Relationsprüfung gegen das Transkript
@@ -279,6 +280,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         if erg.grundlage.startswith("Szenennotizen"):
             erg.notizen = ablauf.letzte_grundlage[1]
         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
+        erg.plan = list(getattr(ablauf, "letzter_plan", []) or [])
         erg.kapitel1 = getattr(ablauf, "letztes_kapitel1", "") or ""
         erg.kapitel2 = getattr(ablauf, "letztes_kapitel2", "") or ""
         erg.relationen_vorher = list(getattr(ablauf, "letzte_relationen_vorher", []) or [])
@@ -323,7 +325,7 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 # ---------------------------------------------------------------- Bericht
 # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
-STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
+STUFEN = ("Transkript", "Notizen", "Plan", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
 
 
 def pruefliste_lesen(text: str) -> list[dict]:
@@ -361,6 +363,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
     stufen = {
         "Transkript": "\n".join(transkript_zeilen(recap_ein.get("transkript") or [])),
         "Notizen": e.notizen,
+        "Plan": "\n".join(p.get("notiz", "") for p in e.plan),
         "Teile": e.verlauf,
         "Kapitel 1": e.kapitel1,
         "Kapitel 2": e.kapitel2,
@@ -380,6 +383,8 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
                 vorkommen[name] = None
             elif name == "Notizen" and not e.notizen:
                 vorkommen[name] = None  # kurze Runde: keine Notizen
+            elif name == "Plan" and not e.plan:
+                vorkommen[name] = None  # kurze Runde oder Plan-Aufruf ohne gültige Auswahl
             elif name == "Teile" and not e.verlauf:
                 vorkommen[name] = None  # direkt, ohne Teil-Zusammenfassungen
             else:
@@ -393,7 +398,8 @@ def pruefliste_md(e: Ergebnis) -> str:
     if not e.pruefliste:
         return ""
     zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt; "
-              "Kapitel 1 = erster Entwurf, Kapitel 2 = nach der Ergänzung, Kapitel = Endfassung nach Nachbesserung):", "",
+              "Plan = vor der Prosa ausgewählte Pflichtnotizen, Kapitel 1 = erster Entwurf, Kapitel 2 = nach der "
+              "Ergänzung, Kapitel = Endfassung nach Nachbesserung):", "",
               "| Nr | Prüfpunkt | " + " | ".join(STUFEN) + " |", "|---|---|" + "---|" * len(STUFEN)]
     bereich = None
     for i, p in enumerate(e.pruefliste, 1):
@@ -521,6 +527,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
         if e.ok:  # jede Stufe immer, auch wenn sie gleich blieb – sonst fehlt der Vorher/Nachher-Vergleich
             (d / "kapitel-1.txt").write_text(f"{e.titel}\n\n{e.kapitel1 or e.text}\n", encoding="utf-8")
             (d / "kapitel-2.txt").write_text(f"{e.titel}\n\n{e.kapitel2 or e.kapitel1 or e.text}\n", encoding="utf-8")
+            (d / "plan.json").write_text(json.dumps(e.plan, ensure_ascii=False, indent=2), encoding="utf-8")
             (d / "fehlend.json").write_text(json.dumps(e.fehlend, ensure_ascii=False, indent=2), encoding="utf-8")
             (d / "pruefung.json").write_text(json.dumps({"vorher": e.pruefung_vorher, "nachher": e.pruefung_nachher,
                                                          "richter": e.richter_absaetze}, ensure_ascii=False, indent=2),
@@ -535,7 +542,8 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                 (d / name).write_text(inhalt, encoding="utf-8")
         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
-                                                     "pruefliste": None, "kapitel1": None, "kapitel2": None,
+                                                     "plan": len(e.plan), "pruefliste": None, "kapitel1": None,
+                                                     "kapitel2": None,
                                                      "fehlend": len(e.fehlend),
                                                      "ergaenzt": sum(1 for f in e.fehlend if f.get("ergaenzt")),
                                                      "relationen_widersprochen": sum(
@@ -612,8 +620,9 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                 belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
                 ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
                 wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
-                melden(f"  Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, {belegt} belegt, {ergaenzt} ergänzt; "
-                       f"Relationen (Transkript): {wider} von {len(erg.relationen_vorher)} Absätzen widersprochen; "
+                melden(f"  Pflichtplan: {len(erg.plan)} Punkte; Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, "
+                       f"{belegt} belegt, {ergaenzt} ergänzt; Relationen (Transkript): {wider} von "
+                       f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
             if erg.pruefliste:
                 for name in STUFEN:

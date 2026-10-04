@@ -105,19 +105,24 @@ Grünkappen
     assert [p["bereich"] for p in punkte] == ["Kapitel", "Kapitel", "Vorschläge", "Vorschläge"]
     assert punkte[0]["woerter"] == [["kerker"], ["zehn tage", "10 tage"]] and punkte[3]["woerter"] == [["grünkappen"]]
 
-    e = mv.Ergebnis(modell="m", kontext=1, ok=True, notizen="[0:01] Zehn Tage im Kerker.\n[1:00] Pipo gibt Lostriana.",
+    e = mv.Ergebnis(modell="m", kontext=1, ok=True,
+                    notizen="[0:01] Zehn Tage im Kerker.\n[1:00] Pipo gibt Lostriana.",
+                    plan=[{"id": "N002", "teil": 1, "zeit": 60.0, "notiz": "[1:00] Pipo gibt Lostriana."}],
                     verlauf="", titel="Kapitel 1", text="Nach 10 Tagen Kerker floh die Gruppe. Pipo half.",
                     vorschlaege=[{"title": "Pipo", "detail": "Wache", "gmNotes": None}])
-    ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None, "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
+    ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None,
+                           "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel 2": None,
-                                   "Kapitel": True, "Vorschläge": False}
-    assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True  # im Kapitel verloren
-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel 2": None,
-                                   "Kapitel": None, "Vorschläge": True}
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Teile": None,
+                                   "Kapitel 1": None, "Kapitel 2": None, "Kapitel": True, "Vorschläge": False}
+    assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True
+    assert aus[1]["vorkommen"]["Plan"] is True
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Teile": None,
+                                   "Kapitel 1": None, "Kapitel 2": None, "Kapitel": None, "Vorschläge": True}
     e.pruefliste = aus
     md = mv.pruefliste_md(e)
-    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | · | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
-    e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."  # erster Entwurf ohne Pipo → Ergänzung hat ihn gerettet
+    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | ✓ | · | · | · | – | – |" in md
+    assert "*Kapitel: 1 von 2*" in md
+    e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False

@@ -459,7 +459,8 @@ def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
                 return Antwort(json.dumps({"notizen": notizen}), 1, 1)
             if system.startswith("Du vergleichst den Recap"):
                 return Antwort(json.dumps({"fehlend": [
-                    {"zeit": "44:32", "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},
+                    {"zeit": "44:32", "wichtigkeit": "kritisch",
+                     "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},
                     {"zeit": "0:00", "notiz": "Ein Drache greift an."}]}), 1, 1)
             if system.startswith("Du ergänzt den Recap"):
                 assert "Handfesseln" in nutzer and "Drache" not in nutzer  # nur belegte Punkte
@@ -531,7 +532,7 @@ def test_ergaenzung_nur_an_passender_stelle_und_nur_wichtige():
 
 
 def test_relationen_gegen_transkript():
-    """Die Relationsprüfung sieht nur Transkriptausschnitte um die belegten Stellen; „widerspricht“ schlägt „belegt“."""
+    """Atomare Claims sehen nur kurze Transkriptfenster; nur exakter Claim + belegtes Zitat darf widersprechen."""
     from app.sprachmodell import Ablauf, Antwort
 
     class Klient:
@@ -542,23 +543,181 @@ def test_relationen_gegen_transkript():
 
         def chat(self, system, nutzer):
             self.nutzer.append(nutzer)
-            return Antwort(json.dumps({"absaetze": [
-                {"nr": 1, "urteil": "widerspricht", "begruendung": "Pipo gibt der Gruppe das Schwert, nicht umgekehrt.",
-                 "zitat": "nehmt mein Schwert"},
-                {"nr": 2, "urteil": "stimmt"}]}), 1, 1)
+            if "Absatz 1:" in nutzer:
+                return Antwort(json.dumps({"claims": [{
+                    "claim": "Orasilas gab Pipo sein Schwert.",
+                    "urteil": "widerspricht",
+                    "korrektur": "Pipo gab der Gruppe sein Schwert.",
+                    "begruendung": "Pipo gibt der Gruppe das Schwert, nicht umgekehrt.",
+                    "zitat": "Nehmt mein Schwert"
+                }]}), 1, 1)
+            return Antwort(json.dumps({"claims": [{
+                "claim": "Dann rasteten alle lange.",
+                "urteil": "stimmt",
+                "korrektur": "",
+                "begruendung": "",
+                "zitat": ""
+            }]}), 1, 1)
 
-    ein = _ein(400)  # 400 Zeilen à 20 s
-    ein["transkript"][215]["text"] = "Senke dein Schwert, Pipo. Nehmt mein Schwert, sagt Pipo."  # bei 1:11:40
+    ein = _ein(400)
+    ein["transkript"][215]["text"] = "Senke dein Schwert, Pipo. Nehmt mein Schwert, sagt Pipo."
     text = "Orasilas gab Pipo sein Schwert.\n\nDann rasteten alle lange."
-    befund = [{"index": 0, "verdict": "supported", "note": None, "evidence": [{"start": 4300.0, "quote": "Schwert"}]},
-              {"index": 1, "verdict": "supported", "note": None, "evidence": [{"start": 7000.0, "quote": "rasten"}]}]
+    befund = [{"index": 0, "verdict": "supported", "note": None,
+               "evidence": [{"start": 4300.0, "quote": "Schwert"}]},
+              {"index": 1, "verdict": "supported", "note": None,
+               "evidence": [{"start": 7000.0, "quote": "rasten"}]}]
     k = Klient()
     aus = Ablauf(k).relationen(ein, text, befund)
-    nutzer = k.nutzer[0]
-    assert "Senke dein Schwert, Pipo" in nutzer and "Satz 100 " not in nutzer  # nur ± 60 s um 1:11:40 und 1:56:40
-    assert "Satz 214 " in nutzer and "Satz 218 " in nutzer and "Satz 230 " not in nutzer
-    assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"] and aus[1]["urteil"] == "stimmt"
-    assert befund[0]["verdict"] == "contradicted" and befund[0]["note"].startswith("Transkript: Pipo gibt")
+    assert len(k.nutzer) == 2
+    assert "Senke dein Schwert, Pipo" in k.nutzer[0] and "Satz 100 " not in k.nutzer[0]
+    assert "Satz 214 " in k.nutzer[0] and "Satz 218 " in k.nutzer[0] and "Satz 230 " not in k.nutzer[0]
+    assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"]
+    assert aus[0]["claims"][0]["exakt"] is True and aus[0]["claims"][0]["zitatBelegt"] is True
+    assert aus[1]["urteil"] == "stimmt"
+    assert befund[0]["verdict"] == "contradicted" and befund[0]["relation_contradicted"] is True
     assert befund[1]["verdict"] == "supported"
-    # ohne belegte Stellen: kein Aufruf
-    assert Ablauf(k).relationen(ein, text, [{"index": 0, "verdict": "supported", "note": None, "evidence": []}]) == []
+    vor = len(k.nutzer)
+    assert Ablauf(k).relationen(ein, text, [{"index": 0, "verdict": "supported",
+                                             "note": None, "evidence": []}]) == []
+    assert len(k.nutzer) == vor
+
+
+def test_recap_plan_nur_vorhandene_ids_und_im_recap_verbindlich():
+    """1.5c: Planung darf nur vorhandene Notiz-IDs wählen; der Recap bekommt die Auswahl zusätzlich zur Grundlage."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.aufrufe = []
+
+        def chat(self, system, nutzer):
+            self.aufrufe.append((system, nutzer))
+            if system.startswith("Du planst den Recap"):
+                ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+                assert ids
+                return Antwort(json.dumps({"required": [ids[-1], "N999", ids[0], ids[-1]]}), 1, 1)
+            return Antwort(json.dumps({"title": "Kapitel 1: Test", "text": "Pflichtpunkte sind erzählt.",
+                                       "openThreads": []}), 1, 1)
+
+    notizen = "\n".join([
+        "[0:00] Die Gruppe wird eingesperrt.",
+        "[10:00] Eine Wache nennt ihren Namen.",
+        "[20:00] Ein Helfer löst die Fesseln.",
+        "[40:00] Eine Figur wird aus dem Wasser gerettet.",
+        "[50:00] Pipo übergibt sein Schwert.",
+        "[60:00] Die Gruppe schließt eine Abmachung.",
+    ])
+    k = Klient()
+    ablauf = Ablauf(k)
+    plan = ablauf.planen(_ein(10), notizen)
+    assert [p["id"] for p in plan] == ["N001", "N003", "N004", "N006"]
+    assert all(p["notiz"] in notizen for p in plan)
+    assert all(p["id"] != "N999" for p in plan)
+
+    ablauf.recap(_ein(10), "Szenennotizen", notizen, plan)
+    recap_nutzer = k.aufrufe[-1][1]
+    assert "Pflichtplan" in recap_nutzer
+    assert all(p["id"] in recap_nutzer and p["notiz"] in recap_nutzer for p in plan)
+    assert "N999" not in recap_nutzer
+
+
+def test_posthoc_coverage_ergaenzt_nur_noch_kritisch():
+    """Mit Pflichtplan ist post-hoc Coverage nur Sicherheitsnetz: 'wichtig' bleibt Diagnose, nicht Auto-Insert."""
+    from app.sprachmodell import Ablauf
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            raise AssertionError("für nur wichtige/nebensächliche Punkte darf kein Ergänzungsaufruf erfolgen")
+
+    fehlend = [
+        {"zeit": 10.0, "notiz": "Pipo nennt seinen Namen.", "wichtigkeit": "wichtig", "belegt": True,
+         "davor": "", "danach": "", "ergaenzt": False},
+        {"zeit": 20.0, "notiz": "Die Gruppe schläft.", "wichtigkeit": "nebensächlich", "belegt": True,
+         "davor": "", "danach": "", "ergaenzt": False},
+    ]
+    assert Ablauf(Klient()).ergaenzen(_ein(10), "Die Gruppe geht weiter.", fehlend) is None
+
+
+def _relations_patch_klient(zweiter_befund: str):
+    from app.sprachmodell import Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.relationsaufrufe = 0
+            self.systeme = []
+
+        def chat(self, system, nutzer):
+            self.systeme.append(system)
+            if system.startswith("Du prüfst den Recap"):
+                return Antwort(json.dumps({"absaetze": [{
+                    "nr": 1, "urteil": "belegt",
+                    "stellen": [{"zeit": "1:11:40", "zitat": "Nehmt es"}],
+                    "begruendung": ""
+                }]}), 1, 1)
+            if system.startswith("Du prüfst genau EINEN Absatz"):
+                self.relationsaufrufe += 1
+                if "Orasilas gab Pipo sein Schwert." in nutzer:
+                    return Antwort(json.dumps({"claims": [{
+                        "claim": "Orasilas gab Pipo sein Schwert.",
+                        "urteil": "widerspricht",
+                        "korrektur": "Pipo gab der Gruppe sein Schwert.",
+                        "begruendung": "Die Übergabe läuft von Pipo zur Gruppe.",
+                        "zitat": "Nehmt es"
+                    }]}), 1, 1)
+                return Antwort(json.dumps({"claims": [{
+                    "claim": "Pipo gab der Gruppe sein Schwert.",
+                    "urteil": zweiter_befund,
+                    "korrektur": "",
+                    "begruendung": "",
+                    "zitat": "Nehmt es"
+                }]}), 1, 1)
+            if system.startswith("Du überarbeitest einzelne Absätze"):
+                raise AssertionError("Relationsfehler darf keinen ganzen Absatz neu generieren")
+            raise AssertionError("unerwarteter Modellaufruf")
+
+    return Klient()
+
+
+def test_relationspatch_aendert_nur_claim_und_erhaelt_rest():
+    from app.sprachmodell import Ablauf
+
+    ein = _ein(400)
+    ein["transkript"][215]["text"] = "Nehmt es. Pipo reicht der Gruppe sein Schwert."
+    original = ("Orasilas hatte zuvor die Vision. Orasilas gab Pipo sein Schwert. "
+                "Danach verließ die Gruppe den Krater.")
+    r = {"text": original}
+    k = _relations_patch_klient("stimmt")
+    ablauf = Ablauf(k)
+    review = ablauf.gegenpruefen(ein, "Szenennotizen",
+                                 "[1:11:40] Pipo gibt der Gruppe sein Schwert.", r)
+    assert review["revised"] is True
+    assert r["text"] == ("Orasilas hatte zuvor die Vision. Pipo gab der Gruppe sein Schwert. "
+                         "Danach verließ die Gruppe den Krater.")
+    assert "Orasilas hatte zuvor die Vision." in r["text"] and "Danach verließ die Gruppe den Krater." in r["text"]
+    assert k.relationsaufrufe == 2
+    assert ablauf.letzte_relationen_vorher[0]["claims"][0]["gepatcht"] is True
+
+
+def test_relationspatch_wird_bei_unsicherer_nachpruefung_zurueckgenommen():
+    from app.sprachmodell import Ablauf
+
+    ein = _ein(400)
+    ein["transkript"][215]["text"] = "Nehmt es. Pipo reicht der Gruppe sein Schwert."
+    original = ("Orasilas hatte zuvor die Vision. Orasilas gab Pipo sein Schwert. "
+                "Danach verließ die Gruppe den Krater.")
+    r = {"text": original}
+    k = _relations_patch_klient("unklar")
+    ablauf = Ablauf(k)
+    review = ablauf.gegenpruefen(ein, "Szenennotizen",
+                                 "[1:11:40] Pipo gibt der Gruppe sein Schwert.", r)
+    assert review["revised"] is False
+    assert r["text"] == original
+    claim = ablauf.letzte_relationen_vorher[0]["claims"][0]
+    assert claim["gepatcht"] is False and claim["zurueckgenommen"] is True
+    assert not any(s.startswith("Du überarbeitest einzelne Absätze") for s in k.systeme)
