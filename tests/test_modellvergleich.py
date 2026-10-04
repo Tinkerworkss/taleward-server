@@ -29,7 +29,11 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
         if body["model"] in kaputt:
             return httpx.Response(500, json={"error": "kaputt"})
         system = body["messages"][0]["content"]
-        if system.startswith("Du prüfst"):
+        if system.startswith("Du extrahierst"):
+            inhalt = {"events": []}
+        elif system.startswith("Du ordnest aktuelle"):
+            inhalt = {"links": []}
+        elif system.startswith("Du prüfst"):
             inhalt = {"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "00:00", "zitat": ""}]},
                                    {"nr": 2, "urteil": "unbelegt", "begruendung": "erfunden"}]}
         elif system.startswith("Du überarbeitest"):
@@ -113,16 +117,39 @@ Grünkappen
     ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None,
                            "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Teile": None,
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Ledger": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": True, "Vorschläge": False}
     assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True
     assert aus[1]["vorkommen"]["Plan"] is True
-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Teile": None,
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Ledger": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": None, "Vorschläge": True}
     e.pruefliste = aus
     md = mv.pruefliste_md(e)
-    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | ✓ | · | · | · | – | – |" in md
+    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | ✓ | · | · | · | · | – | – |" in md
     assert "*Kapitel: 1 von 2*" in md
     e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False
+
+
+def test_pruefliste_ledger_verlangt_zusammengehoerige_fakten_im_selben_event():
+    """0.4.51: Pipo irgendwo + Kindheit bei Lysander darf im Ledger nicht als Pipo-Kindheitsbeziehung zählen."""
+    from app import modellvergleich as mv
+
+    punkte = mv.pruefliste_lesen("[Kapitel]\nPipo seit Kindheit :: Pipo; Kindheit/klein")
+    e = mv.Ergebnis(modell="m", kontext=1, ok=True, ledger={"events": [
+        {"summary": "Pipo kennt Orasilas schon lange.", "actors": ["Pipo", "Orasilas"], "targets": [],
+         "objects": [], "locations": [], "factions": [], "assertions": []},
+        {"summary": "Lysander kennt Orasilas seit dessen Kindheit.", "actors": ["Lysander", "Orasilas"], "targets": [],
+         "objects": [], "locations": [], "factions": [], "assertions": []},
+    ]})
+    ein = {"transkript": [{"start": 0.0, "sprecher": "Mira", "member_id": None,
+                           "text": "Pipo und Lysander werden erwähnt."}]}
+    aus = mv.pruefliste_anwenden(punkte, ein, e)
+    assert aus[0]["vorkommen"]["Ledger"] is False
+
+    e.ledger["events"][0]["assertions"] = [{
+        "subject": "Pipo", "property": "relationship", "value": "kennt Orasilas seit dessen Kindheit"
+    }]
+    aus = mv.pruefliste_anwenden(punkte, ein, e)
+    assert aus[0]["vorkommen"]["Ledger"] is True
