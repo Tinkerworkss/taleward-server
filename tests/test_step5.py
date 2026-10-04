@@ -24,6 +24,10 @@ class Modell:
         self.vorschlaege = vorschlaege or []
 
     def antwort(self, system: str, nutzer: str) -> dict:
+        if system.startswith("Du vergleichst den Recap"):
+            return {"fehlend": []}
+        if system.startswith("Du prüfst genau EINEN Absatz"):
+            return {"claims": []}
         if system.startswith("Du prüfst den Recap"):  # Gegenprüfung (0.4.6)
             if "Absatz 2:" in nutzer:
                 return {"absaetze": [
@@ -34,10 +38,12 @@ class Modell:
             return {"absaetze": [{"nr": 2, "text": ""}]}
         if "Schreibe Szenennotizen" in system:
             return {"notizen": ["[0:00] Die Gruppe reitet nach Rabenfels."]}
-        if "Recap" in system:
+        if system.startswith("Du pflegst die Kampagnen-Bibel"):
+            return {"proposals": self.vorschlaege}
+        if "Was bisher geschah" in system:
             return {"title": "Kapitel 1: Der Ritt", "text": "Die Gruppe ritt nach Rabenfels.\n\nDort wartete Regen.",
                     "openThreads": ["Wer hat den Brief geschrieben?", "  "]}
-        return {"proposals": self.vorschlaege}
+        raise AssertionError("unerwarteter Prompt im Modelltest")
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         pfad = request.url.path
@@ -305,7 +311,9 @@ def test_ollama_im_worker_starten(client, world, dbs, tmp_path):
     assert knecht.einen_auftrag()
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
     recap = modell.recap_aufruf()
-    assert recap["body"]["options"]["num_ctx"] == 8192 and recap["body"]["format"] == "json"
+    assert recap["body"]["options"]["num_ctx"] == 8192
+    assert isinstance(recap["body"]["format"], dict)
+    assert recap["body"]["format"]["required"] == ["title", "text", "openThreads"]
     assert "MARKER" not in recap["nutzer"] and "Der Graue Fürst" not in recap["nutzer"]
     assert "MARKER-SL-NOTIZ" not in modell.vorschlags_aufruf()["nutzer"]
     vs = client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()
