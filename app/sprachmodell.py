@@ -639,6 +639,7 @@ RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Ste
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
 PRUEF_BATCH = 4  # Gegenprüfung in kleinen Paketen: ein abgeschnittener Call darf nicht den ganzen Review vernichten
 LEDGER_STUECK_TOKEN = 3500  # Originaltranskript je Ledger-Aufruf; kleine Antworten sind wichtiger als wenige Calls
+LEDGER_REVIEW_BATCH = 18  # kompakte Kandidaten je Quellen-Review; Ausgabe enthält nur Änderungen, nicht alle Events
 LEDGER_RECONCILE_BATCH = 8  # aktuelle Events je History-Abgleich
 
 SYSTEM_RELATIONEN = """Du prüfst genau EINEN Absatz des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; „Spielleitung“ spricht dort für Nichtspielercharaktere). Prüfe nur atomare Beziehungen und Zustände, nicht Stil oder Vollständigkeit.
@@ -664,14 +665,31 @@ Suche ausdrücklich nach Beziehungen ("wir kennen uns seit …", Verwandtschaft,
 Nutze dieselbe Event-Struktur wie das Ereignis-Ledger. assertions tragen subject/property/value und den epistemischen Status. Erfinde nichts und leite keine Weltwahrheit aus einem bloßen Gerücht ab. sourceIds müssen die Aussage direkt belegen und im Abschnitt vorhanden sein.
 Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
+SYSTEM_LEDGER_REVIEW = """Du prüfst Ledger-Kandidaten einer Pen-&-Paper-Session gegen den angegebenen Abschnitt des ORIGINALTRANSKRIPTS. Die Kandidaten stammen aus zwei unabhängigen Extraktionspässen und können doppelt, vertauscht oder falsch aufgelöst sein.
+Melde NUR Kandidaten, die geändert werden müssen; nicht genannte Kandidaten gelten als akzeptiert.
+Prüfe besonders:
+- Wer tut was wem? actor/target und Besitzrichtung niemals vertauschen.
+- Pronomen nur auflösen, wenn der lokale Kontext es trägt; sonst die Entität allgemeiner lassen.
+- "Spielleitung" ist keine Figur. Sie erzählt oder spricht für NPCs. Trenne mehrere NPCs in derselben Spielleitungszeile, wenn der Dialog das zeigt.
+- Personen nicht verschmelzen: "Danke, Satuna. Ich bin der Altvater." bedeutet zwei Rollen, nicht Satuna = Altvater.
+- beobachtet/gesagt/geglaubt/erinnert/Vision sauber trennen; geplant/versucht ist nicht automatisch geschehen.
+- gleiche oder nahezu gleiche Kandidaten aus beiden Pässen zusammenführen.
+Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" oder "reject". Bei repair/merge MUSS replacement ein vollständig source-belegtes Event im normalen Ledger-Schema sein. Bei reject ist replacement null. replacement.sourceIds dürfen ausschließlich aus dem bereitgestellten Abschnitt stammen und müssen die Aussage direkt tragen. Erfinde keine neuen Ereignisse; fehlende Ereignisse prüft ein eigener Coverage-Pass.
+Antworte nur mit JSON {"reviews": [...]}. Sprache: {sprache}."""
+
+SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
+Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
+"Spielleitung" ist keine Figur; löse NPCs nur aus dem lokalen Kontext auf. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit. sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen.
+Wenn nichts Relevantes fehlt, events leer. Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
+
 SYSTEM_LEDGER_HISTORY = """Du ordnest aktuelle, source-belegte Ledger-Events in eine bereits bekannte Kampagnenhistorie ein. Die aktuellen Events sind Wahrheit über diese Session nur in dem epistemischen Status, der dort steht. Historische Quellen haben IDs Hxxxx und stammen aus früheren Recaps oder bestätigter öffentlicher Bibel.
 Für jedes aktuelle Event mit passenden historischen Quellen entscheide:
 - confirms: bestätigt denselben Zustand/Fakt.
-- extends: ergänzt Historie ohne Widerspruch.
+- extends: ergänzt denselben bereits begonnenen Zustand, dieselbe Beziehung, Verpflichtung oder denselben konkreten Handlungsfaden.
 - contradicts: aktuelles und historisches Wissen sind unvereinbar, aber es ist keine klare spätere Auflösung.
 - revises: das neue Ereignis erklärt oder korrigiert einen früher geglaubten/berichteten Zustand (z. B. jemand galt als tot und erscheint lebend; eine frühere Aussage wird als Lüge entlarvt).
 - none: keine belastbare Beziehung.
-Bei einem echten Zustandswechsel (verletzt → geheilt, Ort A → Ort B) normalerweise extends, nicht contradicts. Ein früherer Recap ist historische Quelle, keine absolute Weltwahrheit.
+WICHTIG: Dass in beiden Texten nur dieselbe Person oder derselbe Ort vorkommt, ist KEINE Beziehung und immer "none". Eine Rollenbeschreibung in der Bibel wird nicht durch irgendeine spätere Handlung derselben Figur "erweitert". Bei einem echten Zustandswechsel (verletzt → geheilt, Ort A → Ort B) normalerweise extends, nicht contradicts. Ein früherer Recap ist historische Quelle, keine absolute Weltwahrheit.
 historyIds nur aus den bereitgestellten H-IDs. Keine neuen Fakten. Antworte nur mit JSON {"links": [{"eventId":"E0001","relation":"…","historyIds":["H0001"],"reason":"…"}]}. Sprache: {sprache}."""
 
 SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
@@ -902,6 +920,12 @@ S_SCHEMAS = {
         "evidence": {"type": "array", "items": _obj({"start": S_STR, "quote": S_STR}, ["start", "quote"])}
     }, ["entryType", "action", "title"])}}, ["proposals"]),
     "ledger": _obj({"events": {"type": "array", "items": S_LEDGER_EVENT}}, ["events"]),
+    "ledger_review": _obj({"reviews": {"type": "array", "items": _obj({
+        "originIds": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^C[0-9]{4,6}$"}},
+        "verdict": {"type": "string", "enum": ["repair", "merge", "reject"]},
+        "reason": S_STR,
+        "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
+    }, ["originIds", "verdict", "reason", "replacement"])}}, ["reviews"]),
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
         "relation": {"type": "string", "enum": ["confirms", "extends", "contradicts", "revises", "none"]},
@@ -930,8 +954,10 @@ def _schema_fuer(system: str) -> dict | None:
         return S_SCHEMAS["proposals"]
     if system.startswith("Du vergleichst den Recap"):
         return S_SCHEMAS["missing"]
-    if system.startswith("Du extrahierst"):
+    if system.startswith("Du extrahierst") or system.startswith("Du suchst im ORIGINALTRANSKRIPT"):
         return S_SCHEMAS["ledger"]
+    if system.startswith("Du prüfst Ledger-Kandidaten"):
+        return S_SCHEMAS["ledger_review"]
     if system.startswith("Du ordnest aktuelle"):
         return S_SCHEMAS["ledger_history"]
     if system.startswith("Du prüfst genau EINEN Absatz"):
@@ -1213,7 +1239,7 @@ class Ablauf:
     letztes_kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
     letzte_relationen_vorher: list = field(default_factory=list)  # Relationsprüfung gegen das Transkript
     letzte_relationen_nachher: list = field(default_factory=list)
-    ledger_shadow: bool = False  # 0.4.51: nur Diagnose; beeinflusst Recap/Bibel niemals
+    ledger_shadow: bool = False  # 0.4.52: geprüfter Ledger bleibt Schattenmodus; beeinflusst Recap/Bibel niemals
     letztes_ledger: dict = field(default_factory=dict)
 
     def _schritt(self, name: str) -> None:
@@ -1719,33 +1745,209 @@ class Ablauf:
                   for a in e.get("assertions") or [] if isinstance(a, dict)]
         return " ".join(str(x) for x in teile if x)
 
+    def _ledger_event_normalisieren(self, e: dict, erlaubte_ids: set[str],
+                                  quelle: dict[str, str]) -> dict | None:
+        """Ein Modell-Event auf echte Source-IDs reduzieren und Beleg/Zeit deterministisch aus dem Original ableiten."""
+        if not isinstance(e, dict):
+            return None
+        ids = [str(x) for x in e.get("sourceIds") or [] if str(x) in erlaubte_ids and str(x) in quelle][:6]
+        summary = klartext(e.get("summary") or "")[:500]
+        if not ids or not summary:
+            return None
+        event = {**e, "sourceIds": ids, "summary": summary}
+        event["evidence"] = [{"sourceId": lid, "text": quelle[lid]} for lid in ids]
+        zeiten = [_zeit_vorn(quelle[lid]) for lid in ids]
+        event["time"] = min((t for t in zeiten if t is not None), default=None)
+        return event
+
+    @staticmethod
+    def _ledger_quellteile(zeilen: list[tuple[str, str]]) -> list[list[str]]:
+        """Dieselben stabilen Quellblöcke für Extraktion, Review und Coverage."""
+        return [teil.splitlines() for teil in stuecke([f"{lid} | {z}" for lid, z in zeilen], LEDGER_STUECK_TOKEN)]
+
     def _ledger_pass(self, ein: dict, system: str, zeilen: list[tuple[str, str]]) -> list[dict]:
-        """Ein Ledger-Pass über Originalzeilen. Nur Events mit realen Source-IDs überleben."""
+        """Ein Ledger-Pass über Originalzeilen. Strukturfehler/Truncation teilen nur den betroffenen Block rekursiv."""
         quelle = {lid: z for lid, z in zeilen}
         aus = []
-        teile = stuecke([f"{lid} | {z}" for lid, z in zeilen], LEDGER_STUECK_TOKEN)
-        for nr, teil in enumerate(teile, 1):
-            im_teil = {m.group(1) for m in re.finditer(r"(?m)^(L\d{4,6}) \|", teil)}
+        teile = self._ledger_quellteile(zeilen)
+        phase = "events" if system == SYSTEM_LEDGER_EVENTS else "continuity"
+
+        def verarbeiten(block: list[str], label: str, tiefe: int = 0) -> None:
+            if not block:
+                return
+            im_teil = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
+            self._schritt(f"ledger.{phase} {label}/{len(teile)}")
             try:
                 d = self.zaehler.aufruf(
                     self.klient, system.replace("{sprache}", _sprache(ein)),
-                    f"{_kopf(ein)}\n\nAbschnitt {nr} von {len(teile)}:\n{teil}")
+                    f"{_kopf(ein)}\n\nAbschnitt {label} von {len(teile)}:\n" + "\n".join(block))
+            except AntwortFehler as e:
+                if len(block) >= 4 and tiefe < 5:
+                    mitte = len(block) // 2
+                    log.info("Ledger-%s Abschnitt %s wird nach Strukturfehler geteilt: %s", phase, label, e)
+                    verarbeiten(block[:mitte], label + "a", tiefe + 1)
+                    verarbeiten(block[mitte:], label + "b", tiefe + 1)
+                    return
+                log.warning("Ledger-%s Abschnitt %s übersprungen: %s", phase, label, e)
+                return
             except SprachmodellFehler as e:
-                log.warning("Ledger-Pass Abschnitt %d übersprungen: %s", nr, e)
-                continue
-            for e in d.get("events") or []:
-                if not isinstance(e, dict):
-                    continue
-                ids = [str(x) for x in e.get("sourceIds") or [] if str(x) in im_teil and str(x) in quelle][:6]
-                summary = klartext(e.get("summary") or "")[:500]
-                if not ids or not summary:
-                    continue
-                event = {**e, "sourceIds": ids, "summary": summary}
-                event["evidence"] = [{"sourceId": lid, "text": quelle[lid]} for lid in ids]
-                zeiten = [_zeit_vorn(quelle[lid]) for lid in ids]
-                event["time"] = min((t for t in zeiten if t is not None), default=None)
-                aus.append(event)
+                log.warning("Ledger-%s Abschnitt %s übersprungen: %s", phase, label, e)
+                return
+            for roh in d.get("events") or []:
+                event = self._ledger_event_normalisieren(roh, im_teil, quelle)
+                if event is not None:
+                    event["extractionPass"] = phase
+                    aus.append(event)
+
+        for nr, teil in enumerate(teile, 1):
+            verarbeiten(teil, str(nr))
         return aus
+
+    @staticmethod
+    def _ledger_candidate_text(e: dict) -> str:
+        """Kompakte Kandidatendarstellung für den Reviewer; Evidence-Text steht separat als Originalquelle."""
+        d = {
+            "sourceIds": e.get("sourceIds") or [], "summary": e.get("summary") or "",
+            "kinds": e.get("kinds") or [], "actors": e.get("actors") or [], "targets": e.get("targets") or [],
+            "objects": e.get("objects") or [], "locations": e.get("locations") or [], "factions": e.get("factions") or [],
+            "assertions": e.get("assertions") or [], "epistemic": e.get("epistemic"),
+            "modality": e.get("modality"), "importance": e.get("importance"),
+            "pass": e.get("extractionPass"),
+        }
+        return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
+
+    def _ledger_review(self, ein: dict, kandidaten: list[dict], zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
+        """Source-grounded Review der beiden Extraktionspässe. Nicht genannte Kandidaten bleiben unverändert."""
+        quelle = {lid: z for lid, z in zeilen}
+        teile = self._ledger_quellteile(zeilen)
+        chunk_von = {}
+        for nr, block in enumerate(teile):
+            for z in block:
+                m = re.match(r"^(L\d{4,6}) \|", z)
+                if m:
+                    chunk_von[m.group(1)] = nr
+        gruppen: dict[int, list[dict]] = {}
+        for e in kandidaten:
+            ids = e.get("sourceIds") or []
+            if ids and ids[0] in chunk_von:
+                gruppen.setdefault(chunk_von[ids[0]], []).append(e)
+
+        ersetzt: dict[str, dict | None] = {}
+        diag = {"state": "ok", "candidates": len(kandidaten), "accepted": 0, "repaired": 0,
+                "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageAdded": 0}
+        system = SYSTEM_LEDGER_REVIEW.replace("{sprache}", _sprache(ein))
+
+        def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
+            if not batch:
+                return
+            block = teile[chunk_nr]
+            erlaubte_ids = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
+            kandidaten_text = "\n".join(
+                f"{e['candidateId']} | {self._ledger_candidate_text(e)}" for e in batch)
+            self._schritt(f"ledger.review {chunk_nr + 1}{suffix}/{len(teile)}")
+            try:
+                d = self.zaehler.aufruf(
+                    self.klient, system,
+                    f"{_kopf(ein)}\n\nORIGINALTRANSKRIPT:\n" + "\n".join(block)
+                    + f"\n\nKANDIDATEN:\n{kandidaten_text}")
+            except AntwortFehler as e:
+                if len(batch) > 1:
+                    mitte = len(batch) // 2
+                    pruefen(batch[:mitte], chunk_nr, suffix + "a")
+                    pruefen(batch[mitte:], chunk_nr, suffix + "b")
+                    return
+                diag["reviewErrors"] += 1
+                log.warning("Ledger-Review Kandidat %s übersprungen: %s", batch[0].get("candidateId"), e)
+                return
+            except SprachmodellFehler as e:
+                diag["reviewErrors"] += len(batch)
+                log.warning("Ledger-Review Abschnitt %d übersprungen: %s", chunk_nr + 1, e)
+                return
+
+            erlaubt_c = {e["candidateId"] for e in batch}
+            benutzt: set[str] = set()
+            for r in d.get("reviews") or []:
+                if not isinstance(r, dict):
+                    continue
+                origin = [str(x) for x in r.get("originIds") or []
+                          if str(x) in erlaubt_c and str(x) not in benutzt]
+                verdict = str(r.get("verdict") or "")
+                if not origin or verdict not in ("repair", "merge", "reject"):
+                    continue
+                if verdict == "merge" and len(origin) < 2:
+                    continue
+                replacement = None
+                if verdict in ("repair", "merge"):
+                    replacement = self._ledger_event_normalisieren(
+                        r.get("replacement") or {}, erlaubte_ids, quelle)
+                    if replacement is None:
+                        continue
+                    replacement["_review"] = {"verdict": verdict, "originIds": origin,
+                                              "reason": klartext(r.get("reason") or "")[:500]}
+                for cid in origin:
+                    ersetzt[cid] = None
+                    benutzt.add(cid)
+                if replacement is not None:
+                    # Genau einmal anhängen: unter der ersten Origin-ID liegt der Ersatz, die übrigen sind Tombstones.
+                    ersetzt[origin[0]] = replacement
+                diag[{"repair": "repaired", "merge": "merged", "reject": "rejected"}[verdict]] += 1
+
+        for chunk_nr, gruppe in sorted(gruppen.items()):
+            for ab in range(0, len(gruppe), LEDGER_REVIEW_BATCH):
+                pruefen(gruppe[ab:ab + LEDGER_REVIEW_BATCH], chunk_nr)
+
+        aus = []
+        for e in kandidaten:
+            cid = e["candidateId"]
+            if cid in ersetzt:
+                if ersetzt[cid] is not None:
+                    aus.append(ersetzt[cid])
+                continue
+            x = {k: v for k, v in e.items() if k != "candidateId"}
+            x["_review"] = {"verdict": "accepted", "originIds": [cid], "reason": ""}
+            aus.append(x)
+            diag["accepted"] += 1
+        return aus, diag
+
+    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
+        """Dritter, enger Pass: nur fehlende critical/important Fakten. So kann Review auch reine Auslassungen finden."""
+        quelle = {lid: z for lid, z in zeilen}
+        teile = self._ledger_quellteile(zeilen)
+        chunk_von = {}
+        for nr, block in enumerate(teile):
+            for z in block:
+                m = re.match(r"^(L\d{4,6}) \|", z)
+                if m:
+                    chunk_von[m.group(1)] = nr
+        system = SYSTEM_LEDGER_COVERAGE.replace("{sprache}", _sprache(ein))
+        neu: list[dict] = []
+
+        for nr, block in enumerate(teile):
+            im_teil = {m.group(1) for z in block if (m := re.match(r"^(L\d{4,6}) \|", z))}
+            vorhanden = [e for e in events if any(lid in im_teil for lid in e.get("sourceIds") or [])]
+            kompakt = "\n".join(f"- {','.join(e.get('sourceIds') or [])}: {e.get('summary', '')}" for e in vorhanden)
+            self._schritt(f"ledger.coverage {nr + 1}/{len(teile)}")
+            try:
+                d = self.zaehler.aufruf(
+                    self.klient, system,
+                    f"{_kopf(ein)}\n\nORIGINALTRANSKRIPT:\n" + "\n".join(block)
+                    + f"\n\nBEREITS ERFASST:\n{kompakt or '(nichts)'}")
+            except SprachmodellFehler as e:
+                log.warning("Ledger-Coverage Abschnitt %d übersprungen: %s", nr + 1, e)
+                continue
+            for roh in d.get("events") or []:
+                event = self._ledger_event_normalisieren(roh, im_teil, quelle)
+                if event is None or event.get("importance") not in ("critical", "important"):
+                    continue
+                event["extractionPass"] = "coverage"
+                event["_review"] = {"verdict": "coverage_added", "originIds": [], "reason": "fehlte nach Review"}
+                key = (tuple(event.get("sourceIds") or []), _notizkern(event.get("summary") or ""))
+                if any((tuple(x.get("sourceIds") or []), _notizkern(x.get("summary") or "")) == key
+                       for x in events + neu):
+                    continue
+                neu.append(event)
+                diag["coverageAdded"] += 1
+        return events + neu
 
     @staticmethod
     def _ledger_states(events: list[dict]) -> list[dict]:
@@ -1808,8 +2010,9 @@ class Ablauf:
             sources.append({"historyId": sid, "type": typ, "text": text[:1200], **meta})
             return sid
 
-        # Bibelquellen erst dann materialisieren, wenn ein aktuelles Event die Entität wirklich nennt.
-        # So bleibt auch ledger.json bei großen Kampagnen klein.
+        # Bibel ist Referenz für stabile Identität/Beziehung/Rolle usw., nicht für jede beliebige Handlung einer Figur.
+        # Frühere Recaps bleiben breiter, damit echte Zustandswechsel (tot → lebendig, Ort A → B) auffindbar bleiben.
+        bibel_props = {"identity", "relationship", "role_status", "allegiance", "reputation", "possession", "life_status"}
         bibel_nach_name = {}
         for b in ein.get("bibel") or []:
             name = klartext(b.get("name"))
@@ -1827,19 +2030,19 @@ class Ablauf:
             et = self._ledger_event_text(e)
             passende_namen = [n for n in namen if _erwaehnt(n, et)]
             ids = []
+            props = {str(a.get("property") or "") for a in e.get("assertions") or [] if isinstance(a, dict)}
             for n in passende_namen:
                 key = n.casefold()
-                if key in bibel_nach_name and key not in bibel_ids:
+                if props & bibel_props and key in bibel_nach_name and key not in bibel_ids:
                     name, b = bibel_nach_name[key]
                     bibel_ids[key] = add("bible", f"{name}: {b.get('zusammenfassung') or ''}",
                                          {"entryId": b.get("id"), "name": name})
-                if key in bibel_ids:
+                if key in bibel_ids and props & bibel_props:
                     ids.append(bibel_ids[key])
             for h, ht in recap_sources:
                 treffer = [n for n in passende_namen if _erwaehnt(n, ht)]
                 if not treffer:
                     continue
-                # Nur kurze lokale Ausschnitte um die erste passende Entität; der ganze alte Recap bleibt draußen.
                 klein = ht.casefold()
                 pos = min((klein.find(n.casefold()) for n in treffer if klein.find(n.casefold()) >= 0), default=-1)
                 snippet = ht[max(0, pos - 350):pos + 850] if pos >= 0 else ht[:1200]
@@ -1880,28 +2083,39 @@ class Ablauf:
         return aus
 
     def ledger(self, ein: dict) -> dict:
-        """0.4.51 Schatten-Ledger. Liest immer das Originaltranskript, läuft in zwei gezielten Pässen und beeinflusst
-        weder Recap noch Bibelvorschläge. Historie wird erst NACH der aktuellen Extraktion selektiv hinzugenommen."""
+        """0.4.52 Schatten-Ledger v2: zwei Extraktionspässe, source-grounded Review, Coverage und erst danach Historie.
+        Der geprüfte Ledger beeinflusst weiterhin weder Recap noch Bibelvorschläge."""
         zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
         if not zeilen:
-            return {"version": 1, "state": "empty", "events": [], "states": [], "historySources": [], "historyLinks": []}
+            return {"version": 2, "state": "empty", "events": [], "states": [], "historySources": [],
+                    "historyLinks": [], "review": {"state": "empty"}}
         self._schritt("ledger")
         roh = (self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
                + self._ledger_pass(ein, SYSTEM_LEDGER_CONTINUITY, zeilen))
-        # Doppelte atomare Aussage aus beiden Pässen vereinigen, aber verschiedene Facetten derselben Source behalten.
-        gesehen, events = set(), []
+
+        # Nur wirklich identische Kandidaten vor dem Review entfernen. Semantisch ähnliche/konfligierende Kandidaten
+        # bleiben bewusst erhalten, damit der Quellen-Review sie zusammenführen oder korrigieren kann.
+        gesehen, kandidaten = set(), []
         for e in sorted(roh, key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", ""))):
             key = (tuple(e.get("sourceIds") or []), _notizkern(e.get("summary") or ""))
             if key in gesehen:
                 continue
             gesehen.add(key)
-            e["eventId"] = f"E{len(events) + 1:04d}"
-            # vorhandene Bibel-ID nur deterministisch über Namensnennung anbinden
+            e["candidateId"] = f"C{len(kandidaten) + 1:04d}"
+            kandidaten.append(e)
+
+        events, review = self._ledger_review(ein, kandidaten, zeilen)
+        events = self._ledger_coverage(ein, events, zeilen, review)
+        events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
+
+        for e in events:
+            e.pop("candidateId", None)
+            e["eventId"] = f"E{events.index(e) + 1:04d}"
             et = self._ledger_event_text(e)
             e["linkedEntries"] = [b.get("id") for b in ein.get("bibel") or []
                                   if b.get("id") and klartext(b.get("name"))
                                   and _erwaehnt(klartext(b.get("name")), et)]
-            events.append(e)
+
         states = self._ledger_states(events)
         sources, event_map = self._ledger_history_sources(ein, events)
         links = self._ledger_history_links(ein, events, sources, event_map) if sources else []
@@ -1910,8 +2124,8 @@ class Ablauf:
             link_map.setdefault(x["eventId"], []).append(x)
         for e in events:
             e["history"] = link_map.get(e["eventId"], [])
-        return {"version": 1, "state": "ok", "events": events, "states": states,
-                "historySources": sources, "historyLinks": links}
+        return {"version": 2, "state": "ok", "rawCandidates": len(kandidaten), "events": events, "states": states,
+                "historySources": sources, "historyLinks": links, "review": review}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
@@ -1982,8 +2196,8 @@ class Ablauf:
                 self.letztes_ledger = self.ledger(recap_ein)
             except SprachmodellFehler as e:
                 log.warning("Schatten-Ledger übersprungen: %s", e)
-                self.letztes_ledger = {"version": 1, "state": "failed", "error": str(e), "events": [], "states": [],
-                                       "historySources": [], "historyLinks": []}
+                self.letztes_ledger = {"version": 2, "state": "failed", "error": str(e), "events": [], "states": [],
+                                       "historySources": [], "historyLinks": [], "review": {"state": "failed"}}
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
                "tokensOut": self.zaehler.tokens_out}
