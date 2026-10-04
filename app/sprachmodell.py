@@ -680,9 +680,9 @@ Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" ode
 
 coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Ereignisse. Gib dort ausschließlich importance "critical" oder "important" zurück, keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
 
-anchors sind eine zweite, knappe Sicherheitslinie für DAUERHAFTE ODER FOLGENREICHE Zustände/Relationen. Gib einen Anchor auch dann aus, wenn ein Kandidat ihn bereits abbildet. Jeder Anchor ist atomar: subject + property + value, source-belegt, importance nur critical/important. originIds enthält die C-IDs der Kandidaten, die genau diesen Fakt abzubilden versuchen; wenn er komplett fehlt, ist originIds leer. Nutze nur universelle Eigenschaften aus dem Assertion-Schema. Keine Regelmechanik, keine bloße Atmosphäre, keine Routinebewegung. Wenn Identität, Besitz, Beziehung oder Verpflichtung nicht sicher aufgelöst werden kann, setze keine scheinbar präzise Relation.
+anchors sind eine zweite, knappe Sicherheitslinie für DAUERHAFTE ODER FOLGENREICHE Zustände/Relationen. Gib höchstens 8 Anchors pro Abschnitt aus. Gib einen Anchor auch dann aus, wenn ein Kandidat ihn bereits abbildet. Jeder Anchor ist atomar: subject + property + value, source-belegt, importance nur critical/important. originIds enthält die C-IDs der Kandidaten, die genau diesen Fakt abzubilden versuchen; wenn er komplett fehlt, ist originIds leer. Nutze nur universelle Eigenschaften aus dem Assertion-Schema. Keine Regelmechanik, keine bloße Atmosphäre, keine Routinebewegung. Wenn Identität, Besitz, Beziehung oder Verpflichtung nicht sicher aufgelöst werden kann, setze keine scheinbar präzise Relation.
 
-encounters beschreibt nur SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen/Kämpfe im Abschnitt. Kein einzelner Angriff und keine Würfelabfolge. Ein Fragment fasst eine erzählerische Phase zusammen: Beteiligte, Orte, Ziele, frei benannte domains (z. B. unterschiedliche Schauplätze/Ebenen), Wendepunkte, Ausgang/Folgen/offene Punkte. boundary ist start/middle/end/complete/unknown. Bei keinem substanziellen Encounter: leere Liste. Die Kategorien sind systemagnostisch; erfinde keine systemspezifischen Ebenen.
+encounters beschreibt nur SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen/Kämpfe im Abschnitt, höchstens 2 Fragmente pro Abschnitt. Kein einzelner Angriff und keine Würfelabfolge. Ein Fragment fasst eine erzählerische Phase zusammen: Beteiligte, Orte, Ziele, frei benannte domains (z. B. unterschiedliche Schauplätze/Ebenen), Wendepunkte, Ausgang/Folgen/offene Punkte. boundary ist start/middle/end/complete/unknown. Bei keinem substanziellen Encounter: leere Liste. Die Kategorien sind systemagnostisch; erfinde keine systemspezifischen Ebenen.
 
 Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
 Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -962,8 +962,8 @@ S_SCHEMAS = {
             "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
         }, ["originIds", "verdict", "reason", "replacement"])},
         "coverage": {"type": "array", "items": S_LEDGER_EVENT},
-        "anchors": {"type": "array", "items": S_LEDGER_ANCHOR},
-        "encounters": {"type": "array", "items": S_LEDGER_ENCOUNTER_FRAGMENT},
+        "anchors": {"type": "array", "maxItems": 8, "items": S_LEDGER_ANCHOR},
+        "encounters": {"type": "array", "maxItems": 2, "items": S_LEDGER_ENCOUNTER_FRAGMENT},
     }, ["reviews", "coverage", "anchors", "encounters"]),
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
@@ -1885,6 +1885,7 @@ class Ablauf:
         encounter_fragmente: list[dict] = []
         coverage_seen: set[tuple] = set()
         anchor_seen: set[tuple] = set()
+        encounter_seen: set[tuple] = set()
         vorhandene_keys = {
             (tuple(e.get("sourceIds") or []), _notizkern(e.get("summary") or "")) for e in kandidaten
         }
@@ -2016,6 +2017,10 @@ class Ablauf:
                     boundary = "unknown"
                 def liste(name: str, max_n: int = 12) -> list[str]:
                     return [klartext(x)[:240] for x in roh.get(name) or [] if klartext(x)][:max_n]
+                key = (tuple(ids), kind, _notizkern(summary))
+                if key in encounter_seen:
+                    continue
+                encounter_seen.add(key)
                 encounter_fragmente.append({
                     "sourceIds": ids, "kind": kind, "boundary": boundary, "participants": liste("participants"),
                     "locations": liste("locations"), "objectives": liste("objectives"), "domains": liste("domains"),
@@ -2050,10 +2055,11 @@ class Ablauf:
         behalten: list[dict] = []
 
         def meta_im_event(e: dict) -> bool:
-            for feld in ("actors", "targets"):
+            for feld in ("actors", "targets", "objects", "locations", "factions"):
                 if any(self._ledger_meta_entitaet(x) for x in e.get(feld) or []):
                     return True
             return any(self._ledger_meta_entitaet(a.get("subject") or "")
+                       or self._ledger_meta_entitaet(a.get("value") or "")
                        for a in e.get("assertions") or [] if isinstance(a, dict))
 
         for e in events:
@@ -2076,16 +2082,19 @@ class Ablauf:
             if self._ledger_meta_entitaet(h.get("subject") or ""):
                 continue
             origins = set(h.get("originIds") or [])
+            anchor_sources = set(h.get("sourceIds") or [])
             konflikte = []
-            if origins:
-                for e in behalten:
-                    e_origins = set((e.get("_review") or {}).get("originIds") or [])
-                    if not (origins & e_origins):
+            for e in behalten:
+                e_origins = set((e.get("_review") or {}).get("originIds") or [])
+                source_overlap = bool(anchor_sources & set(e.get("sourceIds") or []))
+                explizit_verknuepft = bool(origins & e_origins)
+                for a in e.get("assertions") or []:
+                    if not isinstance(a, dict) or str(a.get("property") or "") != h["property"]:
                         continue
-                    for a in e.get("assertions") or []:
-                        if isinstance(a, dict) and str(a.get("property") or "") == h["property"] and not passt(a, h):
-                            konflikte.append(e)
-                            break
+                    gleicher_schluessel = (norm(a.get("subject") or "") == norm(h["subject"]) and source_overlap)
+                    if (explizit_verknuepft or gleicher_schluessel) and not passt(a, h):
+                        konflikte.append(e)
+                        break
             if konflikte:
                 for e in konflikte:
                     if e in behalten:
@@ -2371,8 +2380,8 @@ class Ablauf:
                     "historySources": [], "historyLinks": [], "review": {"state": "empty"},
                     "integrity": {"anchors": 0, "anchorAdded": 0, "anchorConflicts": 0, "metaRejected": 0}}
         self._schritt("ledger")
-        # 0.4.53: Kein zweiter Volltranskript-Pass mehr. Der Primärpass sammelt Ereignisse; der anschließende
-        # source-grounded Review schließt im selben Quellblock gezielt wichtige Kontinuitäts-/Coverage-Lücken.
+        # 0.4.54 behält den 0.4.53-Effizienzpfad: kein zweiter Volltranskript-Pass. Primärpass und derselbe
+        # source-grounded Review liefern Events, wichtige Anchors und Encounter-Fragmente.
         roh = self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
 
         # Nur wirklich identische Kandidaten vor dem Review entfernen. Semantisch ähnliche/konfligierende Kandidaten
