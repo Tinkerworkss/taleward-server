@@ -687,7 +687,7 @@ encounters beschreibt nur SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen
 Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
 Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
-SYSTEM_LEDGER_COVERAGE = """SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
+SYSTEM_LEDGER_COVERAGE = """Du suchst im ORIGINALTRANSKRIPT eines Abschnitts nach WICHTIGEN Ledger-Ereignissen, die in der Liste "BEREITS ERFASST" fehlen. Gib ausschließlich echte Lücken zurück, keine Umformulierungen bereits erfasster Events und keinen Kleinkram.
 Priorität: Tod/Überleben, Rettung, schwere Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidende Entdeckung oder Wissensänderung, Ortswechsel mit Plotfolge. importance nur "critical" oder "important".
 "Spielleitung" ist keine Figur; löse NPCs nur aus dem lokalen Kontext auf. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit. sourceIds dürfen nur aus diesem Abschnitt stammen und müssen die Aussage direkt tragen.
 Wenn nichts Relevantes fehlt, events leer. Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -2175,7 +2175,7 @@ class Ablauf:
             })
         return aus
 
-    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict)    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
+    def _ledger_coverage(self, ein: dict, events: list[dict], zeilen: list[tuple[str, str]], diag: dict) -> list[dict]:
         """Dritter, enger Pass: nur fehlende critical/important Fakten. So kann Review auch reine Auslassungen finden."""
         quelle = {lid: z for lid, z in zeilen}
         teile = self._ledger_quellteile(zeilen)
