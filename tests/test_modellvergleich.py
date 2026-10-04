@@ -115,12 +115,12 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
     d = ordner / "a_1-ctx12288"
     ledger = json.loads((d / "ledger.json").read_text(encoding="utf-8"))
     erg = json.loads((d / "ergebnis.json").read_text(encoding="utf-8"))
-    assert ledger["version"] == 3 and ledger["state"] == "ok"
+    assert ledger["version"] == 4 and ledger["state"] == "ok"
     assert erg["nur_ledger"] is True and erg["grundlage"] == "Originaltranskript"
     assert not (d / "recap.txt").exists()
     assert not (d / "vorschlaege.json").exists()
     assert not (d / "plan.json").exists()
-    assert any("Ledger (Schatten v3)" in m for m in meldungen)
+    assert any("Ledger (Schatten v4)" in m for m in meldungen)
 
 
 def test_modelle_lesen():
