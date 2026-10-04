@@ -514,13 +514,15 @@ Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
 - Reiner Text ohne Markdown: keine Sternchen, keine Rauten, keine Zwischenüberschriften, keine Listen.
 Antworte nur mit JSON: {"title": "…", "text": "…", "openThreads": ["…"]}. Sprache: {sprache}."""
 
-SYSTEM_RECAP_PLAN = """Du planst den Recap einer Pen-&-Paper-Session. Du schreibst noch keine Geschichte und formulierst nichts um. Du siehst genau einen Zeitabschnitt mit Szenennotizen; jede Notiz hat eine feste ID N001, N002 usw.
-Wähle 2 bis {max} Notizen, die in einem Recap dieses Zeitabschnitts zwingend vorkommen sollten. Maßstab ist ausschließlich, ob ein Spieler die Information vor der nächsten Runde braucht: Wendepunkt oder Orts-/Lagewechsel; bleibender Zustand (verletzt, gerettet, gefangen, befreit, tot); Beziehung oder Identität; Besitz oder Übergabe; Ziel/Auftrag; Versprechen, Schuld oder Abmachung; entscheidende Information oder offene Handlungsmöglichkeit.
-Nicht auswählen, solange keine bleibende Folge entsteht: Regeln und Würfe, Smalltalk, Witze, Essen/Schlafen, einzelne gescheiterte Versuche, reine Atmosphäre und beiläufige Details.
-Gib ausschließlich IDs zurück, die in diesem Abschnitt stehen. Keine neuen IDs, keine Texte, keine Umformulierungen. Reihenfolge wie in den Notizen. Wenn weniger als zwei wirklich relevante Notizen vorhanden sind, wähle entsprechend weniger.
-Antworte nur mit JSON: {"required": ["N001", "N004"]}. Sprache: {sprache}."""
+SYSTEM_RECAP_PLAN = """Du klassifizierst die Szenennotizen eines kurzen Zeitabschnitts einer Pen-&-Paper-Session für den späteren Recap. Du schreibst noch keine Geschichte und formulierst nichts um. Jede Notiz hat eine feste ID N001, N002 usw.
+Ordne JEDE ID genau einer Klasse zu. Es gibt keine Höchstzahl und keine Rangliste: Relevante Notizen dürfen nicht gegeneinander ausgespielt werden.
+- kritisch: Wendepunkt; Tod oder Rettung; Gefangennahme/Befreiung; entscheidender Orts- oder Lagewechsel; Abmachung, Versprechen oder Verpflichtung; zentrale Enthüllung/Identität; entscheidender Hinweis oder offene Handlungsmöglichkeit.
+- wichtig: bleibender Zustand; Beziehung oder bestehende Verbindung; Besitzwechsel; benannter Gegenstand, der erhalten, übergeben, verloren oder gesucht wird; Ziel/Auftrag; benannter Ort oder NSC mit Bedeutung für das weitere Handeln.
+- nebensächlich: vorübergehende Details ohne bleibende Folge, Wiederholungen, Regeln/Würfe, Smalltalk, Witze, Essen/Schlafen, reine Atmosphäre, einzelne gescheiterte Versuche.
+Wichtig: Klassifiziere ALLE IDs. Wenn in einem Abschnitt fünf oder zehn relevante Dinge passieren, markiere alle als kritisch oder wichtig. Gib ausschließlich vorhandene IDs zurück, keine Texte, keine Umformulierungen und keine neuen IDs.
+Antworte nur mit JSON: {"critical": ["N001"], "important": ["N002"], "minor": ["N003"]}. Sprache: {sprache}."""
 
-PLAN_PRO_TEIL = 4
+PLAN_MINUTEN = 15
 
 
 SYSTEM_VORSCHLAEGE = """Du pflegst die Kampagnen-Bibel einer Pen-&-Paper-Runde (Einträge: npc, location, quest, \
@@ -601,7 +603,7 @@ hast, jeweils vollständig. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
-ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.48: post-hoc nur noch kritische Punkte; der Pflichtplan trägt Wichtiges
+ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.49: post-hoc nur kritische Punkte; Klassifikationsplan trägt Wichtiges
 RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Stellen eines Absatzes
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
 
@@ -950,6 +952,28 @@ def _teile_nach_zeit(notizen: list[str]) -> list[str]:
     return teile
 
 
+def _plan_teile_nach_zeit(notizen: list[str]) -> list[str]:
+    """Szenennotizen für den Pflichtplan in feste PLAN_MINUTEN-Fenster teilen. Anders als _teile_nach_zeit werden
+    dichte Ereignisfolgen nicht auf wenige größere Blöcke gerundet: Hinrichtung, Rettung, Tod und Besitzwechsel sollen
+    nicht gegeneinander um wenige Planplätze konkurrieren."""
+    zeiten = [t for t in (_zeit_vorn(n) for n in notizen) if t is not None]
+    if not zeiten:
+        return stuecke(notizen, TEIL_TOKEN)
+    von = min(zeiten)
+    fenster_s = PLAN_MINUTEN * 60
+    gruppen: dict[int, list[str]] = {}
+    letzte = 0
+    for n in notizen:
+        t = _zeit_vorn(n)
+        if t is not None:
+            letzte = max(0, int((t - von) // fenster_s))
+        gruppen.setdefault(letzte, []).append(n)
+    teile = []
+    for nr in sorted(gruppen):
+        teile += stuecke(gruppen[nr], TEIL_TOKEN)
+    return teile
+
+
 def _ohne_doppelte(notizen: list[str]) -> list[str]:
     """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
     gesehen, aus = set(), []
@@ -970,7 +994,7 @@ class Ablauf:
     zaehler: Zaehler = field(default_factory=Zaehler)
     schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
     letzter_verlauf: str = ""  # Zusammenfassungen der Teile (lange Runden), für den Modellvergleich
-    letzter_plan: list = field(default_factory=list)  # Pflichtpunkte vor der Prosagenerierung (Modellvergleich)
+    letzter_plan: list = field(default_factory=list)  # Klassifikation aller Plan-Notizen vor der Prosa (Modellvergleich)
     gliederung: str = "auto"  # lange Runden: "auto" = Notizen direkt in Zeitabschnitten, Teile nur als Ausweichlösung;
     #                            "direkt" / "teile" erzwingen das eine oder andere (Modellvergleich, A/B)
     temperatur_notizen: float | None = None  # Testoption: Temperatur nur für die Szenennotizen
@@ -1122,15 +1146,16 @@ class Ablauf:
         return "\n\n".join(aus)
 
     def planen(self, ein: dict, notizen: str) -> list[dict]:
-        """1.5c: Vor der Prosa pro Zeitabschnitt nur vorhandene Szenennotizen als Pflichtpunkte auswählen.
-        Das Modell darf keine Ereignisse formulieren, nur feste IDs wählen; ungültige IDs werden verworfen."""
+        """0.4.49: Jede Szenennotiz in kurzen Zeitfenstern klassifizieren statt Top-N auszuwählen. Kritisch und
+        wichtig werden später Pflichtpunkte; nebensächlich bleibt in plan.json sichtbar. Fehlt eine gültige ID in
+        der Modellantwort, fällt sie auf 'wichtig' zurück, damit eine Auslassung des Klassifizierers keine Information
+        still entfernt."""
         zeilen = [z.strip() for z in notizen.split("\n") if z.strip() and _zeit_vorn(z) is not None]
         if not zeilen:
             return []
         ids = {z: f"N{i + 1:03d}" for i, z in enumerate(zeilen)}
-        teile = _teile_nach_zeit(zeilen)
-        system = (SYSTEM_RECAP_PLAN.replace("{sprache}", _sprache(ein))
-                  .replace("{max}", str(PLAN_PRO_TEIL)))
+        teile = _plan_teile_nach_zeit(zeilen)
+        system = SYSTEM_RECAP_PLAN.replace("{sprache}", _sprache(ein))
         aus = []
         for i, teil in enumerate(teile):
             teil_zeilen = [z.strip() for z in teil.split("\n") if z.strip() and z.strip() in ids]
@@ -1141,19 +1166,43 @@ class Ablauf:
             try:
                 d = self.zaehler.aufruf(
                     self.klient, system,
-                    f"{_kopf(ein)}\n\nZeitabschnitt {i + 1} von {len(teile)}:\n{liste}")
+                    f"{_kopf(ein)}\n\nZeitabschnitt {i + 1} von {len(teile)} (etwa {PLAN_MINUTEN} Minuten):\n{liste}")
             except SprachmodellFehler as e:
                 log.warning("Recap-Plan: Abschnitt %d übersprungen: %s", i + 1, e)
-                continue
-            gewaehlt = d.get("required") or d.get("pflicht") or []
-            if not isinstance(gewaehlt, list):
-                continue
-            wanted = {str(x).strip() for x in gewaehlt[:PLAN_PRO_TEIL * 2]}
-            im_teil = 0
-            for nid, z in erlaubt.items():
-                if nid in wanted and im_teil < PLAN_PRO_TEIL:
-                    aus.append({"id": nid, "zeit": _zeit_vorn(z), "notiz": z, "teil": i + 1})
-                    im_teil += 1
+                d = {}
+
+            def ids_aus(*namen: str) -> set[str]:
+                werte = []
+                for name in namen:
+                    v = d.get(name)
+                    if isinstance(v, list):
+                        werte += [str(x).strip() for x in v]
+                return {x for x in werte if x in erlaubt}
+
+            kritisch = ids_aus("critical", "kritisch")
+            wichtig = ids_aus("important", "wichtig") - kritisch
+            neben = ids_aus("minor", "nebensächlich", "nebensaechlich") - kritisch - wichtig
+            klassifiziert = kritisch | wichtig | neben
+
+            # Recall vor Kürze: Nicht klassifizierte gültige IDs werden Pflicht statt still verloren zu gehen.
+            fehlend = set(erlaubt) - klassifiziert
+            wichtig |= fehlend
+
+            for nid, z in erlaubt.items():  # chronologische Reihenfolge aus der Grundlage
+                if nid in kritisch:
+                    rang = "kritisch"
+                elif nid in wichtig:
+                    rang = "wichtig"
+                else:
+                    rang = "nebensächlich"
+                aus.append({
+                    "id": nid,
+                    "zeit": _zeit_vorn(z),
+                    "notiz": z,
+                    "teil": i + 1,
+                    "wichtigkeit": rang,
+                    "fallback": nid in fehlend,
+                })
         return aus
 
     def recap(self, ein: dict, titel: str, grundlage: str,
@@ -1163,9 +1212,12 @@ class Ablauf:
                           for e in ein["bibel"])
         pflicht = ""
         if pflichtplan:
-            pz = "\n".join(f"- Abschnitt {p['teil']}: {p['id']} {p['notiz']}" for p in pflichtplan)
-            pflicht = ("\n\nPflichtplan (nur aus der Grundlage ausgewählt; JEDER Punkt muss im Recap vorkommen):\n"
-                       + pz)
+            punkte = [p for p in pflichtplan if p.get("wichtigkeit") in ("kritisch", "wichtig")]
+            if punkte:
+                pz = "\n".join(
+                    f"- [{p['wichtigkeit']}] Abschnitt {p['teil']}: {p['id']} {p['notiz']}" for p in punkte)
+                pflicht = ("\n\nPflichtplan (nur aus der Grundlage ausgewählt; JEDER Punkt muss im Recap vorkommen):\n"
+                           + pz)
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"{pflicht}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
