@@ -549,7 +549,7 @@ def test_ergaenzung_nur_an_passender_stelle_und_nur_wichtige():
 
 
 def test_relationen_gegen_transkript():
-    """Atomare Claims sehen nur kurze Transkriptfenster; nur exakter Claim + belegtes Zitat darf widersprechen."""
+    """Atomare Claims sehen nur kurze Transkriptfenster; nur exakter Claim + echte Source-ID darf widersprechen."""
     from app.sprachmodell import Ablauf, Antwort
 
     class Klient:
@@ -566,14 +566,14 @@ def test_relationen_gegen_transkript():
                     "urteil": "widerspricht",
                     "korrektur": "Pipo gab der Gruppe sein Schwert.",
                     "begruendung": "Pipo gibt der Gruppe das Schwert, nicht umgekehrt.",
-                    "zitat": "Nehmt mein Schwert"
+                    "sourceIds": ["L0216"]
                 }]}), 1, 1)
             return Antwort(json.dumps({"claims": [{
                 "claim": "Dann rasteten alle lange.",
                 "urteil": "stimmt",
                 "korrektur": "",
                 "begruendung": "",
-                "zitat": ""
+                "sourceIds": []
             }]}), 1, 1)
 
     ein = _ein(400)
@@ -586,10 +586,11 @@ def test_relationen_gegen_transkript():
     k = Klient()
     aus = Ablauf(k).relationen(ein, text, befund)
     assert len(k.nutzer) == 2
-    assert "Senke dein Schwert, Pipo" in k.nutzer[0] and "Satz 100 " not in k.nutzer[0]
+    assert "L0216 |" in k.nutzer[0] and "Senke dein Schwert, Pipo" in k.nutzer[0] and "Satz 100 " not in k.nutzer[0]
     assert "Satz 214 " in k.nutzer[0] and "Satz 218 " in k.nutzer[0] and "Satz 230 " not in k.nutzer[0]
     assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"]
     assert aus[0]["claims"][0]["exakt"] is True and aus[0]["claims"][0]["zitatBelegt"] is True
+    assert aus[0]["claims"][0]["sourceIds"] == ["L0216"] and "Nehmt mein Schwert" in aus[0]["claims"][0]["zitat"]
     assert aus[1]["urteil"] == "stimmt"
     assert befund[0]["verdict"] == "contradicted" and befund[0]["relation_contradicted"] is True
     assert befund[1]["verdict"] == "supported"
@@ -600,7 +601,7 @@ def test_relationen_gegen_transkript():
 
 
 def test_recap_plan_klassifiziert_alle_ids_in_kurzen_fenstern():
-    """0.4.49: Keine Top-N-Auswahl mehr. Jede Notiz wird klassifiziert; ungültige IDs fliegen raus und fehlende
+    """0.4.50: Keine Top-N-Auswahl mehr. Jede Notiz wird klassifiziert; ungültige IDs fliegen raus und fehlende
     gültige IDs fallen auf 'wichtig' zurück, damit der Plan keine Information still wegselektiert."""
     from app.sprachmodell import Ablauf, Antwort, PLAN_MINUTEN
 
@@ -709,7 +710,7 @@ def _relations_patch_klient(zweiter_befund: str):
             if system.startswith("Du prüfst den Recap"):
                 return Antwort(json.dumps({"absaetze": [{
                     "nr": 1, "urteil": "belegt",
-                    "stellen": [{"zeit": "1:11:40", "zitat": "Nehmt es"}],
+                    "stellen": [{"zeit": "1:11:40", "sourceIds": ["L0216"]}],
                     "begruendung": ""
                 }]}), 1, 1)
             if system.startswith("Du prüfst genau EINEN Absatz"):
@@ -720,14 +721,14 @@ def _relations_patch_klient(zweiter_befund: str):
                         "urteil": "widerspricht",
                         "korrektur": "Pipo gab der Gruppe sein Schwert.",
                         "begruendung": "Die Übergabe läuft von Pipo zur Gruppe.",
-                        "zitat": "Nehmt es"
+                        "sourceIds": ["L0216"]
                     }]}), 1, 1)
                 return Antwort(json.dumps({"claims": [{
                     "claim": "Pipo gab der Gruppe sein Schwert.",
                     "urteil": zweiter_befund,
                     "korrektur": "",
                     "begruendung": "",
-                    "zitat": "Nehmt es"
+                    "sourceIds": ["L0216"]
                 }]}), 1, 1)
             if system.startswith("Du überarbeitest einzelne Absätze"):
                 raise AssertionError("Relationsfehler darf keinen ganzen Absatz neu generieren")
