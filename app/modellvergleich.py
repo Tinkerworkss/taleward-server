@@ -566,6 +566,8 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
             (d / "relationspruefung.json").write_text(json.dumps({"vorher": e.relationen_vorher,
                                                                   "nachher": e.relationen_nachher},
                                                                  ensure_ascii=False, indent=2), encoding="utf-8")
+            (d / "ledger.json").write_text(json.dumps(e.ledger or {"state": "disabled"}, ensure_ascii=False, indent=2),
+                                            encoding="utf-8")
         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
         for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
                              ("verlauf.txt", e.verlauf)):
@@ -587,7 +589,10 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                          1 for x in e.relationen_vorher if x.get("urteil") == "widerspricht"),
                                                      "pruefung_vorher": None, "pruefung_nachher": None,
                                                      "relationen_vorher": None, "relationen_nachher": None,
-                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                                     "ledgerEvents": len((e.ledger or {}).get("events") or []),
+                                                     "ledgerStates": len((e.ledger or {}).get("states") or []),
+                                                     "ledgerHistoryLinks": len((e.ledger or {}).get("historyLinks") or []),
+                                                     "ledger": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
     (ordner / "bericht.html").write_text(bericht_html(info, richter, ergebnisse), encoding="utf-8")
