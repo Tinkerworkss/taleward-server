@@ -172,7 +172,7 @@ class Ergebnis:
     letzte_antwort: str = ""  # bei einem Fehler: Rohtext der letzten Modellantwort (Fehlersuche, bleibt lokal)
     notizen: str = ""  # Grundlage, wenn verdichtet (Szenennotizen) – zur Fehlersuche, bleibt lokal
     verlauf: str = ""  # Zusammenfassungen der Teile bei langen Runden
-    plan: list[dict] = field(default_factory=list)  # vor der Prosa ausgewählte Pflichtnotizen (0.4.48)
+    plan: list[dict] = field(default_factory=list)  # Klassifikation aller Plan-Notizen vor der Prosa (0.4.49)
     kapitel1: str = ""  # erster Entwurf des Recaps (vor Ergänzung und Nachbesserung)
     kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
     relationen_vorher: list[dict] = field(default_factory=list)  # Relationsprüfung gegen das Transkript
@@ -541,9 +541,15 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
             if inhalt:
                 (d / name).write_text(inhalt, encoding="utf-8")
         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+        plan_kritisch = sum(1 for p in e.plan if p.get("wichtigkeit") == "kritisch")
+        plan_wichtig = sum(1 for p in e.plan if p.get("wichtigkeit") == "wichtig")
+        plan_neben = sum(1 for p in e.plan if p.get("wichtigkeit") == "nebensächlich")
+        plan_fallback = sum(1 for p in e.plan if p.get("fallback"))
         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
-                                                     "plan": len(e.plan), "pruefliste": None, "kapitel1": None,
-                                                     "kapitel2": None,
+                                                     "plan": len(e.plan), "planPflicht": plan_kritisch + plan_wichtig,
+                                                     "planKritisch": plan_kritisch, "planWichtig": plan_wichtig,
+                                                     "planNebensaechlich": plan_neben, "planFallback": plan_fallback,
+                                                     "pruefliste": None, "kapitel1": None, "kapitel2": None,
                                                      "fehlend": len(e.fehlend),
                                                      "ergaenzt": sum(1 for f in e.fehlend if f.get("ergaenzt")),
                                                      "relationen_widersprochen": sum(
@@ -620,7 +626,12 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                 belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
                 ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
                 wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
-                melden(f"  Pflichtplan: {len(erg.plan)} Punkte; Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, "
+                pk = sum(1 for p in erg.plan if p.get("wichtigkeit") == "kritisch")
+                pw = sum(1 for p in erg.plan if p.get("wichtigkeit") == "wichtig")
+                pn = sum(1 for p in erg.plan if p.get("wichtigkeit") == "nebensächlich")
+                pf = sum(1 for p in erg.plan if p.get("fallback"))
+                melden(f"  Plan: {pk} kritisch, {pw} wichtig, {pn} nebensächlich"
+                       f"{f', {pf} Fallback' if pf else ''}; Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, "
                        f"{belegt} belegt, {ergaenzt} ergänzt; Relationen (Transkript): {wider} von "
                        f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
