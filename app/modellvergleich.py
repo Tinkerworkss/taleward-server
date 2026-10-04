@@ -613,6 +613,8 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                      "ledgerEvents": len((e.ledger or {}).get("events") or []),
                                                      "ledgerStates": len((e.ledger or {}).get("states") or []),
                                                      "ledgerHistoryLinks": len((e.ledger or {}).get("historyLinks") or []),
+                                                     "ledgerEncounters": len((e.ledger or {}).get("encounters") or []),
+                                                     "ledgerIntegrity": (e.ledger or {}).get("integrity") or {},
                                                      "ledgerReview": (e.ledger or {}).get("review") or {},
                                                      "ledger": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
@@ -696,7 +698,7 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                            f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
                 if erg.ledger:
                     lr = erg.ledger.get("review") or {}
-                    melden(f"  Ledger (Schatten v2): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
+                    melden(f"  Ledger (Schatten v3): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
                            f"{len(erg.ledger.get('events') or [])} Events, {len(erg.ledger.get('states') or [])} States, "
                            f"{len(erg.ledger.get('historyLinks') or [])} History-Links; Review: "
                            f"{lr.get('repaired', 0)} repariert, {lr.get('merged', 0)} zusammengeführt, "
