@@ -24,6 +24,9 @@ class Modell:
         self.vorschlaege = vorschlaege or []
 
     def antwort(self, system: str, nutzer: str) -> dict:
+        if system.startswith("Du klassifizierst die Szenennotizen"):
+            ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+            return {"critical": [], "important": ids, "minor": []}
         if system.startswith("Du vergleichst den Recap"):
             return {"fehlend": []}
         if system.startswith("Du prüfst genau EINEN Absatz"):
