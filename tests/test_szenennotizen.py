@@ -1027,7 +1027,7 @@ def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_rep
                 "verdict": "merge",
                 "reason": "Beide Kandidaten beschreiben dieselbe Übergabe; einer hatte die Richtung vertauscht.",
                 "replacement": replacement,
-            }]}), 1, 1)
+            }], "coverage": []}), 1, 1)
 
     ein = _ein(2)
     ein["transkript"][0]["sprecher"] = "Spielleitung"
@@ -1043,29 +1043,56 @@ def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_rep
     assert diag["merged"] == 1
 
 
-def test_ledger_coverage_kann_vollstaendig_fehlenden_kritischen_status_nachtragen():
-    """0.4.52: Review vorhandener Events reicht nicht; Coverage darf source-belegte wichtige Auslassungen ergänzen."""
+def test_ledger_review_kann_vollstaendig_fehlenden_kritischen_status_nachtragen():
+    """0.4.53: Derselbe Quellen-Review schließt kritische Coverage-Lücken, auch wenn der Primärpass nichts fand."""
     from app.sprachmodell import Ablauf, Antwort, transkript_zeilen_mit_ids
 
     class Klient:
         modell = "test"
 
         def chat(self, system, nutzer):
-            assert system.startswith("Du suchst im ORIGINALTRANSKRIPT")
-            return Antwort(json.dumps({"events": [
+            assert system.startswith("Du prüfst Ledger-Kandidaten")
+            assert "KANDIDATEN:\n(keine)" in nutzer
+            return Antwort(json.dumps({"reviews": [], "coverage": [
                 _ledger_event(["L0001"], "Kano stirbt.", subject="Kano", value="dead", epistemic="observed")
             ]}), 1, 1)
 
     ein = _ein(2)
     ein["transkript"][0]["text"] = "Kano bricht tot zusammen."
     zeilen = transkript_zeilen_mit_ids(ein["transkript"])
-    diag = {"coverageAdded": 0}
-    events = Ablauf(Klient())._ledger_coverage(ein, [], zeilen, diag)
+    events, diag = Ablauf(Klient())._ledger_review(ein, [], zeilen)
     assert len(events) == 1
     assert events[0]["assertions"][0]["subject"] == "Kano"
     assert events[0]["assertions"][0]["value"] == "dead"
     assert events[0]["_review"]["verdict"] == "coverage_added"
-    assert diag["coverageAdded"] == 1
+    assert diag["coverageAdded"] == 1 and diag["reviewCalls"] == 1
+
+
+def test_ledger_053_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass():
+    """0.4.53: Pro Quellblock Primärextraktion + kombinierter Review/Coverage; kein Continuity-/Coverage-Vollpass."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.systeme = []
+
+        def chat(self, system, nutzer):
+            self.systeme.append(system)
+            if system.startswith("Du extrahierst ein Ereignis-Ledger"):
+                return Antwort(json.dumps({"events": []}), 1, 1)
+            if system.startswith("Du prüfst Ledger-Kandidaten"):
+                return Antwort(json.dumps({"reviews": [], "coverage": []}), 1, 1)
+            raise AssertionError(f"unerwarteter Ledger-Pass: {system[:80]}")
+
+    k = Klient()
+    ledger = Ablauf(k).ledger(_ein(2))
+    assert ledger["state"] == "ok"
+    assert sum(s.startswith("Du extrahierst ein Ereignis-Ledger") for s in k.systeme) == 1
+    assert sum(s.startswith("Du prüfst Ledger-Kandidaten") for s in k.systeme) == 1
+    assert not any(s.startswith("Du extrahierst aus EINEM Abschnitt") for s in k.systeme)
+    assert not any(s.startswith("Du suchst im ORIGINALTRANSKRIPT") for s in k.systeme)
 
 
 def test_ledger_bibelhistorie_nicht_mehr_nur_wegen_gleichem_namen():
