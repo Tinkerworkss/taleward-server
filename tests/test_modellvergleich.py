@@ -32,7 +32,7 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
         if system.startswith("Du extrahierst") or system.startswith("Du suchst im ORIGINALTRANSKRIPT"):
             inhalt = {"events": []}
         elif system.startswith("Du prüfst Ledger-Kandidaten"):
-            inhalt = {"reviews": [], "coverage": []}
+            inhalt = {"reviews": [], "coverage": [], "anchors": [], "encounters": []}
         elif system.startswith("Du ordnest aktuelle"):
             inhalt = {"links": []}
         elif system.startswith("Du prüfst"):
@@ -115,12 +115,12 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
     d = ordner / "a_1-ctx12288"
     ledger = json.loads((d / "ledger.json").read_text(encoding="utf-8"))
     erg = json.loads((d / "ergebnis.json").read_text(encoding="utf-8"))
-    assert ledger["version"] == 2 and ledger["state"] == "ok"
+    assert ledger["version"] == 3 and ledger["state"] == "ok"
     assert erg["nur_ledger"] is True and erg["grundlage"] == "Originaltranskript"
     assert not (d / "recap.txt").exists()
     assert not (d / "vorschlaege.json").exists()
     assert not (d / "plan.json").exists()
-    assert any("Ledger (Schatten v2)" in m for m in meldungen)
+    assert any("Ledger (Schatten v3)" in m for m in meldungen)
 
 
 def test_modelle_lesen():
