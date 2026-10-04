@@ -147,9 +147,16 @@ def test_lange_runde_recap_aus_teilen():
             if "Schreibe Szenennotizen" in system:
                 return Antwort(json.dumps({"notizen": [f"[{len(self.aufrufe)}:00] Ereignis {len(self.aufrufe)}-{j} "
                                                        + "mit vielen Worten " * 10 for j in range(12)]}), 1, 1)
-            if "Recap" in system and "prüfst" not in system:
+            if system.startswith("Du klassifizierst die Szenennotizen"):
+                ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+                return Antwort(json.dumps({"critical": [], "important": ids, "minor": []}), 1, 1)
+            if system.startswith("Du vergleichst den Recap"):
+                return Antwort(json.dumps({"fehlend": []}), 1, 1)
+            if system.startswith("Du pflegst die Kampagnen-Bibel"):
+                return Antwort(json.dumps({"proposals": []}), 1, 1)
+            if "Was bisher geschah" in system:
                 return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
-            return Antwort(json.dumps({"proposals": [], "absaetze": []}), 1, 1)
+            raise AssertionError("unerwarteter Prompt im Test")
 
     k = Klient()
     ablauf = Ablauf(k, max_transkript_tokens=2000, stueck_tokens=1500)
@@ -173,8 +180,13 @@ def test_kurze_runde_ohne_teile():
 
         def chat(self, system, nutzer):
             self.systeme.append(system)
-            return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": [],
-                                       "proposals": []}), 1, 1)
+            if system.startswith("Du vergleichst den Recap"):
+                return Antwort(json.dumps({"fehlend": []}), 1, 1)
+            if system.startswith("Du pflegst die Kampagnen-Bibel"):
+                return Antwort(json.dumps({"proposals": []}), 1, 1)
+            if "Was bisher geschah" in system:
+                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
+            raise AssertionError("unerwarteter Prompt im Test")
 
     k = Klient()
     ein = _ein(50)
