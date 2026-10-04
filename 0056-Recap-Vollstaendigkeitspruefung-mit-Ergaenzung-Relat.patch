@@ -1,0 +1,556 @@
+From 92f8762c11a1c2045c7ba55f662a5768637b3bef Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 09:20:54 +0200
+Subject: [PATCH] Recap: Vollstaendigkeitspruefung mit Ergaenzung,
+ Relationspruefung (Server 0.4.46)
+
+- Nach dem ersten Kapitel nennt das Modell bis zu fuenf wichtige Ereignisse
+  der Grundlage, die fehlen; nur in der Grundlage wiedergefundene Punkte
+  werden in genau einer Ergaenzung eingefuegt (nichts streichen, nichts
+  erfinden; gekuerzte Absaetze werden nicht uebernommen)
+- Gegenpruefung prueft Beziehungen ausdruecklich (wer tut was wem, Besitz,
+  Ursache/Reaktion, Versprechen, anwesend/erwaehnt, Vermutung/Vision)
+- Modellvergleich legt kapitel-1.txt, fehlend.json und pruefung.json
+  (vorher/nachher/Richter) ab; Pruefliste mit Stufe "Kapitel 1";
+  --notizen fuer Vergleiche auf identischen Szenennotizen; klare Meldung
+  bei fehlender Datei
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/cli.py                    |  10 ++-
+ app/modellvergleich.py        |  45 ++++++++++++--
+ app/sprachmodell.py           | 113 ++++++++++++++++++++++++++++++++++
+ pyproject.toml                |   2 +-
+ tests/test_aktualisierung.py  |   2 +-
+ tests/test_assistent.py       |   2 +-
+ tests/test_modellablage.py    |   2 +-
+ tests/test_modellvergleich.py |  11 +++-
+ tests/test_step5.py           |  15 ++---
+ tests/test_szenennotizen.py   |  74 +++++++++++++++++++++-
+ tests/test_worker_app.py      |   2 +-
+ uv.lock                       |   2 +-
+ 12 files changed, 254 insertions(+), 26 deletions(-)
+
+diff --git a/app/cli.py b/app/cli.py
+index ba74ac4..60f9b2a 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -746,4 +746,5 @@ def modellvergleich(
+     temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
+     pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
++    notizen: Path = typer.Option(None, "--notizen", help="Fertige notizen.txt eines früheren Laufs statt neuer Szenennotizen – für Vergleiche auf identischer Grundlage"),
+ ):
+     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
+@@ -763,8 +764,15 @@ def modellvergleich(
+         if grundlage not in ("auto", "direkt", "teile"):
+             raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
++        for name, datei in (("Prüfliste", pruefliste), ("Notizen", notizen)):
++            if datei is not None and not datei.is_file():
++                raise mv.VergleichFehler(f"{name} nicht gefunden: {datei.resolve()} – Datei in diesen Ordner legen "
++                                         "oder den vollen Pfad angeben.")
+         einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
+-                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [])
++                                 pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [],
++                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "")
+         if pruefliste:
+             typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
++        if notizen:
++            typer.echo(f"Szenennotizen aus {notizen} ({len(einst.notizen.splitlines())} Zeilen), keine neue Extraktion")
+         ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
+                                einst=einst)
+diff --git a/app/modellvergleich.py b/app/modellvergleich.py
+index 18fcb1e..25c0ce4 100644
+--- a/app/modellvergleich.py
++++ b/app/modellvergleich.py
+@@ -173,4 +173,8 @@ class Ergebnis:
+     notizen: str = ""  # Grundlage, wenn verdichtet (Szenennotizen) – zur Fehlersuche, bleibt lokal
+     verlauf: str = ""  # Zusammenfassungen der Teile bei langen Runden
++    kapitel1: str = ""  # erster Entwurf des Recaps (vor Ergänzung und Nachbesserung)
++    fehlend: list[dict] = field(default_factory=list)  # Befund der Vollständigkeitsprüfung
++    pruefung_vorher: list[dict] = field(default_factory=list)  # Fakten-/Relationsprüfung vor der Nachbesserung
++    pruefung_nachher: list[dict] = field(default_factory=list)  # … danach (leer, wenn nicht nachgebessert)
+     titel: str = ""
+     text: str = ""
+@@ -203,9 +207,14 @@ def _ablauf_klasse():
+ 
+     class Merker(Ablauf):
+-        """Wie im Betrieb, merkt sich aber die Grundlage für den Richter."""
++        """Wie im Betrieb, merkt sich aber die Grundlage für den Richter. Mit vorgegebenen Notizen (--notizen) entfällt
++        die Extraktion – so laufen zwei Varianten auf identischen Notizen."""
+         letzte_grundlage: tuple[str, str] = ("", "")
++        notizen_vorgabe: str = ""
+ 
+         def grundlage(self, ein, fortschritt):
+-            self.letzte_grundlage = super().grundlage(ein, fortschritt)
++            if self.notizen_vorgabe.strip():
++                self.letzte_grundlage = ("Szenennotizen (vorgegeben)", self.notizen_vorgabe.strip())
++            else:
++                self.letzte_grundlage = super().grundlage(ein, fortschritt)
+             return self.letzte_grundlage
+ 
+@@ -226,4 +235,5 @@ class Einstellungen:
+     temperatur: float | None = None  # nur für die Szenennotizen
+     pruefliste: list[dict] = field(default_factory=list)
++    notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
+ 
+ 
+@@ -247,4 +257,5 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+                               stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
+                               gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
++    ablauf.notizen_vorgabe = einst.notizen
+     t0 = time.monotonic()
+     try:
+@@ -266,4 +277,8 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+             erg.notizen = ablauf.letzte_grundlage[1]
+         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
++        erg.kapitel1 = getattr(ablauf, "letztes_kapitel1", "") or ""
++        erg.fehlend = list(getattr(ablauf, "letzter_befund_fehlend", []) or [])
++        erg.pruefung_vorher = list(getattr(ablauf, "letzte_pruefung_vorher", []) or [])
++        erg.pruefung_nachher = list(getattr(ablauf, "letzte_pruefung_nachher", []) or [])
+         if einst.pruefliste:
+             erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
+@@ -303,5 +318,5 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
+ # ---------------------------------------------------------------- Bericht
+ # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
+-STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel", "Vorschläge")
++STUFEN = ("Transkript", "Notizen", "Teile", "Kapitel 1", "Kapitel", "Vorschläge")
+ 
+ 
+@@ -342,4 +357,5 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
+         "Notizen": e.notizen,
+         "Teile": e.verlauf,
++        "Kapitel 1": e.kapitel1,
+         "Kapitel": "\n".join([e.titel, e.text] + list(e.offene_faeden)),
+         "Vorschläge": "\n".join(f"{v.get('title', '')}\n{v.get('detail', '')}\n{v.get('gmNotes') or ''}"
+@@ -350,6 +366,8 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
+         vorkommen = {}
+         for name in STUFEN:
+-            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel"):
++            if p["bereich"] == "Vorschläge" and name in ("Teile", "Kapitel 1", "Kapitel"):
+                 vorkommen[name] = None  # für Vorschläge nicht gefragt
++            elif name == "Kapitel 1" and (not e.kapitel1 or e.kapitel1 == e.text):
++                vorkommen[name] = None  # kein eigener erster Entwurf (nichts ergänzt, nichts nachgebessert)
+             elif name == "Notizen" and not e.notizen:
+                 vorkommen[name] = None  # kurze Runde: keine Notizen
+@@ -366,5 +384,6 @@ def pruefliste_md(e: Ergebnis) -> str:
+     if not e.pruefliste:
+         return ""
+-    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt):", "",
++    zeilen = ["Vorkommen der Prüfpunkte je Stufe (Stichwörter – zeigt, wo etwas verloren geht, nicht ob es stimmt; "
++              "Kapitel 1 = erster Entwurf, Kapitel = Endfassung nach Ergänzung und Nachbesserung):", "",
+               "| Nr | Prüfpunkt | " + " | ".join(STUFEN) + " |", "|---|---|" + "---|" * len(STUFEN)]
+     bereich = None
+@@ -491,4 +510,11 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
+         if e.pruefliste:
+             (d / "pruefliste.md").write_text(pruefliste_md(e) + "\n", encoding="utf-8")
++        if e.ok:
++            if e.kapitel1 and e.kapitel1 != e.text:
++                (d / "kapitel-1.txt").write_text(f"{e.titel}\n\n{e.kapitel1}\n", encoding="utf-8")
++            (d / "fehlend.json").write_text(json.dumps(e.fehlend, ensure_ascii=False, indent=2), encoding="utf-8")
++            (d / "pruefung.json").write_text(json.dumps({"vorher": e.pruefung_vorher, "nachher": e.pruefung_nachher,
++                                                         "richter": e.richter_absaetze}, ensure_ascii=False, indent=2),
++                                             encoding="utf-8")
+         (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
+         for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
+@@ -498,5 +524,8 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
+         (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+         (d / "ergebnis.json").write_text(json.dumps({**asdict(e), "letzte_antwort": None, "notizen": None, "verlauf": None,
+-                                                     "pruefliste": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
++                                                     "pruefliste": None, "kapitel1": None, "fehlend": len(e.fehlend),
++                                                     "ergaenzt": sum(1 for f in e.fehlend if f.get("belegt")),
++                                                     "pruefung_vorher": None, "pruefung_nachher": None,
++                                                     "token_s": e.token_s}, ensure_ascii=False, indent=2),
+                                          encoding="utf-8")
+     (ordner / "bericht.md").write_text(bericht_md(info, richter, ergebnisse), encoding="utf-8")
+@@ -564,4 +593,8 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]],
+                                         einst, lauf)
+             melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
++            if erg.ok:
++                belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
++                melden(f"  Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, {belegt} belegt und ergänzt; "
++                       f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
+             if erg.pruefliste:
+                 for name in STUFEN:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 984ef48..cd46a90 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -551,4 +551,9 @@ Witz oder einem Gespräch außerhalb des Spiels).
+ - Streng sein: Ausschmückungen, die so nicht vorkamen (Gefühle, Aussehen, Gerüche, Wetter, Gedanken), machen einen \
+ Absatz höchstens "teilweise".
++- Prüfe jede Beziehung einzeln, nicht nur, ob die Wörter vorkommen: Wer tut was wem? Wer gibt wem was, und wer hat es \
++danach? War jemand schon verletzt, oder wird er es durch die erzählte Handlung? Wer verspricht wem was, gegen welche \
++Gegenleistung? Ist eine Figur in der Szene anwesend oder wird nur über sie gesprochen? Ist etwas beobachtet, behauptet, \
++vermutet, geplant, erinnert oder eine Vision? Eine vertauschte Richtung („A gibt B“ statt „B gibt A“), ein Zustand, der \
++umgedreht ist (verletzt → tot), eine Vermutung als Tatsache oder eine nur erwähnte Figur als anwesend: "widerspricht".
+ - stellen: 1 bis 3 Stellen der Grundlage, auf die sich der Absatz stützt – Zeitangabe "m:ss" und ein kurzes \
+ wörtliches Zitat daraus (höchstens 20 Wörter). Leer, wenn nichts belegt ist.
+@@ -557,4 +562,26 @@ Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "stellen": [{"ze
+ "begruendung": "…"}]}. Sprache der Begründungen: {sprache}."""
+ 
++SYSTEM_VOLLSTAENDIGKEIT = """Du vergleichst den Recap einer Pen-&-Paper-Session mit seiner Grundlage (Szenennotizen \
++oder Transkript, Zeitangaben vorn in eckigen Klammern). Du bewertest nicht, ob der Recap richtig ist – du suchst nur, \
++was FEHLT: wichtige Ereignisse der Grundlage, die im Recap nicht vorkommen.
++Wichtig ist ein Ereignis, wenn es die Lage ändert: Zustand einer Figur (verletzt, gerettet, gefangen, befreit, tot), \
++Besitz (wer gibt wem was), Versprechen, Schulden und Abmachungen, Wissen (eine entscheidende Information, eine \
++Vision oder Botschaft), Ziel oder Auftrag der Gruppe, Beziehung zwischen Figuren, das erste Auftreten einer wichtigen \
++Figur oder eines Ortes. Kleinigkeiten (Essen, Wege, Smalltalk) zählen nicht.
++Höchstens {hoechstens} fehlende Ereignisse, die wichtigsten zuerst. Jedes mit dem Zeitstempel der Grundlage genau so, \
++wie er dort steht, und der Notiz wörtlich oder fast wörtlich – nichts umformulieren, nichts hinzufügen, nichts \
++erfinden. Fehlt nichts Wichtiges, antworte mit einer leeren Liste.
++Antworte nur mit JSON: {"fehlend": [{"zeit": "m:ss", "notiz": "…"}]}. Sprache: {sprache}."""
++
++SYSTEM_ERGAENZUNG = """Du ergänzt den Recap einer Pen-&-Paper-Session um Ereignisse, die eine Prüfung als fehlend \
++erkannt hat. Jedes fehlende Ereignis steht mit Zeitstempel und Notiz da; die Absätze des Recaps sind nummeriert.
++Füge jedes Ereignis an der zeitlich passenden Stelle in den passenden Absatz ein – ein bis zwei Sätze, im Ton des \
++Recaps, Erzählstimme in der Vergangenheit, Figuren nach ihren Charakteren, die Spielleitung ist keine Figur. Streiche \
++nichts, kürze nichts, ändere keine vorhandenen Aussagen, erfinde nichts über die Notiz hinaus. Gib nur die Absätze \
++zurück, die du geändert hast, jeweils vollständig. Reiner Text ohne Markdown.
++Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
++
++FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
++
+ SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
+ sie beanstandet; der Grund steht jeweils dabei.
+@@ -583,4 +610,37 @@ def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
+ 
+ 
++def fehlend_lesen(d: dict, grundlage: str) -> list[dict]:
++    """Antwort der Vollständigkeitsprüfung → [{zeit, notiz, belegt}]. belegt: Es gibt in der Grundlage eine Zeile mit
++    diesem Zeitstempel, deren Text zur Notiz passt, oder eine Zeile, die den Notiztext enthält. Nur belegte Punkte
++    dürfen ergänzt werden – der Prüfer darf keine neue Wahrheit erzeugen."""
++    zeilen = [(_zeit_vorn(z), _notizkern(z)) for z in grundlage.split("\n") if z.strip()]
++    aus = []
++    for f in d.get("fehlend") or d.get("missing") or []:
++        if len(aus) >= FEHLEND_HOECHSTENS:
++            break
++        if not isinstance(f, dict):
++            continue
++        zeit = zeit_lesen(f.get("zeit") if f.get("zeit") is not None else f.get("time"))
++        notiz = klartext(f.get("notiz") or f.get("note") or "")[:400]
++        if not notiz:
++            continue
++        kern = _notizkern(notiz)
++        woerter = set(kern.split())
++        belegt = False
++        for zt, zk in zeilen:
++            if not zk:
++                continue
++            if kern and (kern in zk or zk in kern):
++                belegt = True
++                break
++            if zeit is not None and zt is not None and abs(zt - zeit) < 1 and woerter:
++                gemeinsam = len(woerter & set(zk.split())) / len(woerter)
++                if gemeinsam >= 0.6:
++                    belegt = True
++                    break
++        aus.append({"zeit": zeit, "notiz": notiz, "belegt": belegt})
++    return aus
++
++
+ def absaetze(text: str) -> list[str]:
+     """Absätze eines Recaps (durch Leerzeile getrennt) – wie die App sie zählt."""
+@@ -865,4 +925,8 @@ class Ablauf:
+     #                            "direkt" / "teile" erzwingen das eine oder andere (Modellvergleich, A/B)
+     temperatur_notizen: float | None = None  # Testoption: Temperatur nur für die Szenennotizen
++    letztes_kapitel1: str = ""  # erster Entwurf des Recaps, vor Ergänzung und Nachbesserung (Modellvergleich)
++    letzter_befund_fehlend: list = field(default_factory=list)  # Befund der Vollständigkeitsprüfung
++    letzte_pruefung_vorher: list = field(default_factory=list)  # Fakten-/Relationsprüfung vor der Nachbesserung
++    letzte_pruefung_nachher: list = field(default_factory=list)  # … und danach (leer, wenn nicht nachgebessert)
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1027,4 +1091,38 @@ class Ablauf:
+         return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": text, "openThreads": faeden}
+ 
++    def vollstaendigkeit(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
++        """Was fehlt im Recap, obwohl es in der Grundlage steht? Liefert [{zeit, notiz, belegt}]; nur belegte Punkte
++        (in der Grundlage wiedergefunden) werden ergänzt."""
++        system = (SYSTEM_VOLLSTAENDIGKEIT.replace("{sprache}", _sprache(ein))
++                  .replace("{hoechstens}", str(FEHLEND_HOECHSTENS)))
++        nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nRecap:\n{text}"
++        self._schritt("review")
++        return fehlend_lesen(self.zaehler.aufruf(self.klient, system, nutzer), grundlage)
++
++    def ergaenzen(self, ein: dict, text: str, fehlend: list[dict]) -> str | None:
++        """Genau eine Ergänzung um belegte fehlende Ereignisse. Nur geänderte Absätze kommen zurück; ein Absatz wird
++        nur übernommen, wenn er nicht kürzer geworden ist (die Anweisung lautet: nichts streichen)."""
++        punkte = [f for f in fehlend if f.get("belegt")]
++        if not punkte:
++            return None
++        teile = absaetze(text)
++        liste = "\n".join(f"- [{_zeit(f['zeit']) if f.get('zeit') is not None else '?'}] {f['notiz']}" for f in punkte)
++        nummeriert = "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))
++        nutzer = f"{_kopf(ein)}\n\nFehlende Ereignisse:\n{liste}\n\nRecap, Absatz für Absatz:\n{nummeriert}"
++        self._schritt("revision")
++        d = self.zaehler.aufruf(self.klient, SYSTEM_ERGAENZUNG.replace("{sprache}", _sprache(ein)), nutzer)
++        neu = {}
++        for a in d.get("absaetze") or d.get("paragraphs") or []:
++            try:
++                nr = int(a.get("nr") or a.get("index") or 0)
++            except (TypeError, ValueError, AttributeError):
++                continue
++            t = klartext(a.get("text")) if isinstance(a.get("text"), str) else ""
++            if 1 <= nr <= len(teile) and len(t) >= len(teile[nr - 1]):
++                neu[nr - 1] = t
++        if not neu:
++            return None
++        return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
++
+     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
+         """Gegenprüfung (Stufe 3): jeden Absatz gegen die Grundlage bewerten – ein eigener Aufruf, der den Recap
+@@ -1068,4 +1166,5 @@ class Ablauf:
+             self._schritt("review")
+             befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
++            self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
+             if any(b["verdict"] in BEANSTANDET for b in befund):
+                 self._schritt("revision")
+@@ -1075,4 +1174,5 @@ class Ablauf:
+                     self._schritt("review")
+                     befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
++                    self.letzte_pruefung_nachher = befund
+             pruefung["paragraphs"] = befund
+         except SprachmodellFehler as e:
+@@ -1126,4 +1226,17 @@ class Ablauf:
+         else:
+             r = self.recap(recap_ein, titel, grundlage)
++        self.letztes_kapitel1 = r["text"]
++        # Erst Fehlendes ergänzen, dann Falsches prüfen – sonst prüft man einen Text, der gleich wieder wächst.
++        # Die Vollständigkeitsprüfung sieht dieselbe Grundlage wie der Recap; ihre Punkte zählen nur, wenn sie dort
++        # wiederzufinden sind (fehlend_lesen), damit der Prüfer nichts erfindet.
++        try:
++            grund_titel, grund_text = (("Szenennotizen der Runde in Zeitabschnitten", self.gegliedert(grundlage))
++                                       if titel.startswith("Szenennotizen") and not verlauf else (titel, grundlage))
++            self.letzter_befund_fehlend = self.vollstaendigkeit(recap_ein, grund_titel, grund_text, r["text"])
++            neu = self.ergaenzen(recap_ein, r["text"], self.letzter_befund_fehlend)
++            if neu:
++                r["text"] = neu
++        except SprachmodellFehler as e:
++            log.warning("Vollständigkeitsprüfung übersprungen: %s", e)
+         fortschritt(0.6 if gegenpruefen else 0.8)
+         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
+diff --git a/pyproject.toml b/pyproject.toml
+index 1ec9d07..1798d9c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.45"
++version = "0.4.46"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 12cb73a..cbf2268 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.45"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.46"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 6dc4219..3690004 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.45"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.46"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index c8c719a..9a4f4ce 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.45"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.46"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
+index 95f14e7..45e1547 100644
+--- a/tests/test_modellvergleich.py
++++ b/tests/test_modellvergleich.py
+@@ -111,8 +111,13 @@ Grünkappen
+     ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None, "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
+     aus = mv.pruefliste_anwenden(punkte, ein, e)
+-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": True, "Vorschläge": False}
++    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel": True,
++                                   "Vorschläge": False}
+     assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True  # im Kapitel verloren
+-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel": None, "Vorschläge": True}
++    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel": None,
++                                   "Vorschläge": True}
+     e.pruefliste = aus
+     md = mv.pruefliste_md(e)
+-    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
++    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
++    e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."  # erster Entwurf ohne Pipo → Ergänzung hat ihn gerettet
++    aus = mv.pruefliste_anwenden(punkte, ein, e)
++    assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False
+diff --git a/tests/test_step5.py b/tests/test_step5.py
+index fea7a0a..7c67f28 100644
+--- a/tests/test_step5.py
++++ b/tests/test_step5.py
+@@ -33,5 +33,5 @@ class Modell:
+         if system.startswith("Du überarbeitest"):  # Nachbesserung: unbelegter Absatz fällt weg
+             return {"absaetze": [{"nr": 2, "text": ""}]}
+-        if "Szenennotizen" in system:
++        if "Schreibe Szenennotizen" in system:
+             return {"notizen": ["[0:00] Die Gruppe reitet nach Rabenfels."]}
+         if "Recap" in system:
+@@ -140,7 +140,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
+ 
+     recap, vorschlag = api.recap_aufruf(), api.vorschlags_aufruf()
+-    # Recap, Gegenprüfung, Nachbesserung, zweite Prüfung, Vorschläge (0.4.6)
+-    assert len(api.aufrufe) == 5 and recap["body"]["response_format"] == {"type": "json_object"}
+-    for a in api.aufrufe[1:4]:  # Prüfung und Nachbesserung sehen nur, was der Recap sah
++    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Nachbesserung, zweite Prüfung, Vorschläge (0.4.6)
++    assert len(api.aufrufe) == 6 and recap["body"]["response_format"] == {"type": "json_object"}
++    assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
++    for a in api.aufrufe[1:5]:  # Vollständigkeit, Prüfung und Nachbesserung sehen nur, was der Recap sah
+         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
+             assert verboten not in a["nutzer"] + a["system"], verboten
+@@ -180,6 +181,6 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
+     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
+     assert (log.engine, log.model, log.tokens_in, log.tokens_out) == ("external", "mistral-large-latest",
+-                                                                     500_000, 20_000)
+-    assert log.cost_cents == round((500_000 * 50 + 20_000 * 150) / 1e6)  # Preistabelle Mistral Large
++                                                                     600_000, 24_000)  # 6 Aufrufe (0.4.46)
++    assert log.cost_cents == round((600_000 * 50 + 24_000 * 150) / 1e6)  # Preistabelle Mistral Large
+     # Spieler sehen weiterhin nichts davon
+     assert client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["pl"]).status_code == 404
+@@ -362,5 +363,5 @@ def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
+     r = CliRunner().invoke(app, ["recap-probe", s["id"], "--modell", "mistral-small-latest"])
+     assert r.exit_code == 0, r.output
+-    assert "Die Gruppe ritt nach Rabenfels." in r.output and "2 Aufrufe" in r.output
++    assert "Die Gruppe ritt nach Rabenfels." in r.output and "3 Aufrufe" in r.output  # Recap, Vollständigkeit, Vorschläge
+     assert api.aufrufe[0]["body"]["model"] == "mistral-small-latest"
+     assert dbs.query(Recap).count() == 0
+diff --git a/tests/test_szenennotizen.py b/tests/test_szenennotizen.py
+index fb15fb5..67bc54f 100644
+--- a/tests/test_szenennotizen.py
++++ b/tests/test_szenennotizen.py
+@@ -145,5 +145,5 @@ def test_lange_runde_recap_aus_teilen():
+                 nr = nutzer.split("Teil ")[1].split(" ")[0]
+                 return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
+-            if "Szenennotizen" in system:
++            if "Schreibe Szenennotizen" in system:
+                 return Antwort(json.dumps({"notizen": [f"[{len(self.aufrufe)}:00] Ereignis {len(self.aufrufe)}-{j} "
+                                                        + "mit vielen Worten " * 10 for j in range(12)]}), 1, 1)
+@@ -364,5 +364,5 @@ def _klient_lange_runde():
+                 nr = nutzer.split("Teil ")[1].split(" ")[0]
+                 return Antwort(json.dumps({"zusammenfassung": f"Im Teil {nr} geschieht etwas."}), 1, 1)
+-            if "Szenennotizen" in system:
++            if "Schreibe Szenennotizen" in system:
+                 zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
+                 return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht."
+@@ -412,5 +412,5 @@ def test_temperatur_nur_fuer_notizen():
+ 
+     def merken(system, nutzer):
+-        gesehen.append((("Szenennotizen" in system), k.temperatur))
++        gesehen.append((("Schreibe Szenennotizen" in system), k.temperatur))
+         return chat(system, nutzer)
+ 
+@@ -420,2 +420,70 @@ def test_temperatur_nur_fuer_notizen():
+     assert all(t == 0.1 for notiz, t in gesehen if notiz) and all(t is None for notiz, t in gesehen if not notiz)
+     assert k.temperatur is None
++
++
++def test_fehlend_lesen_nur_belegte_punkte():
++    """Die Vollständigkeitsprüfung darf keine neue Wahrheit erzeugen: Nur Punkte, die in der Grundlage stehen."""
++    from app.sprachmodell import fehlend_lesen
++
++    grundlage = ("Abschnitt 1 von 2 (0:10–44:32):\n[0:10] Die Gruppe sitzt im Kerker.\n"
++                 "[44:32] Jemand löst mit einem Dolch ihre Handfesseln; sie liegen auf dem Podest.\n\n"
++                 "Abschnitt 2 von 2 (1:11:39–1:11:39):\n[1:11:39] Pipo gibt der Gruppe sein Schwert als Dank.")
++    d = {"fehlend": [
++        {"zeit": "44:32", "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},  # fast wörtlich → belegt
++        {"zeit": "1:11:39", "notiz": "Pipo gibt der Gruppe das Schwert."},  # gleiche Zeit, 4 von 6 Wörtern → belegt
++        {"zeit": "0:10", "notiz": "Die Gruppe wird gefoltert und verliert alle Erinnerung."},  # erfunden → nicht belegt
++        {"zeit": "2:00:00", "notiz": "Satuna erscheint."},  # Zeit gibt es nicht → nicht belegt
++        {"zeit": "x", "notiz": ""}, "kaputt",
++        {"zeit": "0:10", "notiz": "Kerker 6"}, {"zeit": "0:10", "notiz": "Kerker 7"}]}
++    aus = fehlend_lesen(d, grundlage)
++    assert len(aus) == 5  # höchstens FEHLEND_HOECHSTENS Einträge, leere und kaputte fallen weg
++    assert [f["belegt"] for f in aus[:4]] == [True, True, False, False]
++    assert aus[0]["zeit"] == 44 * 60 + 32 and aus[1]["zeit"] == 3600 + 11 * 60 + 39
++
++
++def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
++    from app.sprachmodell import Ablauf, Antwort
++
++    class Klient:
++        modell = "test"
++
++        def __init__(self):
++            self.aufrufe = []
++
++        def chat(self, system, nutzer):
++            self.aufrufe.append((system, nutzer))
++            if "Schreibe Szenennotizen" in system:
++                zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
++                notizen = [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht." for z in zeilen[::6]]
++                notizen.append("[44:32] Jemand löst mit einem Dolch ihre Handfesseln.")
++                return Antwort(json.dumps({"notizen": notizen}), 1, 1)
++            if system.startswith("Du vergleichst den Recap"):
++                return Antwort(json.dumps({"fehlend": [
++                    {"zeit": "44:32", "notiz": "Jemand löst mit einem Dolch ihre Handfesseln."},
++                    {"zeit": "0:00", "notiz": "Ein Drache greift an."}]}), 1, 1)
++            if system.startswith("Du ergänzt den Recap"):
++                assert "Handfesseln" in nutzer and "Drache" not in nutzer  # nur belegte Punkte
++                return Antwort(json.dumps({"absaetze": [
++                    {"nr": 1, "text": "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln."},
++                    {"nr": 2, "text": "Kurz."}]}), 1, 1)  # Absatz 2 gekürzt → wird nicht übernommen
++            if system.startswith("Du prüfst den Recap"):
++                return Antwort(json.dumps({"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": []},
++                                                        {"nr": 2, "urteil": "belegt", "stellen": []}]}), 1, 1)
++            if "Recap" in system:
++                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.\n\nDann rasteten alle lange.",
++                                           "openThreads": []}), 1, 1)
++            return Antwort(json.dumps({"proposals": []}), 1, 1)
++
++    k = Klient()
++    ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
++    ein = _ein(600)
++    d = ablauf.ausfuehren(ein, ein, gegenpruefen=True)
++    assert ablauf.letztes_kapitel1 == "Die Gruppe ritt.\n\nDann rasteten alle lange."
++    assert d["text"] == "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln.\n\nDann rasteten alle lange."
++    assert [f["belegt"] for f in ablauf.letzter_befund_fehlend] == [True, False]
++    assert sum(1 for s, _ in k.aufrufe if s.startswith("Du ergänzt")) == 1
++    # Reihenfolge: Recap → Vollständigkeit → Ergänzung → Prüfung
++    arten = [s.split(" ")[1] for s, _ in k.aufrufe if s.startswith("Du ")]
++    assert arten[-3:] == ["vergleichst", "ergänzt", "prüfst"] or arten[-4:-1] == ["vergleichst", "ergänzt", "prüfst"]
++    assert ablauf.letzte_pruefung_vorher and ablauf.letzte_pruefung_nachher == [] and d["review"]["revised"] is False
++    assert "Wer gibt wem was" in [s for s, _ in k.aufrufe if s.startswith("Du prüfst")][0]
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 36c566f..08d6a2c 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.45"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.46"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index e19b3a3..30012be 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.45"
++version = "0.4.46"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
