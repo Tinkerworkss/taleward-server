@@ -152,11 +152,11 @@ Grünkappen
     ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None,
                            "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Ledger": None, "Ledger Fakten": None, "Teile": None,
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Ledger": None, "Ledger Teile (diagn.)": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": True, "Vorschläge": False}
     assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True
     assert aus[1]["vorkommen"]["Plan"] is True
-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Ledger": None, "Ledger Fakten": None, "Teile": None,
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Ledger": None, "Ledger Teile (diagn.)": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": None, "Vorschläge": True}
     e.pruefliste = aus
     md = mv.pruefliste_md(e)
@@ -191,7 +191,7 @@ def test_pruefliste_ledger_verlangt_zusammengehoerige_fakten_im_selben_event():
 
 
 def test_pruefliste_ledger_fakten_zeigt_atomisierung_als_obere_grenze():
-    """0.4.52: Strict Ledger bleibt relationstreu; Ledger Fakten zeigt getrennt, ob Teilfakten nur atomisiert wurden."""
+    """0.4.52: Strict Ledger bleibt relationstreu; Ledger Teile (diagn.) zeigt getrennt, ob Teilfakten nur atomisiert wurden."""
     from app import modellvergleich as mv
 
     punkte = mv.pruefliste_lesen("[Kapitel]\nZusammengesetzter Punkt :: Galgen; Prinzessinnenmörder")
@@ -205,4 +205,4 @@ def test_pruefliste_ledger_fakten_zeigt_atomisierung_als_obere_grenze():
                            "text": "Vier Stricke am Galgen. Die Menge ruft Prinzessinnenmörder."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Ledger"] is False
-    assert aus[0]["vorkommen"]["Ledger Fakten"] is True
+    assert aus[0]["vorkommen"]["Ledger Teile (diagn.)"] is True
