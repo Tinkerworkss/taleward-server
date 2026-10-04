@@ -468,7 +468,7 @@ Anführungszeichen.
 - Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
 Fragen.
 - Auch Nebensätze mit Folgen: der Tod einer Nebenfigur („der ist tot“), bestehende Beziehungen („wir kennen uns, seit \
-…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Lostriana“ statt \
+…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich (den konkreten Namen statt \
 „ein Schwert“ – mit dem Namen, der gesagt wird), und bei mehreren Personen in einer Szene, wer genau was tut.
 Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
 nicht getan.
