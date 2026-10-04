@@ -29,8 +29,10 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
         if body["model"] in kaputt:
             return httpx.Response(500, json={"error": "kaputt"})
         system = body["messages"][0]["content"]
-        if system.startswith("Du extrahierst"):
+        if system.startswith("Du extrahierst") or system.startswith("Du suchst im ORIGINALTRANSKRIPT"):
             inhalt = {"events": []}
+        elif system.startswith("Du prüfst Ledger-Kandidaten"):
+            inhalt = {"reviews": []}
         elif system.startswith("Du ordnest aktuelle"):
             inhalt = {"links": []}
         elif system.startswith("Du prüfst"):
@@ -117,15 +119,15 @@ Grünkappen
     ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None,
                            "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Ledger": None, "Teile": None,
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": False, "Ledger": None, "Ledger Fakten": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": True, "Vorschläge": False}
     assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True
     assert aus[1]["vorkommen"]["Plan"] is True
-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Ledger": None, "Teile": None,
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Plan": True, "Ledger": None, "Ledger Fakten": None, "Teile": None,
                                    "Kapitel 1": None, "Kapitel 2": None, "Kapitel": None, "Vorschläge": True}
     e.pruefliste = aus
     md = mv.pruefliste_md(e)
-    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | ✓ | · | · | · | · | – | – |" in md
+    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | ✓ | · | · | · | · | · | – | – |" in md
     assert "*Kapitel: 1 von 2*" in md
     e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."
     aus = mv.pruefliste_anwenden(punkte, ein, e)
@@ -153,3 +155,21 @@ def test_pruefliste_ledger_verlangt_zusammengehoerige_fakten_im_selben_event():
     }]
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Ledger"] is True
+
+
+def test_pruefliste_ledger_fakten_zeigt_atomisierung_als_obere_grenze():
+    """0.4.52: Strict Ledger bleibt relationstreu; Ledger Fakten zeigt getrennt, ob Teilfakten nur atomisiert wurden."""
+    from app import modellvergleich as mv
+
+    punkte = mv.pruefliste_lesen("[Kapitel]\nZusammengesetzter Punkt :: Galgen; Prinzessinnenmörder")
+    e = mv.Ergebnis(modell="m", kontext=1, ok=True, ledger={"events": [
+        {"summary": "Vier Stricke hängen am Galgen.", "actors": [], "targets": [], "objects": ["Galgen"],
+         "locations": [], "factions": [], "assertions": []},
+        {"summary": "Die Menge ruft Prinzessinnenmörder.", "actors": ["Menge"], "targets": [],
+         "objects": [], "locations": [], "factions": [], "assertions": []},
+    ]})
+    ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None,
+                           "text": "Vier Stricke am Galgen. Die Menge ruft Prinzessinnenmörder."}]}
+    aus = mv.pruefliste_anwenden(punkte, ein, e)
+    assert aus[0]["vorkommen"]["Ledger"] is False
+    assert aus[0]["vorkommen"]["Ledger Fakten"] is True
