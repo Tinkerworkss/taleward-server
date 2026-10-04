@@ -384,9 +384,22 @@ def _klient_lange_runde():
                 zeilen = [z for z in nutzer.split("\n") if z.startswith("[")]
                 return Antwort(json.dumps({"notizen": [f"{z.split(' ')[0]} Ereignis bei {z.split(' ')[0]} geschieht."
                                                        for z in zeilen[::6]]}), 1, 1)
-            if "Recap" in system and "prüfst" not in system:
+            if system.startswith("Du klassifizierst die Szenennotizen"):
+                ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+                return Antwort(json.dumps({"critical": [], "important": ids, "minor": []}), 1, 1)
+            if system.startswith("Du vergleichst den Recap"):
+                return Antwort(json.dumps({"fehlend": []}), 1, 1)
+            if system.startswith("Du prüfst genau EINEN Absatz"):
+                return Antwort(json.dumps({"claims": []}), 1, 1)
+            if system.startswith("Du prüfst den Recap"):
+                return Antwort(json.dumps({"absaetze": []}), 1, 1)
+            if system.startswith("Du ergänzt den Recap") or system.startswith("Du überarbeitest einzelne Absätze"):
+                return Antwort(json.dumps({"absaetze": []}), 1, 1)
+            if system.startswith("Du pflegst die Kampagnen-Bibel"):
+                return Antwort(json.dumps({"proposals": []}), 1, 1)
+            if "Was bisher geschah" in system:
                 return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.", "openThreads": []}), 1, 1)
-            return Antwort(json.dumps({"proposals": [], "absaetze": []}), 1, 1)
+            raise AssertionError("unerwarteter Prompt im Test")
 
     return Klient()
 
