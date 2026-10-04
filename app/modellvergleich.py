@@ -615,6 +615,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                      "ledgerHistoryLinks": len((e.ledger or {}).get("historyLinks") or []),
                                                      "ledgerEncounters": len((e.ledger or {}).get("encounters") or []),
                                                      "ledgerIntegrity": (e.ledger or {}).get("integrity") or {},
+                                                     "ledgerRelevance": (e.ledger or {}).get("relevance") or {},
                                                      "ledgerReview": (e.ledger or {}).get("review") or {},
                                                      "ledger": None, "token_s": e.token_s}, ensure_ascii=False, indent=2),
                                          encoding="utf-8")
@@ -698,11 +699,16 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                            f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
                 if erg.ledger:
                     lr = erg.ledger.get("review") or {}
-                    melden(f"  Ledger (Schatten v3): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
+                    ar = lr.get("anchorResolution") or {}
+                    rel = erg.ledger.get("relevance") or {}
+                    melden(f"  Ledger (Schatten v4): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
                            f"{len(erg.ledger.get('events') or [])} Events, {len(erg.ledger.get('states') or [])} States, "
-                           f"{len(erg.ledger.get('historyLinks') or [])} History-Links; Review: "
-                           f"{lr.get('repaired', 0)} repariert, {lr.get('merged', 0)} zusammengeführt, "
-                           f"{lr.get('rejected', 0)} verworfen, {lr.get('coverageAdded', 0)} ergänzt")
+                           f"{len(erg.ledger.get('historyLinks') or [])} History-Links; Relevanz: "
+                           f"Recap {rel.get('recap', 0)}, Fäden {rel.get('openThread', 0)}, Bibel {rel.get('bible', 0)}; "
+                           f"Review: {lr.get('repaired', 0)} repariert, {lr.get('merged', 0)} zusammengeführt, "
+                           f"{lr.get('rejected', 0)} verworfen, {lr.get('coverageAdded', 0)} ergänzt; "
+                           f"Micro-Review: {ar.get('flagged', 0)} Hinweise, {ar.get('calls', 0)} Calls, "
+                           f"{ar.get('confirmed', 0)} bestätigt")
             if erg.pruefliste:
                 for name in STUFEN:
                     werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]
