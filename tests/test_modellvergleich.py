@@ -90,6 +90,38 @@ def test_modellvergleich(client, world, dbs, tmp_path):
         mv.eingabe_aus_schnittstelle(spieler, s["id"])
 
 
+
+def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, dbs, tmp_path):
+    """0.4.52: Ledger-Diagnose darf keine Notizen, Recap-, Review-, Proposal- oder Richter-Aufrufe auslösen."""
+    from app import modellvergleich as mv
+
+    s = _zur_pruefung(client, world, dbs, tmp_path)
+    server = mv.Server("http://testserver", client=client)
+    server.anmelden("anna", "geheim123")
+    aufrufe = []
+    ollama = _ollama(aufrufe)
+    meldungen = []
+    einst = mv.Einstellungen(nur_ledger=True, laeufe=1)
+    ordner = mv.ausfuehren(server, s["id"], [("a:1", 12288)], "richter:1", 12288,
+                           "http://ollama", tmp_path / "ledger", meldungen.append, client=ollama, einst=einst)
+
+    systeme = [b["messages"][0]["content"] for b in aufrufe]
+    assert systeme
+    assert all(s.startswith(("Du extrahierst", "Du suchst im ORIGINALTRANSKRIPT",
+                             "Du prüfst Ledger-Kandidaten", "Du ordnest aktuelle")) for s in systeme)
+    assert all(b["model"] != "richter:1" for b in aufrufe)
+
+    d = ordner / "a_1-ctx12288"
+    ledger = json.loads((d / "ledger.json").read_text(encoding="utf-8"))
+    erg = json.loads((d / "ergebnis.json").read_text(encoding="utf-8"))
+    assert ledger["version"] == 2 and ledger["state"] == "ok"
+    assert erg["nur_ledger"] is True and erg["grundlage"] == "Originaltranskript"
+    assert not (d / "recap.txt").exists()
+    assert not (d / "vorschlaege.json").exists()
+    assert not (d / "plan.json").exists()
+    assert any("Ledger (Schatten v2)" in m for m in meldungen)
+
+
 def test_modelle_lesen():
     from app.modellvergleich import modelle_lesen
 
