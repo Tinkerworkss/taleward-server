@@ -352,7 +352,7 @@ def richten(url: str, richter: str, kontext: int, recap_ein: dict, ergebnisse: l
 
 # ---------------------------------------------------------------- Bericht
 # ------------------------------------------------------------------ Prüfliste (Vorkommen je Stufe)
-STUFEN = ("Transkript", "Notizen", "Plan", "Ledger", "Ledger Fakten", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
+STUFEN = ("Transkript", "Notizen", "Plan", "Ledger", "Ledger Teile (diagn.)", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel", "Vorschläge")
 
 
 def pruefliste_lesen(text: str) -> list[dict]:
@@ -392,7 +392,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
         "Notizen": e.notizen,
         "Plan": "\n".join(p.get("notiz", "") for p in e.plan),
         "Ledger": "",
-        "Ledger Fakten": "",
+        "Ledger Teile (diagn.)": "",
         "Teile": e.verlauf,
         "Kapitel 1": e.kapitel1,
         "Kapitel 2": e.kapitel2,
@@ -404,7 +404,7 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
     for p in punkte:
         vorkommen = {}
         for name in STUFEN:
-            if p["bereich"] == "Vorschläge" and name in ("Ledger", "Ledger Fakten", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
+            if p["bereich"] == "Vorschläge" and name in ("Ledger", "Ledger Teile (diagn.)", "Teile", "Kapitel 1", "Kapitel 2", "Kapitel"):
                 vorkommen[name] = None  # für Vorschläge nicht gefragt
             elif name == "Kapitel 1" and not e.kapitel1:
                 vorkommen[name] = None
@@ -414,13 +414,13 @@ def pruefliste_anwenden(punkte: list[dict], recap_ein: dict, e: Ergebnis) -> lis
                 vorkommen[name] = None  # kurze Runde: keine Notizen
             elif name == "Plan" and not e.plan:
                 vorkommen[name] = None  # kurze Runde oder Plan-Aufruf ohne gültige Auswahl
-            elif name in ("Ledger", "Ledger Fakten"):
+            elif name in ("Ledger", "Ledger Teile (diagn.)"):
                 events = (e.ledger or {}).get("events") or []
                 if not events:
                     vorkommen[name] = None
                 else:
                     # Ledger = harte Untergrenze: alle Stichwortgruppen im selben atomaren Event.
-                    # Ledger Fakten = diagnostische Obergrenze: Teilfakten dürfen über mehrere source-belegte Events
+                    # Ledger Teile (diagn.) = diagnostische Obergrenze: Stichwortteile dürfen über mehrere source-belegte Events
                     # verteilt sein. Zusammen zeigen beide Werte, ob ein Goldpunkt fehlt oder nur atomisiert wurde.
                     def event_text(ev):
                         felder = [ev.get("summary", "")] + list(ev.get("actors") or []) + list(ev.get("targets") or [])
