@@ -213,6 +213,7 @@ class OllamaKlient:
                            or system.startswith("Du vergleichst")
                            or system.startswith("Du prüfst")
                            or system.startswith("Du extrahierst")
+                           or system.startswith("Du suchst")
                            or system.startswith("Du ordnest"))
         if deterministisch:
             self.temperatur = 0.0
@@ -2108,9 +2109,9 @@ class Ablauf:
         events = self._ledger_coverage(ein, events, zeilen, review)
         events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
 
-        for e in events:
+        for nr, e in enumerate(events, 1):
             e.pop("candidateId", None)
-            e["eventId"] = f"E{events.index(e) + 1:04d}"
+            e["eventId"] = f"E{nr:04d}"
             et = self._ledger_event_text(e)
             e["linkedEntries"] = [b.get("id") for b in ein.get("bibel") or []
                                   if b.get("id") and klartext(b.get("name"))
