@@ -207,7 +207,17 @@ class OllamaKlient:
         return self._chat_mit_schema(system, nutzer, None)
 
     def chat_strukturiert(self, system: str, nutzer: str, schema: dict) -> Antwort:
-        return self._chat_mit_schema(system, nutzer, schema)
+        vorher = self.temperatur
+        deterministisch = (system.startswith("Du hilfst bei der Nachbereitung")
+                           or system.startswith("Du klassifizierst")
+                           or system.startswith("Du vergleichst")
+                           or system.startswith("Du prüfst"))
+        if deterministisch:
+            self.temperatur = 0.0
+        try:
+            return self._chat_mit_schema(system, nutzer, schema)
+        finally:
+            self.temperatur = vorher
 
     def _chat_mit_schema(self, system: str, nutzer: str, schema: dict | None) -> Antwort:
         # Kleine Modelle geraten im JSON-Modus gern in eine Schleife (Ollama bricht dann mit „token repeat limit
@@ -788,7 +798,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 S_STR = {"type": "string"}
 S_SCHEMAS = {
-    "notes": _obj({"notizen": {"type": "array", "items": S_STR}}, ["notizen"]),
+    "notes": _obj({"notizen": {"type": "array", "items": S_STR}, "_gerettet": {"type": "boolean"}}, ["notizen"]),
     "plan": _obj({
         "critical": {"type": "array", "items": S_STR},
         "important": {"type": "array", "items": S_STR},
@@ -1393,7 +1403,7 @@ class Ablauf:
 
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
         """Atomare Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen. Ein Widerspruch
-        wird nur übernommen, wenn Claim UND Belegzitat im tatsächlichen Text wiedergefunden werden."""
+        wird nur übernommen, wenn Claim UND echte Source-ID(s) aus genau diesem Ausschnitt belegt sind."""
         zeilen = [(_zeit_vorn(z), lid, z) for lid, z in transkript_zeilen_mit_ids(ein.get("transkript") or [])]
         zeilen = [(t, lid, z) for t, lid, z in zeilen if t is not None]
         teile = absaetze(text)
@@ -1418,35 +1428,32 @@ class Ablauf:
                 log.warning("Relationsprüfung Absatz %d übersprungen: %s", i + 1, e)
                 continue
 
-            span_kern = _notizkern(text_spans)
-            span_woerter = set(span_kern.split())
             claims = []
-            for c in d.get("claims") or d.get("behauptungen") or []:
+            for c in d.get("claims") or []:
                 if not isinstance(c, dict):
                     continue
-                claim = klartext(c.get("claim") or c.get("behauptung") or "")[:500]
+                claim = klartext(c.get("claim") or "")[:500]
                 if not claim:
                     continue
-                urteil = str(c.get("urteil") or c.get("verdict") or "").strip().lower()
-                urteil = {"stimmt": "stimmt", "ok": "stimmt", "supported": "stimmt",
-                           "widerspricht": "widerspricht", "contradicted": "widerspricht",
-                           "contradiction": "widerspricht", "unklar": "unklar", "unclear": "unklar"}.get(urteil, "unklar")
-                zitat = klartext(c.get("zitat") or c.get("quote") or "")[:300]
-                zkern = _notizkern(zitat)
-                zwoerter = set(zkern.split())
-                zitat_belegt = bool(zkern and (zkern in span_kern or
-                                    (zwoerter and len(zwoerter & span_woerter) / len(zwoerter) >= 0.6)))
+                urteil = str(c.get("urteil") or "").strip().lower()
+                urteil = {"stimmt": "stimmt", "widerspricht": "widerspricht", "unklar": "unklar"}.get(urteil, "unklar")
                 exakt = claim in teile[i]
-                # Automatisch eingreifen nur mit zwei harten Ankern: exakter Recap-Claim + Zitat aus dem Fenster.
-                if urteil == "widerspricht" and (not exakt or not zitat_belegt):
+                source_ids = [str(x).strip() for x in (c.get("sourceIds") or [])
+                              if str(x).strip() in erlaubte_ids][:3]
+                zitat = " | ".join(erlaubte_ids[x] for x in source_ids)[:600]
+                belegt = bool(source_ids)
+                # Automatisch eingreifen nur mit zwei harten Ankern: exakter Recap-Claim + echte Source-ID(s)
+                # aus genau dem Transkriptfenster, das der Prüfer gesehen hat.
+                if urteil == "widerspricht" and (not exakt or not belegt):
                     urteil = "unklar"
                 claims.append({
                     "claim": claim,
                     "urteil": urteil,
-                    "korrektur": klartext(c.get("korrektur") or c.get("correction") or "")[:500],
-                    "begruendung": klartext(c.get("begruendung") or c.get("reason") or "")[:400],
+                    "korrektur": klartext(c.get("korrektur") or "")[:500],
+                    "begruendung": klartext(c.get("begruendung") or "")[:400],
+                    "sourceIds": source_ids,
                     "zitat": zitat,
-
+                    "zitatBelegt": belegt,
                     "exakt": exakt,
                     "gepatcht": False,
                 })
