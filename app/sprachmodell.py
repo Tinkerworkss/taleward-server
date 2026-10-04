@@ -655,9 +655,10 @@ Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur"
 
 
 SYSTEM_LEDGER_EVENTS = """Du extrahierst ein Ereignis-Ledger aus EINEM Abschnitt des ORIGINALTRANSKRIPTS einer Pen-&-Paper-Session. Jede Zeile hat eine unveränderliche Source-ID Lxxxx. Schreibe keine Chronik und keine Prosa, sondern atomare, belegte Ereignisse.
-Erfasse besonders Wendepunkte, Handlungen mit Folgen, Rettung/Tod/Verletzung, Orts- und Besitzwechsel, Entdeckungen, Abmachungen, Ziele, Identitäten und Transformationen. Ein Ereignis darf mehrere kinds haben.
+Erfasse NUR Fakten, die später mindestens einen konkreten Zweck erfüllen: recap = wichtig für den erzählten Verlauf/Wendepunkt/Ausgang; openThread = am Sitzungsende noch offen und für eine spätere Runde relevant; bible = dauerhaftes Wissen über NPC, Ort, Fraktion, Gegenstand, Identität, Beziehung, Rolle oder Verpflichtung. Setze relevance mit diesen drei Booleans. Wenn alle drei false wären, gib das Ereignis NICHT aus.
+Erfasse besonders Wendepunkte, Handlungen mit Folgen, Rettung/Tod/Verletzung, relevante Orts- und Besitzwechsel, Entdeckungen, Abmachungen, Ziele, Identitäten und Transformationen. Atmosphäre, Routine, bloße Anwesenheit und folgenlose Kleinschritte gehören nicht in den finalen Ledger. Ein Ereignis darf mehrere kinds haben.
 Für Zustände nutze assertions: subject = betroffene Entität, property = eine der universellen Eigenschaften life_status, physical_condition, location, possession, relationship, identity, knowledge, allegiance, goal, obligation, reputation, control, role_status oder other; value = der konkrete Zustand. epistemic hält fest, ob etwas beobachtet, nur gesagt/berichtet/geglaubt/vermutet/erinnert, Vision/Traum oder unklar ist.
-Wichtig: "für tot gehalten" ist NICHT dasselbe wie tatsächlich tot. Geplant ist nicht geschehen, versucht ist nicht gelungen. Eine spätere Enthüllung darf einem früheren Eindruck widersprechen; beide Ereignisse bleiben im Ledger.
+Wichtig: "für tot gehalten" ist NICHT dasselbe wie tatsächlich tot. Geplant ist nicht geschehen, versucht ist nicht gelungen. Eine spätere Enthüllung darf einem früheren Eindruck widersprechen; beide Ereignisse bleiben im Ledger. Sprecherlabels stammen aus automatischer Erkennung und können falsch sein; erfinde deshalb keine Identität nur aus einem Label.
 Bei längeren Konflikten, Kämpfen oder Verfolgungen NICHT jede Runde, jeden Angriff, Wurf, Treffer oder folgenlosen Positionswechsel als eigenes Event erfassen. Eine Einzelaktion gehört nur dann in den Welt-Ledger, wenn sie Zustand, Ziel, Kontrolle, Besitz, Wissen, Beteiligte, verfügbare Route oder den Ausgang relevant verändert. Reine Regelmechanik bleibt draußen.
 sourceIds müssen die Aussage direkt tragen und dürfen ausschließlich aus diesem Abschnitt stammen. Keine Source-ID erfinden. Lieber zwei kleine Events als ein vermischtes.
 Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -670,8 +671,10 @@ Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {
 SYSTEM_LEDGER_REVIEW = """Du prüfst Ledger-Kandidaten einer Pen-&-Paper-Session gegen EINEN Abschnitt des ORIGINALTRANSKRIPTS. Die Kandidaten stammen aus dem primären Ereignis-Pass. Prüfe vorhandene Kandidaten UND suche im selben Schritt nach wenigen wichtigen Kontinuitätsfakten, die der Primärpass ganz übersehen hat.
 Melde in reviews NUR Kandidaten, die geändert werden müssen; nicht genannte Kandidaten gelten als akzeptiert.
 Prüfe besonders:
+- RELEVANZ: Im finalen Ledger bleiben nur Fakten, die mindestens für Recap, offenen Faden oder Bibel konkret nützlich sind. replacement und coverage brauchen relevance mit recap/openThread/bible; alle false ist kein Ledger-Fakt.
 - Wer tut was wem? actor/target und Besitzrichtung niemals vertauschen.
 - Pronomen nur auflösen, wenn der lokale Kontext es trägt; sonst die Entität allgemeiner lassen.
+- Sprecherlabels stammen aus automatischer Erkennung und können falsch sein. Nutze deshalb zusätzlich die GESPRÄCHSROLLE: Fragt ein Spieler unmittelbar nach Zustand/Handlung eines NPCs oder der Welt und folgt genau eine unbestrittene, autoritativ formulierte Weltantwort, darfst du einen widersprechenden Sprecherlabel als wahrscheinlich falsch behandeln. Markiere das Event dann mit tag "speaker_conflict". Bei mehreren konkurrierenden Antworten oder bloßer Meinung bleibt der epistemische Status unsicher/stated.
 - "Spielleitung", "Game Master" und vergleichbare Tischrollen sind keine Figuren der Spielwelt. Sie erzählen oder sprechen für NPCs. Verwende eine Tischrolle niemals als actor, target oder assertion.subject eines Weltfakts.
 - Personen nicht verschmelzen. Eine Anrede an Person A unmittelbar vor "ich bin B" macht A nicht zu B.
 - beobachtet/gesagt/geglaubt/erinnert/Vision sauber trennen; geplant/versucht ist nicht automatisch geschehen.
@@ -679,11 +682,11 @@ Prüfe besonders:
 - gleiche oder nahezu gleiche Kandidaten zusammenführen.
 Für jeden Fehler: originIds = betroffene C-IDs; verdict = "repair", "merge" oder "reject". Bei repair/merge MUSS replacement ein vollständig source-belegtes Event im normalen Ledger-Schema sein. Bei reject ist replacement null. replacement.sourceIds dürfen ausschließlich aus dem bereitgestellten Abschnitt stammen und müssen die Aussage direkt tragen.
 
-coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Ereignisse. Gib dort ausschließlich importance "critical" oder "important" zurück, keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
+coverage ist das Sicherheitsnetz für KOMPLETT FEHLENDE, später relevante Ereignisse. Gib dort ausschließlich importance "critical" oder "important" zurück und nur wenn mindestens eines von relevance.recap/openThread/bible true ist; keine Umformulierungen vorhandener Kandidaten und keinen Kleinkram. Suche gezielt nach Tod/Überleben, Rettung, schwerer Verletzung/Heilung, Transformation, Besitzübergabe mit Richtung, Identität/Verwechslung, Beziehung, Deal/Verpflichtung, entscheidender Entdeckung oder Wissensänderung sowie plotrelevantem Ortswechsel. Normale Dialogakte, Fragen, Zurufe, Routinehandlungen und folgenlose Bewegungen gehören NICHT in coverage.
 
-anchors sind eine zweite, knappe Sicherheitslinie für DAUERHAFTE ODER FOLGENREICHE Zustände/Relationen. Gib höchstens 8 Anchors pro Abschnitt aus. Gib einen Anchor auch dann aus, wenn ein Kandidat ihn bereits abbildet. Jeder Anchor ist atomar: subject + property + value, source-belegt, importance nur critical/important. originIds enthält die C-IDs der Kandidaten, die genau diesen Fakt abzubilden versuchen; wenn er komplett fehlt, ist originIds leer. Nutze nur universelle Eigenschaften aus dem Assertion-Schema. Keine Regelmechanik, keine bloße Atmosphäre, keine Routinebewegung. Wenn Identität, Besitz, Beziehung oder Verpflichtung nicht sicher aufgelöst werden kann, setze keine scheinbar präzise Relation.
+anchors sind NUR Prüfhinweise, KEINE kanonische Wahrheit und dürfen Events später nicht automatisch überschreiben. Gib höchstens 4 Anchors pro Abschnitt aus und nur für besonders folgenschwere life_status, identity, possession, relationship, obligation oder eine critical physical_condition. Jeder Anchor ist atomar: subject + property + value, source-belegt, importance nur critical/important. originIds enthält die C-IDs der Kandidaten, die genau diesen Fakt abzubilden versuchen; wenn er komplett fehlt, ist originIds leer. Keine Regelmechanik, keine Atmosphäre, keine Routine. Bei unsicherer Auflösung keinen Anchor erzeugen.
 
-encounters beschreibt nur SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen/Kämpfe im Abschnitt, höchstens 2 Fragmente pro Abschnitt. Kein einzelner Angriff und keine Würfelabfolge. Ein Fragment fasst eine erzählerische Phase zusammen: Beteiligte, Orte, Ziele, frei benannte domains (z. B. unterschiedliche Schauplätze/Ebenen), Wendepunkte, Ausgang/Folgen/offene Punkte. boundary ist start/middle/end/complete/unknown. Bei keinem substanziellen Encounter: leere Liste. Die Kategorien sind systemagnostisch; erfinde keine systemspezifischen Ebenen.
+encounters beschreibt nur RECAP-RELEVANTE, SUBSTANTIELLE zusammenhängende Konflikte/Verfolgungen/Kämpfe im Abschnitt, höchstens 1 Fragment pro Abschnitt. Kein einzelner Angriff, keine Tür-/Routineprobe und keine Würfelabfolge. Ein Fragment fasst eine erzählerische Phase zusammen: Beteiligte, Orte, Ziele, frei benannte domains (z. B. unterschiedliche Schauplätze/Ebenen), Wendepunkte, Ausgang/Folgen/offene Punkte. boundary ist start/middle/end/complete/unknown. Bei keinem substanziellen Encounter: leere Liste. Die Kategorien sind systemagnostisch; erfinde keine systemspezifischen Ebenen.
 
 Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
 Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
@@ -865,7 +868,13 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 S_STR = {"type": "string"}
+S_BOOL = {"type": "boolean"}
 S_ARR_STR = {"type": "array", "items": S_STR}
+S_LEDGER_RELEVANCE = _obj({
+    "recap": S_BOOL,
+    "openThread": S_BOOL,
+    "bible": S_BOOL,
+}, ["recap", "openThread", "bible"])
 S_LEDGER_ASSERTION = _obj({
     "subject": S_STR,
     "property": {"type": "string", "enum": ["life_status", "physical_condition", "location", "possession",
@@ -891,9 +900,10 @@ S_LEDGER_EVENT = _obj({
                                                 "remembered", "vision", "dream", "inferred", "unknown"]},
     "modality": {"type": "string", "enum": ["actual", "attempted", "planned", "hypothetical", "alleged", "unknown"]},
     "importance": {"type": "string", "enum": ["critical", "important", "minor"]},
+    "relevance": S_LEDGER_RELEVANCE,
     "tags": S_ARR_STR,
 }, ["sourceIds", "summary", "kinds", "actors", "targets", "objects", "locations", "factions", "assertions",
-    "epistemic", "modality", "importance", "tags"])
+    "epistemic", "modality", "importance", "relevance", "tags"])
 S_LEDGER_ANCHOR = _obj({
     "originIds": {"type": "array", "items": {"type": "string", "pattern": "^C[0-9]{4,6}$"}},
     "sourceIds": {"type": "array", "minItems": 1, "maxItems": 6,
@@ -963,8 +973,8 @@ S_SCHEMAS = {
             "replacement": {"anyOf": [S_LEDGER_EVENT, {"type": "null"}]},
         }, ["originIds", "verdict", "reason", "replacement"])},
         "coverage": {"type": "array", "items": S_LEDGER_EVENT},
-        "anchors": {"type": "array", "maxItems": 8, "items": S_LEDGER_ANCHOR},
-        "encounters": {"type": "array", "maxItems": 2, "items": S_LEDGER_ENCOUNTER_FRAGMENT},
+        "anchors": {"type": "array", "maxItems": 4, "items": S_LEDGER_ANCHOR},
+        "encounters": {"type": "array", "maxItems": 1, "items": S_LEDGER_ENCOUNTER_FRAGMENT},
     }, ["reviews", "coverage", "anchors", "encounters"]),
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
@@ -1794,7 +1804,13 @@ class Ablauf:
         summary = klartext(e.get("summary") or "")[:500]
         if not ids or not summary:
             return None
-        event = {**e, "sourceIds": ids, "summary": summary}
+        relevance = e.get("relevance") if isinstance(e.get("relevance"), dict) else {}
+        relevance = {"recap": relevance.get("recap") is True,
+                     "openThread": relevance.get("openThread") is True,
+                     "bible": relevance.get("bible") is True}
+        if not any(relevance.values()):
+            return None
+        event = {**e, "sourceIds": ids, "summary": summary, "relevance": relevance}
         event["evidence"] = [{"sourceId": lid, "text": quelle[lid]} for lid in ids]
         zeiten = [_zeit_vorn(quelle[lid]) for lid in ids]
         event["time"] = min((t for t in zeiten if t is not None), default=None)
@@ -1852,6 +1868,7 @@ class Ablauf:
             "objects": e.get("objects") or [], "locations": e.get("locations") or [], "factions": e.get("factions") or [],
             "assertions": e.get("assertions") or [], "epistemic": e.get("epistemic"),
             "modality": e.get("modality"), "importance": e.get("importance"),
+            "relevance": e.get("relevance") or {},
             "pass": e.get("extractionPass"),
         }
         return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
