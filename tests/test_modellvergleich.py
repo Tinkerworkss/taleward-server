@@ -32,7 +32,7 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
         if system.startswith("Du extrahierst") or system.startswith("Du suchst im ORIGINALTRANSKRIPT"):
             inhalt = {"events": []}
         elif system.startswith("Du prüfst Ledger-Kandidaten"):
-            inhalt = {"reviews": []}
+            inhalt = {"reviews": [], "coverage": []}
         elif system.startswith("Du ordnest aktuelle"):
             inhalt = {"links": []}
         elif system.startswith("Du prüfst"):
@@ -107,8 +107,9 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
 
     systeme = [b["messages"][0]["content"] for b in aufrufe]
     assert systeme
-    assert all(s.startswith(("Du extrahierst", "Du suchst im ORIGINALTRANSKRIPT",
-                             "Du prüfst Ledger-Kandidaten", "Du ordnest aktuelle")) for s in systeme)
+    assert all(s.startswith(("Du extrahierst", "Du prüfst Ledger-Kandidaten", "Du ordnest aktuelle")) for s in systeme)
+    assert not any(s.startswith("Du extrahierst aus EINEM Abschnitt") for s in systeme)
+    assert not any(s.startswith("Du suchst im ORIGINALTRANSKRIPT") for s in systeme)
     assert all(b["model"] != "richter:1" for b in aufrufe)
 
     d = ordner / "a_1-ctx12288"
