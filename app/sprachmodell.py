@@ -843,12 +843,12 @@ S_SCHEMAS = {
 
 
 def _schema_fuer(system: str) -> dict | None:
-    if system.startswith("Du hilfst bei der Nachbereitung") and "Szenennotizen" in system:
+    if system.startswith("Du hilfst bei der Nachbereitung einer langen"):
+        return S_SCHEMAS["part"]
+    if system.startswith("Du hilfst bei der Nachbereitung") and "Schreibe Szenennotizen" in system:
         return S_SCHEMAS["notes"]
     if system.startswith("Du klassifizierst die Szenennotizen"):
         return S_SCHEMAS["plan"]
-    if system.startswith("Du hilfst bei der Nachbereitung einer langen"):
-        return S_SCHEMAS["part"]
     if "Was bisher geschah" in system:
         return S_SCHEMAS["recap"]
     if system.startswith("Du pflegst die Kampagnen-Bibel"):
