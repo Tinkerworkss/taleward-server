@@ -504,6 +504,7 @@ Absätze durch Leerzeilen getrennt.
 - Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
 weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
 geschehen; wer etwas wofür gibt, steht so in der Grundlage.
+- Steht in der Eingabe ein „Pflichtplan“, muss jeder dort ausgewählte Punkt im Recap vorkommen. Der Pflichtplan wählt ausschließlich aus der Grundlage aus und erlaubt keine neuen Tatsachen. Pflichtpunkte knapp erzählen, aber nicht durch allgemeinere Formulierungen ersetzen oder weglassen.
 - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
 Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung; das Wort „Spielleitung“ kommt im Recap nicht vor. \
 Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
@@ -512,6 +513,15 @@ Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
 - Offene Fäden: 0 bis 6 kurze Sätze zu ungelösten Fragen, Versprechen und Zielen der Gruppe.
 - Reiner Text ohne Markdown: keine Sternchen, keine Rauten, keine Zwischenüberschriften, keine Listen.
 Antworte nur mit JSON: {"title": "…", "text": "…", "openThreads": ["…"]}. Sprache: {sprache}."""
+
+SYSTEM_RECAP_PLAN = """Du planst den Recap einer Pen-&-Paper-Session. Du schreibst noch keine Geschichte und formulierst nichts um. Du siehst genau einen Zeitabschnitt mit Szenennotizen; jede Notiz hat eine feste ID N001, N002 usw.
+Wähle 2 bis {max} Notizen, die in einem Recap dieses Zeitabschnitts zwingend vorkommen sollten. Maßstab ist ausschließlich, ob ein Spieler die Information vor der nächsten Runde braucht: Wendepunkt oder Orts-/Lagewechsel; bleibender Zustand (verletzt, gerettet, gefangen, befreit, tot); Beziehung oder Identität; Besitz oder Übergabe; Ziel/Auftrag; Versprechen, Schuld oder Abmachung; entscheidende Information oder offene Handlungsmöglichkeit.
+Nicht auswählen, solange keine bleibende Folge entsteht: Regeln und Würfe, Smalltalk, Witze, Essen/Schlafen, einzelne gescheiterte Versuche, reine Atmosphäre und beiläufige Details.
+Gib ausschließlich IDs zurück, die in diesem Abschnitt stehen. Keine neuen IDs, keine Texte, keine Umformulierungen. Reihenfolge wie in den Notizen. Wenn weniger als zwei wirklich relevante Notizen vorhanden sind, wähle entsprechend weniger.
+Antworte nur mit JSON: {"required": ["N001", "N004"]}. Sprache: {sprache}."""
+
+PLAN_PRO_TEIL = 4
+
 
 SYSTEM_VORSCHLAEGE = """Du pflegst die Kampagnen-Bibel einer Pen-&-Paper-Runde (Einträge: npc, location, quest, \
 item, faction, other). Aus der Session schlägst du Änderungen vor; die Spielleitung prüft jeden Vorschlag.
@@ -591,23 +601,19 @@ hast, jeweils vollständig. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
-ERGAENZEN_RAENGE = ("kritisch", "wichtig")  # nur diese Ränge werden ergänzt
+ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.48: post-hoc nur noch kritische Punkte; der Pflichtplan trägt Wichtiges
 RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Stellen eines Absatzes
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
 
-SYSTEM_RELATIONEN = """Du prüfst einzelne Absätze des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des \
-ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; der Sprecher „Spielleitung“ spricht für Nichtspielercharaktere). \
-Es geht nur um Beziehungen, nicht um Vollständigkeit oder Stil:
-- Wer tut was wem? Wer gibt wem was, und wer hat es danach? War jemand schon verletzt, oder wird er es erst durch die \
-erzählte Handlung? Wer verspricht wem was, gegen welche Gegenleistung? Wer kennt wen, seit wann, wer bürgt für wen? \
-Ist eine Figur in der Szene anwesend oder wird nur über sie gesprochen? Sind zwei Figuren verwechselt oder zu einer \
-verschmolzen? Ist etwas beobachtet, behauptet, vermutet, geplant, erinnert oder eine Vision?
-Für jeden Absatz: urteil "stimmt" (alle Beziehungen wie im Transkript), "widerspricht" (mindestens eine Beziehung ist \
-im Transkript anders: Richtung vertauscht, Zustand umgedreht, Figuren verwechselt, Vermutung als Tatsache, Erwähnte \
-als Anwesende) oder "unklar" (der Ausschnitt reicht nicht). Bei "widerspricht": begruendung mit der richtigen \
-Beziehung in einem Satz und einem kurzen wörtlichen Zitat aus dem Transkript.
-Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "begruendung": "…", "zitat": "…"}]}. \
-Sprache: {sprache}."""
+SYSTEM_RELATIONEN = """Du prüfst genau EINEN Absatz des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; „Spielleitung“ spricht dort für Nichtspielercharaktere). Prüfe nur atomare Beziehungen und Zustände, nicht Stil oder Vollständigkeit.
+Zerlege den Absatz in die kleinsten relevanten Behauptungen: Wer tut was wem? Wer gibt wem was und wer besitzt es danach? War jemand bereits verletzt oder wird er verletzt? Wer kennt wen und seit wann? Wer verspricht wem was gegen welche Gegenleistung? Sind zwei Figuren verwechselt oder verschmolzen? Ist eine Figur anwesend oder nur erwähnt? Ist etwas beobachtet, behauptet, vermutet, geplant, erinnert oder eine Vision?
+Für jede solche Behauptung:
+- claim: kopiere die kürzeste passende Textstelle aus dem Recap WÖRTLICH. Keine Paraphrase.
+- urteil: "stimmt", "widerspricht" oder "unklar". "widerspricht" NUR, wenn das Transkript ausdrücklich eine unvereinbare Beziehung oder einen anderen Zustand zeigt. Fehlt die Information im Ausschnitt, ist das "unklar", niemals ein Widerspruch.
+- korrektur: nur bei "widerspricht" eine minimale Ersatzformulierung für genau claim, die das Transkript belegt. Keine zusätzlichen Tatsachen. Wenn keine sichere minimale Korrektur möglich ist, leer lassen.
+- begruendung: ein kurzer Satz.
+- zitat: kurzes wörtliches Zitat aus dem Transkript, das den Widerspruch belegt; bei "stimmt"/"unklar" optional.
+Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur": "…", "begruendung": "…", "zitat": "…"}]}. Sprache: {sprache}."""
 
 SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
 sie beanstandet; der Grund steht jeweils dabei.
@@ -964,6 +970,7 @@ class Ablauf:
     zaehler: Zaehler = field(default_factory=Zaehler)
     schritt: Callable[[str], None] | None = None  # Zwischenstand für die App (summarizing.notes, .recap …)
     letzter_verlauf: str = ""  # Zusammenfassungen der Teile (lange Runden), für den Modellvergleich
+    letzter_plan: list = field(default_factory=list)  # Pflichtpunkte vor der Prosagenerierung (Modellvergleich)
     gliederung: str = "auto"  # lange Runden: "auto" = Notizen direkt in Zeitabschnitten, Teile nur als Ausweichlösung;
     #                            "direkt" / "teile" erzwingen das eine oder andere (Modellvergleich, A/B)
     temperatur_notizen: float | None = None  # Testoption: Temperatur nur für die Szenennotizen
@@ -1114,12 +1121,53 @@ class Ablauf:
             aus.append(f"Teil {i + 1} von {len(teile)}{von_bis}:\n{text}")
         return "\n\n".join(aus)
 
-    def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
+    def planen(self, ein: dict, notizen: str) -> list[dict]:
+        """1.5c: Vor der Prosa pro Zeitabschnitt nur vorhandene Szenennotizen als Pflichtpunkte auswählen.
+        Das Modell darf keine Ereignisse formulieren, nur feste IDs wählen; ungültige IDs werden verworfen."""
+        zeilen = [z.strip() for z in notizen.split("\n") if z.strip() and _zeit_vorn(z) is not None]
+        if not zeilen:
+            return []
+        ids = {z: f"N{i + 1:03d}" for i, z in enumerate(zeilen)}
+        teile = _teile_nach_zeit(zeilen)
+        system = (SYSTEM_RECAP_PLAN.replace("{sprache}", _sprache(ein))
+                  .replace("{max}", str(PLAN_PRO_TEIL)))
+        aus = []
+        for i, teil in enumerate(teile):
+            teil_zeilen = [z.strip() for z in teil.split("\n") if z.strip() and z.strip() in ids]
+            if not teil_zeilen:
+                continue
+            erlaubt = {ids[z]: z for z in teil_zeilen}
+            liste = "\n".join(f"{ids[z]} | {z}" for z in teil_zeilen)
+            try:
+                d = self.zaehler.aufruf(
+                    self.klient, system,
+                    f"{_kopf(ein)}\n\nZeitabschnitt {i + 1} von {len(teile)}:\n{liste}")
+            except SprachmodellFehler as e:
+                log.warning("Recap-Plan: Abschnitt %d übersprungen: %s", i + 1, e)
+                continue
+            gewaehlt = d.get("required") or d.get("pflicht") or []
+            if not isinstance(gewaehlt, list):
+                continue
+            wanted = {str(x).strip() for x in gewaehlt[:PLAN_PRO_TEIL * 2]}
+            im_teil = 0
+            for nid, z in erlaubt.items():
+                if nid in wanted and im_teil < PLAN_PRO_TEIL:
+                    aus.append({"id": nid, "zeit": _zeit_vorn(z), "notiz": z, "teil": i + 1})
+                    im_teil += 1
+        return aus
+
+    def recap(self, ein: dict, titel: str, grundlage: str,
+              pflichtplan: list[dict] | None = None) -> dict:
         bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"
                                                            if _erwaehnt(e["name"], grundlage) else "")
                           for e in ein["bibel"])
+        pflicht = ""
+        if pflichtplan:
+            pz = "\n".join(f"- Abschnitt {p['teil']}: {p['id']} {p['notiz']}" for p in pflichtplan)
+            pflicht = ("\n\nPflichtplan (nur aus der Grundlage ausgewählt; JEDER Punkt muss im Recap vorkommen):\n"
+                       + pz)
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
-                  f"\n\n{titel}:\n{grundlage}")
+                  f"{pflicht}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
                   .replace("{woerter}", woerter(ein)))
         self._schritt("recap")
@@ -1190,13 +1238,12 @@ class Ablauf:
         return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
 
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
-        """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die
-        Gegenprüfung belegt hat. Szenennotizen können selbst schon falsch sein; das Transkript nicht. Liefert je
-        Absatz {index, urteil, begruendung, zitat, fenster} und setzt im Befund "contradicted", wo es widerspricht."""
+        """Atomare Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen. Ein Widerspruch
+        wird nur übernommen, wenn Claim UND Belegzitat im tatsächlichen Text wiedergefunden werden."""
         zeilen = [(_zeit_vorn(z), z) for z in transkript_zeilen(ein.get("transkript") or [])]
         zeilen = [(t, z) for t, z in zeilen if t is not None]
         teile = absaetze(text)
-        bloecke, fenster = [], {}
+        aus = []
         for b in befund:
             i = b.get("index", -1)
             zeiten = sorted({e["start"] for e in b.get("evidence") or [] if e.get("start") is not None})[:3]
@@ -1206,36 +1253,88 @@ class Ablauf:
             text_spans = "\n".join(spans)[:RELATION_ZEICHEN]
             if not text_spans.strip():
                 continue
-            fenster[i] = [_zeit(zt) for zt in zeiten]
-            bloecke.append(f"Absatz {i + 1}:\n{teile[i]}\n\nTranskript dazu ({', '.join(fenster[i])}):\n{text_spans}")
-        if not bloecke:
-            return []
-        self._schritt("review")
-        d = self.zaehler.aufruf(self.klient, SYSTEM_RELATIONEN.replace("{sprache}", _sprache(ein)),
-                                f"{_kopf(ein)}\n\n" + "\n\n---\n\n".join(bloecke))
-        aus = []
-        for a in d.get("absaetze") or d.get("paragraphs") or []:
-            if not isinstance(a, dict):
-                continue
+            fenster = [_zeit(zt) for zt in zeiten]
+            nutzer = (f"{_kopf(ein)}\n\nAbsatz {i + 1}:\n{teile[i]}\n\n"
+                      f"Transkript dazu ({', '.join(fenster)}):\n{text_spans}")
+            self._schritt("review")
             try:
-                nr = int(a.get("nr") or a.get("index") or 0)
-            except (TypeError, ValueError):
+                d = self.zaehler.aufruf(self.klient, SYSTEM_RELATIONEN.replace("{sprache}", _sprache(ein)), nutzer)
+            except SprachmodellFehler as e:
+                log.warning("Relationsprüfung Absatz %d übersprungen: %s", i + 1, e)
                 continue
-            if not (1 <= nr <= len(teile)) or (nr - 1) not in fenster:
-                continue
-            urteil = str(a.get("urteil") or a.get("verdict") or "").strip().lower()
-            urteil = {"stimmt": "stimmt", "ok": "stimmt", "supported": "stimmt", "widerspricht": "widerspricht",
-                      "contradicted": "widerspricht", "contradiction": "widerspricht"}.get(urteil, "unklar")
-            eintrag = {"index": nr - 1, "urteil": urteil, "begruendung": klartext(a.get("begruendung") or "")[:400],
-                       "zitat": klartext(a.get("zitat") or "")[:300], "fenster": fenster[nr - 1]}
+
+            span_kern = _notizkern(text_spans)
+            span_woerter = set(span_kern.split())
+            claims = []
+            for c in d.get("claims") or d.get("behauptungen") or []:
+                if not isinstance(c, dict):
+                    continue
+                claim = klartext(c.get("claim") or c.get("behauptung") or "")[:500]
+                if not claim:
+                    continue
+                urteil = str(c.get("urteil") or c.get("verdict") or "").strip().lower()
+                urteil = {"stimmt": "stimmt", "ok": "stimmt", "supported": "stimmt",
+                           "widerspricht": "widerspricht", "contradicted": "widerspricht",
+                           "contradiction": "widerspricht", "unklar": "unklar", "unclear": "unklar"}.get(urteil, "unklar")
+                zitat = klartext(c.get("zitat") or c.get("quote") or "")[:300]
+                zkern = _notizkern(zitat)
+                zwoerter = set(zkern.split())
+                zitat_belegt = bool(zkern and (zkern in span_kern or
+                                    (zwoerter and len(zwoerter & span_woerter) / len(zwoerter) >= 0.6)))
+                exakt = claim in teile[i]
+                # Automatisch eingreifen nur mit zwei harten Ankern: exakter Recap-Claim + Zitat aus dem Fenster.
+                if urteil == "widerspricht" and (not exakt or not zitat_belegt):
+                    urteil = "unklar"
+                claims.append({
+                    "claim": claim,
+                    "urteil": urteil,
+                    "korrektur": klartext(c.get("korrektur") or c.get("correction") or "")[:500],
+                    "begruendung": klartext(c.get("begruendung") or c.get("reason") or "")[:400],
+                    "zitat": zitat,
+                    "zitatBelegt": zitat_belegt,
+                    "exakt": exakt,
+                    "gepatcht": False,
+                })
+            widerspruch = [c for c in claims if c["urteil"] == "widerspricht" and c["exakt"] and c["zitatBelegt"]]
+            if widerspruch:
+                urteil = "widerspricht"
+            elif any(c["urteil"] == "unklar" for c in claims):
+                urteil = "unklar"
+            else:
+                urteil = "stimmt"
+            erster = widerspruch[0] if widerspruch else {}
+            eintrag = {"index": i, "urteil": urteil, "begruendung": erster.get("begruendung", ""),
+                       "zitat": erster.get("zitat", ""), "fenster": fenster, "claims": claims}
             aus.append(eintrag)
-            if urteil == "widerspricht":
-                for b in befund:
-                    if b.get("index") == nr - 1:
-                        b["verdict"] = "contradicted"
-                        b["note"] = ("Transkript: " + (eintrag["begruendung"] or "Beziehung anders als im Recap")
-                                     + (f" („{eintrag['zitat']}“)" if eintrag["zitat"] else ""))[:600]
+            if widerspruch:
+                b["relation_contradicted"] = True
+                b["verdict"] = "contradicted"
+                b["note"] = ("Transkript: " + (erster.get("begruendung") or "Beziehung anders als im Recap")
+                             + (f" („{erster.get('zitat')}“)" if erster.get("zitat") else ""))[:600]
         return aus
+
+    def relationen_patchen(self, text: str, relationen: list[dict]) -> str | None:
+        """Nur den exakt beanstandeten Claim ersetzen. Unsichere oder nicht sicher korrigierbare Claims bleiben
+        unverändert und damit für die SL sichtbar."""
+        teile = absaetze(text)
+        geaendert = False
+        for r in relationen:
+            i = r.get("index", -1)
+            if not (0 <= i < len(teile)):
+                continue
+            for c in r.get("claims") or []:
+                if (c.get("urteil") != "widerspricht" or not c.get("exakt")
+                        or not c.get("zitatBelegt")):
+                    continue
+                alt = str(c.get("claim") or "").strip()
+                neu = klartext(c.get("korrektur") or "")
+                if (len(alt) < 8 or not neu or teile[i].count(alt) != 1
+                        or len(neu) > max(500, len(alt) * 2 + 120) or alt == neu):
+                    continue
+                teile[i] = teile[i].replace(alt, neu, 1)
+                c["gepatcht"] = True
+                geaendert = True
+        return "\n\n".join(teile) if geaendert else None
 
     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
         """Gegenprüfung (Stufe 3): jeden Absatz gegen die Grundlage bewerten – ein eigener Aufruf, der den Recap
@@ -1251,7 +1350,8 @@ class Ablauf:
     def nachbessern(self, ein: dict, titel: str, grundlage: str, text: str, befund: list[dict]) -> str | None:
         """Beanstandete Absätze einmal neu schreiben lassen. None, wenn nichts zu tun war oder nichts kam."""
         teile = absaetze(text)
-        schlecht = [b for b in befund if b["verdict"] in BEANSTANDET and b["index"] < len(teile)]
+        schlecht = [b for b in befund if b["verdict"] in BEANSTANDET and b["index"] < len(teile)
+                    and not b.get("relation_contradicted")]
         if not schlecht:
             return None
         liste = "\n\n".join(f"Absatz {b['index'] + 1} (Grund: {b['note'] or b['verdict']}):\n{teile[b['index']]}"
@@ -1272,24 +1372,56 @@ class Ablauf:
         return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile) if neu.get(i, t).strip())
 
     def gegenpruefen(self, ein: dict, titel: str, grundlage: str, r: dict) -> dict:
-        """Prüfung mit höchstens einer Nachbesserung. Ändert r["text"], wenn nachgebessert wurde. Scheitert das
-        Sprachmodell hier, bleibt der Recap wie er ist – die Absätze gelten dann als ungeprüft."""
+        """Faktenprüfung plus transcript-backed Relationsprüfung. Relationsfehler werden ausschließlich claimweise
+        gepatcht; ein Kandidat gilt erst nach einem zweiten transcript-backed Prüflauf als akzeptiert."""
         pruefung = {"model": self.klient.modell, "revised": False, "paragraphs": []}
         try:
-            self._schritt("review")
-            befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
-            self.letzte_relationen_vorher = self.relationen(ein, r["text"], befund)
+            def prueflauf(text: str) -> tuple[list[dict], list[dict]]:
+                self._schritt("review")
+                b = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, text), text)
+                rel = self.relationen(ein, text, b)
+                return b, rel
+
+            befund, relationen = prueflauf(r["text"])
             self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
-            self.letzte_relationen_nachher = []
-            if any(b["verdict"] in BEANSTANDET for b in befund):
+            self.letzte_relationen_vorher, self.letzte_relationen_nachher = relationen, []
+
+            kandidat = self.relationen_patchen(r["text"], relationen)
+            if kandidat:
+                gepatchte = {x.get("index") for x in relationen
+                             if any(c.get("gepatcht") for c in x.get("claims") or [])}
+                b2, rel2 = prueflauf(kandidat)
+                r2 = {x.get("index"): x for x in rel2}
+                b2_map = {x.get("index"): x for x in b2}
+                sicher = bool(gepatchte) and all(
+                    r2.get(i, {}).get("urteil") == "stimmt"
+                    and b2_map.get(i, {}).get("verdict") not in BEANSTANDET
+                    for i in gepatchte
+                )
+                if sicher:
+                    r["text"], pruefung["revised"] = kandidat, True
+                    befund, relationen = b2, rel2
+                    self.letzte_pruefung_nachher = befund
+                    self.letzte_relationen_nachher = relationen
+                else:
+                    # False Positive oder weiterhin unsicher: Originaltext bleibt vollständig erhalten.
+                    for x in self.letzte_relationen_vorher:
+                        for c in x.get("claims") or []:
+                            if c.get("gepatcht"):
+                                c["gepatcht"] = False
+                                c["zurueckgenommen"] = True
+
+            # Andere harte Fehler (unbelegt/off-game) dürfen wie bisher einmal paragraphenweise überarbeitet werden.
+            # Ein offener transcript-backed Relationswiderspruch ist davon ausdrücklich ausgeschlossen.
+            if any(b["verdict"] in BEANSTANDET and not b.get("relation_contradicted") for b in befund):
                 self._schritt("revision")
                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
                 if neu:
                     r["text"], pruefung["revised"] = neu, True
-                    self._schritt("review")
-                    befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
-                    self.letzte_relationen_nachher = self.relationen(ein, neu, befund)
+                    befund, relationen = prueflauf(r["text"])
                     self.letzte_pruefung_nachher = befund
+                    self.letzte_relationen_nachher = relationen
+
             pruefung["paragraphs"] = befund
         except SprachmodellFehler as e:
             log.warning("Gegenprüfung übersprungen: %s", e)
@@ -1332,13 +1464,15 @@ class Ablauf:
             if self.gliederung == "teile" or (self.gliederung != "direkt" and zu_gross):
                 verlauf = self.verlauf(recap_ein, grundlage)
         self.letzter_verlauf = verlauf
+        plan = self.planen(recap_ein, grundlage) if titel.startswith("Szenennotizen") else []
+        self.letzter_plan = plan
         if verlauf:
             r = self.recap(recap_ein, "Verlauf der Runde in Teilen (jeder Teil gehört in den Recap, in dieser "
-                                      "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
+                                      "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf, plan)
         elif titel.startswith("Szenennotizen"):
             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
-                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage))
+                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage), plan)
         else:
             r = self.recap(recap_ein, titel, grundlage)
         self.letztes_kapitel1 = r["text"]
