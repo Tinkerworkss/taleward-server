@@ -2472,8 +2472,9 @@ class Ablauf:
         minor_trotzdem = {"life_status", "possession", "relationship", "identity", "allegiance", "obligation",
                           "role_status"}
         for e in events:
-            rel = e.get("relevance") or {}
-            if not (rel.get("bible") or rel.get("openThread") or e.get("importance") == "critical"):
+            rel = e.get("relevance")
+            if isinstance(rel, dict) and not (rel.get("bible") or rel.get("openThread")
+                                              or e.get("importance") == "critical"):
                 continue
             props = {str(a.get("property") or "") for a in e.get("assertions") or [] if isinstance(a, dict)}
             # Frühere Recaps sind kein Suchindex für jede Handlung derselben Figur. Nur echte Zustands-/Kontinuitäts-
