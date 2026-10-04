@@ -202,7 +202,8 @@ class Ergebnis:
     richter: dict = field(default_factory=dict)  # Bewertung des fertigen Textes durch den festen Richter
     richter_absaetze: list[dict] = field(default_factory=list)
     pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
-    ledger: dict = field(default_factory=dict)  # 0.4.51: source-belegter Schatten-Ledger; beeinflusst den Recap nicht
+    ledger: dict = field(default_factory=dict)  # source-belegter Schatten-Ledger; beeinflusst den Recap nicht
+    nur_ledger: bool = False  # Harness-Modus: nur Ledger erzeugt, übrige Recap-Pipeline bewusst übersprungen
 
     @property
     def token_s(self) -> float:
@@ -253,6 +254,7 @@ class Einstellungen:
     temperatur: float | None = None  # nur für die Szenennotizen
     pruefliste: list[dict] = field(default_factory=list)
     notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
+    nur_ledger: bool = False  # 0.4.52 Diagnose: nur Schatten-Ledger, keine Notizen/Recap/Review/Vorschläge
 
 
 def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschlag_ein: dict,
@@ -262,7 +264,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
     from app.sprachmodell import SprachmodellFehler
 
     einst = einst or Einstellungen()
-    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf)
+    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf, nur_ledger=einst.nur_ledger)
     k = klient(url, modell, kontext, client)
     t0 = time.monotonic()
     try:
@@ -278,12 +280,20 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
     ablauf.ledger_shadow = True
     t0 = time.monotonic()
     try:
-        d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
-        erg.ok = True
-        erg.titel, erg.text, erg.offene_faeden = d["title"], d["text"], d["openThreads"]
-        erg.vorschlaege = d["proposals"]
-        erg.nachgebessert = bool(d["review"].get("revised"))
-        erg.selbst = zaehlen(d["review"]["paragraphs"])
+        if einst.nur_ledger:
+            # Diagnosepfad für 0.4.52: direkt vom Originaltranskript in den Ledger. Keine Szenennotizen, kein Plan,
+            # keine Recap-Prosa, keine Gegenprüfung und keine Vorschläge – so messen wir den Ledger isoliert.
+            ablauf.letztes_ledger = ablauf.ledger(recap_ein)
+            erg.ledger = dict(ablauf.letztes_ledger or {})
+            erg.grundlage = "Originaltranskript"
+            erg.ok = True
+        else:
+            d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
+            erg.ok = True
+            erg.titel, erg.text, erg.offene_faeden = d["title"], d["text"], d["openThreads"]
+            erg.vorschlaege = d["proposals"]
+            erg.nachgebessert = bool(d["review"].get("revised"))
+            erg.selbst = zaehlen(d["review"]["paragraphs"])
     except SprachmodellFehler as e:
         erg.fehler = str(e)
         erg.letzte_antwort = ablauf.zaehler.letzte_antwort[-20000:]
@@ -291,7 +301,8 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         erg.dauer_s = time.monotonic() - t0
         erg.aufrufe, erg.tokens_ein, erg.tokens_aus = (ablauf.zaehler.aufrufe, ablauf.zaehler.tokens_in,
                                                        ablauf.zaehler.tokens_out)
-        erg.grundlage = ablauf.letzte_grundlage[0]
+        if not einst.nur_ledger:
+            erg.grundlage = ablauf.letzte_grundlage[0]
         if erg.grundlage.startswith("Szenennotizen"):
             erg.notizen = ablauf.letzte_grundlage[1]
         erg.verlauf = getattr(ablauf, "letzter_verlauf", "") or ""
@@ -559,7 +570,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
         d.mkdir(exist_ok=True)
         if e.pruefliste:
             (d / "pruefliste.md").write_text(pruefliste_md(e) + "\n", encoding="utf-8")
-        if e.ok:  # jede Stufe immer, auch wenn sie gleich blieb – sonst fehlt der Vorher/Nachher-Vergleich
+        if e.ok and not e.nur_ledger:  # volle Pipeline: alle Stufen für Vorher/Nachher-Vergleich exportieren
             (d / "kapitel-1.txt").write_text(f"{e.titel}\n\n{e.kapitel1 or e.text}\n", encoding="utf-8")
             (d / "kapitel-2.txt").write_text(f"{e.titel}\n\n{e.kapitel2 or e.kapitel1 or e.text}\n", encoding="utf-8")
             (d / "plan.json").write_text(json.dumps(e.plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -572,12 +583,17 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                                  ensure_ascii=False, indent=2), encoding="utf-8")
             (d / "ledger.json").write_text(json.dumps(e.ledger or {"state": "disabled"}, ensure_ascii=False, indent=2),
                                             encoding="utf-8")
-        (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
-        for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
-                             ("verlauf.txt", e.verlauf)):
-            if inhalt:
-                (d / name).write_text(inhalt, encoding="utf-8")
-        (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+        elif e.ok and e.nur_ledger:
+            # Ledger-only erzeugt absichtlich keine leeren Recap-/Plan-/Vorschlagsdateien.
+            (d / "ledger.json").write_text(json.dumps(e.ledger or {"state": "disabled"}, ensure_ascii=False, indent=2),
+                                            encoding="utf-8")
+        if not e.nur_ledger:
+            (d / "recap.txt").write_text(f"{e.titel}\n\n{e.text}\n" if e.ok else f"Fehler: {e.fehler}\n", encoding="utf-8")
+            for name, inhalt in (("letzte-antwort.txt", e.letzte_antwort), ("notizen.txt", e.notizen),
+                                 ("verlauf.txt", e.verlauf)):
+                if inhalt:
+                    (d / name).write_text(inhalt, encoding="utf-8")
+            (d / "vorschlaege.json").write_text(json.dumps(e.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
         plan_kritisch = sum(1 for p in e.plan if p.get("wichtigkeit") == "kritisch")
         plan_wichtig = sum(1 for p in e.plan if p.get("wichtigkeit") == "wichtig")
         plan_neben = sum(1 for p in e.plan if p.get("wichtigkeit") == "nebensächlich")
@@ -665,18 +681,19 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                                         einst, lauf)
             melden(f"  {'fertig' if erg.ok else 'FEHLER: ' + str(erg.fehler)} nach {_zeit(erg.dauer_s)}")
             if erg.ok:
-                belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
-                ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
-                wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
-                pk = sum(1 for p in erg.plan if p.get("wichtigkeit") == "kritisch")
-                pw = sum(1 for p in erg.plan if p.get("wichtigkeit") == "wichtig")
-                pn = sum(1 for p in erg.plan if p.get("wichtigkeit") == "nebensächlich")
-                pf = sum(1 for p in erg.plan if p.get("fallback"))
-                melden(f"  Plan: {pk} kritisch, {pw} wichtig, {pn} nebensächlich"
-                       f"{f', {pf} Fallback' if pf else ''}; Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, "
-                       f"{belegt} belegt, {ergaenzt} ergänzt; Relationen (Transkript): {wider} von "
-                       f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
-                       f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
+                if not einst.nur_ledger:
+                    belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
+                    ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
+                    wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
+                    pk = sum(1 for p in erg.plan if p.get("wichtigkeit") == "kritisch")
+                    pw = sum(1 for p in erg.plan if p.get("wichtigkeit") == "wichtig")
+                    pn = sum(1 for p in erg.plan if p.get("wichtigkeit") == "nebensächlich")
+                    pf = sum(1 for p in erg.plan if p.get("fallback"))
+                    melden(f"  Plan: {pk} kritisch, {pw} wichtig, {pn} nebensächlich"
+                           f"{f', {pf} Fallback' if pf else ''}; Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, "
+                           f"{belegt} belegt, {ergaenzt} ergänzt; Relationen (Transkript): {wider} von "
+                           f"{len(erg.relationen_vorher)} Absätzen widersprochen; "
+                           f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
                 if erg.ledger:
                     lr = erg.ledger.get("review") or {}
                     melden(f"  Ledger (Schatten v2): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
@@ -691,7 +708,7 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                         melden(f"  Prüfpunkte {name}: {sum(1 for w in werte if w)} von {len(werte)}")
             paare.append((erg, ablauf))
             speichern(ordner, info, richter, [p[0] for p in paare])  # Zwischenstand, falls es abbricht
-    if richter:
+    if richter and not einst.nur_ledger:
         melden(f"\n== Richter {richter} ==")
         richten(ollama_url, richter, richter_kontext, recap_ein, paare, melden, client)
     speichern(ordner, info, richter, [p[0] for p in paare])
