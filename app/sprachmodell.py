@@ -751,7 +751,7 @@ def _kennwoerter(text: str) -> set[str]:
 
 
 _RELATION_KURZ = {"tot", "lebt", "leben", "gab", "gibt", "nahm", "kennt", "kind", "bruder", "vater", "mutter",
-                  "besuch", "lüge", "luege", "lügt", "rettet", "rettete", "heilt", "stirbt"}
+                  "besuch", "lüge", "luege", "lügt", "rettet", "rettete", "heilt", "stirbt", "gruppe"}
 
 
 def _relation_anker(text: str) -> set[str]:
@@ -1541,10 +1541,12 @@ class Ablauf:
                 zitat = " | ".join(erlaubte_ids[x] for x in source_ids)[:600]
                 belegt = bool(source_ids)
                 korrektur = klartext(c.get("korrektur") or "")[:500]
-                gegenbeleg = bool(
-                    belegt and korrektur
-                    and (_relation_anker(zitat) & (_relation_anker(claim) | _relation_anker(korrektur)))
-                )
+                claim_anker = _relation_anker(claim)
+                korrektur_anker = _relation_anker(korrektur)
+                # Für einen automatischen Patch muss der Beleg mindestens einen Inhalt tragen, der in der Korrektur
+                # neu ist. Bloß dieselbe Figur oder dasselbe Thema zu erwähnen reicht nicht als Gegenbeleg.
+                gegenbeleg = bool(belegt and korrektur
+                                  and (_relation_anker(zitat) & (korrektur_anker - claim_anker)))
                 # Automatisch eingreifen nur mit drei harten Ankern: exakter Recap-Claim, echte Source-ID(s) und
                 # positiver inhaltlicher Gegenbeleg. "Im Fenster nicht gefunden" ist ausdrücklich kein Widerspruch.
                 if urteil == "widerspricht" and (not exakt or not gegenbeleg):
