@@ -822,17 +822,17 @@ S_SCHEMAS = {
     }, ["nr", "urteil"])}}, ["absaetze"]),
     "part": _obj({"zusammenfassung": S_STR}, ["zusammenfassung"]),
     "proposals": _obj({"proposals": {"type": "array", "items": _obj({
-        "entryType": {"type": "string", "enum": ["npc", "location", "quest", "item", "faction", "other"]},
-        "action": {"type": "string", "enum": ["create", "update", "reveal"]},
+        "entryType": S_STR,
+        "action": S_STR,
         "targetEntryId": {"type": ["string", "null"]},
         "title": S_STR, "detail": S_STR,
         "gmNotes": {"type": ["string", "null"]},
-        "suggestedVisibility": {"type": "string", "enum": ["public", "gm_only"]},
+        "suggestedVisibility": S_STR,
         "visibilityReason": {"type": ["string", "null"]},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence": {"type": "number"},
         "flags": {"type": "array", "items": {"type": "string"}},
         "evidence": {"type": "array", "items": _obj({"start": S_STR, "quote": S_STR}, ["start", "quote"])}
-    }, ["entryType", "action", "title", "detail"])}}, ["proposals"]),
+    }, ["entryType", "action", "title"])}}, ["proposals"]),
     "relations": _obj({"claims": {"type": "array", "items": _obj({
         "claim": S_STR,
         "urteil": {"type": "string", "enum": ["stimmt", "widerspricht", "unklar"]},
