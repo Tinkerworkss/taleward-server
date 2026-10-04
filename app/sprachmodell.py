@@ -2083,108 +2083,225 @@ class Ablauf:
             diag["accepted"] += 1
         return aus + coverage_neu, diag, anchors_neu, encounter_fragmente
 
-    def _ledger_integrity(self, events: list[dict], anchors: list[dict],
-                          zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
-        """Kanonische Anchor-Fakten durchsetzen, ohne Sprach-/Systemregeln. Verknüpfte Kandidaten mit widersprechender
-        Assertion werden quarantänisiert; fehlende Anchor-Fakten werden als atomare source-grounded Events ergänzt."""
-        quelle = {lid: z for lid, z in zeilen}
-        alle_ids = set(quelle)
-        diag = {"anchors": len(anchors), "anchorAdded": 0, "anchorConflicts": 0, "metaRejected": 0,
-                "quarantined": []}
-        behalten: list[dict] = []
+    def _ledger_anchor_resolve(self, ein: dict, events: list[dict], anchors: list[dict],
+                               zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
+        """0.4.55: Anchors sind nur Prüfhinweise. Nur fehlende/widersprüchliche Hochrisiko-Fakten bekommen einen
+        kleinen source-grounded Micro-Review; kein weiterer Volltranskript-Pass."""
+        erlaubt_props = {"life_status", "identity", "possession", "relationship", "obligation", "physical_condition"}
+        anchors = [h for h in anchors if h.get("property") in erlaubt_props
+                   and not self._ledger_meta_entitaet(h.get("subject") or "")]
+        diag = {"hints": len(anchors), "flagged": 0, "calls": 0, "confirmed": 0, "rejected": 0,
+                "unclear": 0, "added": 0, "replaced": 0, "errors": 0}
+        if not anchors:
+            return events, diag
 
-        def meta_im_event(e: dict) -> bool:
-            for feld in ("actors", "targets", "objects", "locations", "factions"):
-                if any(self._ledger_meta_entitaet(x) for x in e.get(feld) or []):
-                    return True
-            return any(self._ledger_meta_entitaet(a.get("subject") or "")
-                       or self._ledger_meta_entitaet(a.get("value") or "")
-                       for a in e.get("assertions") or [] if isinstance(a, dict))
-
-        for e in events:
-            if meta_im_event(e):
-                diag["metaRejected"] += 1
-                diag["quarantined"].append({"reason": "table_role_as_world_entity",
-                                            "sourceIds": e.get("sourceIds") or [], "summary": e.get("summary") or ""})
-                continue
-            behalten.append(e)
-
-        def norm(x: str) -> str:
+        def norm(x) -> str:
             return _notizkern(klartext(x))
 
-        def passt(a: dict, h: dict) -> bool:
-            return (norm(a.get("subject") or "") == norm(h["subject"])
-                    and str(a.get("property") or "") == h["property"]
-                    and norm(a.get("value") or "") == norm(h["value"]))
+        def exact(a: dict, h: dict) -> bool:
+            return (norm(a.get("subject")) == norm(h.get("subject"))
+                    and str(a.get("property") or "") == str(h.get("property") or "")
+                    and norm(a.get("value")) == norm(h.get("value")))
+
+        flagged = []
+        for h in anchors:
+            origins = set(h.get("originIds") or [])
+            sources = set(h.get("sourceIds") or [])
+            relevant = []
+            for e in events:
+                e_origins = set((e.get("_review") or {}).get("originIds") or [])
+                if sources & set(e.get("sourceIds") or []) or origins & e_origins:
+                    relevant.append(e)
+            if any(exact(a, h) for e in relevant for a in e.get("assertions") or [] if isinstance(a, dict)):
+                continue
+            aid = f"A{len(flagged) + 1:04d}"
+            flagged.append({**h, "anchorId": aid})
+        diag["flagged"] = len(flagged)
+        if not flagged:
+            return events, diag
+
+        pos = {lid: i for i, (lid, _z) in enumerate(zeilen)}
+        quelle = {lid: z for lid, z in zeilen}
+        system = SYSTEM_LEDGER_ANCHOR_RESOLVE.replace("{sprache}", _sprache(ein))
+        aus = list(events)
+
+        for ab in range(0, len(flagged), 8):
+            paket = flagged[ab:ab + 8]
+            ids = set()
+            for h in paket:
+                for lid in h.get("sourceIds") or []:
+                    if lid not in pos:
+                        continue
+                    i = pos[lid]
+                    for j in range(max(0, i - 2), min(len(zeilen), i + 3)):
+                        ids.add(zeilen[j][0])
+            ordered_ids = [lid for lid, _z in zeilen if lid in ids]
+            original = "\n".join(f"{lid} | {quelle[lid]}" for lid in ordered_ids)
+            vorhandene = [e for e in aus if ids & set(e.get("sourceIds") or [])]
+            hints = [{k: v for k, v in h.items() if k != "chunk"} for h in paket]
+            nutzer = (f"{_kopf(ein)}\n\nORIGINALTRANSKRIPT:\n{original}\n\nHINWEISE:\n"
+                      + json.dumps(hints, ensure_ascii=False)
+                      + "\n\nBEREITS VORHANDENE EVENTS:\n"
+                      + ("\n".join(self._ledger_candidate_text(e) for e in vorhandene) or "(keine)"))
+            self._schritt(f"ledger.resolve {ab // 8 + 1}/{(len(flagged) + 7) // 8}")
+            diag["calls"] += 1
+            try:
+                d = self.zaehler.aufruf(self.klient, system, nutzer)
+            except SprachmodellFehler as e:
+                diag["errors"] += len(paket)
+                log.warning("Ledger-Anchor-Resolver übersprungen: %s", e)
+                continue
+
+            by_id = {h["anchorId"]: h for h in paket}
+            seen = set()
+            for r in d.get("resolutions") or []:
+                if not isinstance(r, dict) or r.get("anchorId") not in by_id or r["anchorId"] in seen:
+                    continue
+                seen.add(r["anchorId"])
+                verdict = str(r.get("verdict") or "unclear")
+                if verdict not in ("confirmed", "rejected", "unclear"):
+                    verdict = "unclear"
+                diag[verdict] += 1
+                if verdict != "confirmed":
+                    continue
+                h = by_id[r["anchorId"]]
+                event = self._ledger_event_normalisieren(r.get("event") or {}, set(ordered_ids), quelle)
+                if event is None:
+                    diag["unclear"] += 1
+                    diag["confirmed"] -= 1
+                    continue
+                event["extractionPass"] = "anchor_resolution"
+                event["_review"] = {"verdict": "anchor_confirmed", "originIds": h.get("originIds") or [],
+                                    "reason": klartext(r.get("reason") or "")[:500]}
+                h_subject, h_prop = norm(h.get("subject")), str(h.get("property") or "")
+                h_sources, h_origins = set(h.get("sourceIds") or []), set(h.get("originIds") or [])
+                behalten = []
+                ersetzt = 0
+                for alt in aus:
+                    alt_origins = set((alt.get("_review") or {}).get("originIds") or [])
+                    related = bool(h_sources & set(alt.get("sourceIds") or []) or h_origins & alt_origins)
+                    conflict = any(
+                        isinstance(a, dict)
+                        and norm(a.get("subject")) == h_subject
+                        and str(a.get("property") or "") == h_prop
+                        and norm(a.get("value")) != norm(h.get("value"))
+                        for a in alt.get("assertions") or []
+                    )
+                    if related and conflict:
+                        ersetzt += 1
+                        continue
+                    behalten.append(alt)
+                aus = behalten
+                if not any(
+                    any(isinstance(a, dict) and exact(a, h) for a in e.get("assertions") or [])
+                    for e in aus
+                ):
+                    aus.append(event)
+                    diag["added"] += 1
+                diag["replaced"] += ersetzt
+
+        return aus, diag
+
+    def _ledger_integrity(self, events: list[dict], anchors: list[dict],
+                          zeilen: list[tuple[str, str]]) -> tuple[list[dict], dict]:
+        """0.4.55: Tischrollen aus Weltfakten sanitizen. Anchors werden nur diagnostisch geprüft und niemals selbst
+        als Wahrheit eingesetzt."""
+        diag = {"anchors": len(anchors), "anchorAdded": 0, "anchorConflicts": 0, "anchorMissing": 0,
+                "metaSanitized": 0, "metaRejected": 0, "quarantined": []}
+        behalten = []
+
+        def meta_text(x) -> bool:
+            return bool(re.search(r"\b(?:Spielleitung|Game\s*Master|Gamemaster|Dungeon\s*Master)\b",
+                                  klartext(x), re.IGNORECASE))
+
+        for original in events:
+            e = {**original}
+            geaendert = False
+            for feld in ("actors", "targets", "objects", "locations", "factions"):
+                alt = list(e.get(feld) or [])
+                neu = [x for x in alt if not self._ledger_meta_entitaet(x)]
+                if neu != alt:
+                    geaendert = True
+                e[feld] = neu
+            alt_assertions = list(e.get("assertions") or [])
+            e["assertions"] = [
+                a for a in alt_assertions if isinstance(a, dict)
+                and not self._ledger_meta_entitaet(a.get("subject") or "")
+                and not self._ledger_meta_entitaet(a.get("value") or "")
+            ]
+            if len(e["assertions"]) != len(alt_assertions):
+                geaendert = True
+            if meta_text(e.get("summary") or ""):
+                geaendert = True
+                if e["assertions"]:
+                    e["summary"] = "; ".join(
+                        f"{klartext(a.get('subject'))}: {a.get('property')} = {klartext(a.get('value'))}"
+                        for a in e["assertions"][:3]
+                    ) + "."
+                else:
+                    welt = [klartext(x) for feld in ("actors", "targets", "objects", "locations", "factions")
+                            for x in e.get(feld) or [] if klartext(x)]
+                    if welt:
+                        e["summary"] = "Weltfakt: " + ", ".join(dict.fromkeys(welt)) + "."
+                    else:
+                        diag["metaRejected"] += 1
+                        diag["quarantined"].append({"reason": "table_role_only",
+                                                    "sourceIds": e.get("sourceIds") or [],
+                                                    "summary": original.get("summary") or ""})
+                        continue
+            if geaendert:
+                tags = list(e.get("tags") or [])
+                if "table_role_sanitized" not in tags:
+                    tags.append("table_role_sanitized")
+                e["tags"] = tags
+                diag["metaSanitized"] += 1
+            behalten.append(e)
+
+        def norm(x) -> str:
+            return _notizkern(klartext(x))
 
         for h in anchors:
             if self._ledger_meta_entitaet(h.get("subject") or ""):
                 continue
-            origins = set(h.get("originIds") or [])
-            anchor_sources = set(h.get("sourceIds") or [])
-            konflikte = []
+            exact = False
+            conflict = False
+            hs = set(h.get("sourceIds") or [])
+            ho = set(h.get("originIds") or [])
             for e in behalten:
-                e_origins = set((e.get("_review") or {}).get("originIds") or [])
-                source_overlap = bool(anchor_sources & set(e.get("sourceIds") or []))
-                explizit_verknuepft = bool(origins & e_origins)
+                related = bool(hs & set(e.get("sourceIds") or [])
+                               or ho & set((e.get("_review") or {}).get("originIds") or []))
                 for a in e.get("assertions") or []:
-                    if not isinstance(a, dict) or str(a.get("property") or "") != h["property"]:
+                    if not isinstance(a, dict):
                         continue
-                    gleicher_schluessel = (norm(a.get("subject") or "") == norm(h["subject"]) and source_overlap)
-                    if (explizit_verknuepft or gleicher_schluessel) and not passt(a, h):
-                        konflikte.append(e)
-                        break
-            if konflikte:
-                for e in konflikte:
-                    if e in behalten:
-                        behalten.remove(e)
-                        diag["anchorConflicts"] += 1
-                        diag["quarantined"].append({"reason": "canonical_anchor_conflict",
-                                                    "sourceIds": e.get("sourceIds") or [],
-                                                    "summary": e.get("summary") or ""})
-
-            if any(passt(a, h) for e in behalten for a in e.get("assertions") or [] if isinstance(a, dict)):
-                continue
-            event = {
-                "sourceIds": h["sourceIds"],
-                "summary": f"{h['subject']}: {h['property']} = {h['value']}.",
-                "kinds": [{"life_status": "death_return", "physical_condition": "condition",
-                           "location": "location_change", "possession": "possession", "relationship": "relationship",
-                           "identity": "identity", "knowledge": "knowledge", "goal": "goal",
-                           "obligation": "commitment"}.get(h["property"], "state_change")],
-                "actors": [], "targets": [], "objects": [h["subject"]] if h["property"] == "possession" else [],
-                "locations": [], "factions": [],
-                "assertions": [{"subject": h["subject"], "property": h["property"], "value": h["value"],
-                                "epistemic": h["epistemic"], "certainty": h["certainty"]}],
-                "epistemic": h["epistemic"],
-                "modality": "actual" if h["epistemic"] == "observed" else "alleged",
-                "importance": h["importance"], "tags": ["integrity_anchor"],
-            }
-            event = self._ledger_event_normalisieren(event, alle_ids, quelle)
-            if event is None:
-                continue
-            event["extractionPass"] = "integrity_anchor"
-            event["_review"] = {"verdict": "anchor_added", "originIds": h.get("originIds") or [],
-                                "reason": "kanonischer Zustand/Relation fehlte oder widersprach Kandidat"}
-            behalten.append(event)
-            diag["anchorAdded"] += 1
+                    if norm(a.get("subject")) != norm(h.get("subject")) or str(a.get("property") or "") != h.get("property"):
+                        continue
+                    if norm(a.get("value")) == norm(h.get("value")):
+                        exact = True
+                    elif related:
+                        conflict = True
+            if not exact:
+                if conflict:
+                    diag["anchorConflicts"] += 1
+                else:
+                    diag["anchorMissing"] += 1
         return behalten, diag
 
     @staticmethod
     def _ledger_encounters(fragmente: list[dict]) -> list[dict]:
-        """Benachbarte source-grounded Encounter-Fragmente konservativ zu längeren Encounters verbinden."""
+        """0.4.55: Nur klar zusammenhängende, recap-relevante Konfliktphasen verbinden. Gemeinsame Spieler allein
+        reichen ausdrücklich nicht mehr als Stitching-Kriterium."""
         if not fragmente:
             return []
-        fragmente = sorted(fragmente, key=lambda f: (int(f.get("chunk") or 0), (f.get("sourceIds") or [""])[0]))
+
+        def normset(f: dict, feld: str) -> set[str]:
+            return {_notizkern(str(x)) for x in f.get(feld) or [] if _notizkern(str(x))}
+
+        fragmente = [
+            f for f in fragmente
+            if f.get("objectives") or f.get("turningPoints") or f.get("outcomes") or f.get("consequences")
+        ]
+        fragmente.sort(key=lambda f: (int(f.get("chunk") or 0), (f.get("sourceIds") or [""])[0]))
         gruppen: list[list[dict]] = []
-
-        def signatur(fs: list[dict]) -> set[str]:
-            aus = set()
-            for f in fs:
-                for feld in ("participants", "locations", "domains"):
-                    aus.update(_notizkern(str(x)) for x in f.get(feld) or [] if _notizkern(str(x)))
-            return aus
-
         for f in fragmente:
             if not gruppen:
                 gruppen.append([f])
@@ -2192,10 +2309,15 @@ class Ablauf:
             g = gruppen[-1]
             prev = g[-1]
             adjacent = int(f.get("chunk") or 0) <= int(prev.get("chunk") or 0) + 1
-            abgeschlossen = prev.get("boundary") in ("end", "complete") or f.get("boundary") == "complete"
-            neuer_start = f.get("boundary") == "start" and prev.get("boundary") not in ("start", "middle", "unknown")
-            overlap = bool(signatur(g) & signatur([f]))
-            if adjacent and not abgeschlossen and not neuer_start and (overlap or not signatur(g) or not signatur([f])):
+            abgeschlossen = prev.get("boundary") in ("end", "complete")
+            neuer_start = f.get("boundary") in ("start", "complete")
+            same_kind = f.get("kind") == prev.get("kind")
+            ziel_overlap = bool(normset(prev, "objectives") & normset(f, "objectives"))
+            ort_domain_overlap = bool((normset(prev, "locations") & normset(f, "locations"))
+                                      or (normset(prev, "domains") & normset(f, "domains")))
+            teilnehmer_overlap = bool(normset(prev, "participants") & normset(f, "participants"))
+            if (adjacent and same_kind and not abgeschlossen and not neuer_start
+                    and ziel_overlap and (ort_domain_overlap or teilnehmer_overlap)):
                 g.append(f)
             else:
                 gruppen.append([f])
