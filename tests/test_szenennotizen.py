@@ -1,5 +1,6 @@
 """Lange Runden: Szenennotizen auch dann, wenn ein kleines Modell abgeschnittenes oder kaputtes JSON liefert."""
 import json
+import re
 
 import pytest
 
