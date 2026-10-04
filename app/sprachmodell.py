@@ -211,7 +211,9 @@ class OllamaKlient:
         deterministisch = (system.startswith("Du hilfst bei der Nachbereitung")
                            or system.startswith("Du klassifizierst")
                            or system.startswith("Du vergleichst")
-                           or system.startswith("Du prüfst"))
+                           or system.startswith("Du prüfst")
+                           or system.startswith("Du extrahierst")
+                           or system.startswith("Du ordnest"))
         if deterministisch:
             self.temperatur = 0.0
         try:
@@ -635,6 +637,9 @@ FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeit
 ERGAENZEN_RAENGE = ("kritisch",)  # 0.4.50: post-hoc nur kritische Punkte; Klassifikationsplan trägt Wichtiges
 RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Stellen eines Absatzes
 RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
+PRUEF_BATCH = 4  # Gegenprüfung in kleinen Paketen: ein abgeschnittener Call darf nicht den ganzen Review vernichten
+LEDGER_STUECK_TOKEN = 3500  # Originaltranskript je Ledger-Aufruf; kleine Antworten sind wichtiger als wenige Calls
+LEDGER_RECONCILE_BATCH = 8  # aktuelle Events je History-Abgleich
 
 SYSTEM_RELATIONEN = """Du prüfst genau EINEN Absatz des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; „Spielleitung“ spricht dort für Nichtspielercharaktere). Prüfe nur atomare Beziehungen und Zustände, nicht Stil oder Vollständigkeit.
 Zerlege den Absatz in die kleinsten relevanten Behauptungen: Wer tut was wem? Wer gibt wem was und wer besitzt es danach? War jemand bereits verletzt oder wird er verletzt? Wer kennt wen und seit wann? Wer verspricht wem was gegen welche Gegenleistung? Sind zwei Figuren verwechselt oder verschmolzen? Ist eine Figur anwesend oder nur erwähnt? Ist etwas beobachtet, behauptet, vermutet, geplant, erinnert oder eine Vision?
@@ -645,6 +650,29 @@ Für jede solche Behauptung:
 - begruendung: ein kurzer Satz.
 - sourceIds: die IDs Lxxxx der Transkriptzeilen, die dein Urteil direkt belegen. Verwende ausschließlich IDs, die im Ausschnitt stehen. Keine Zitate und keine Zeitstempel erfinden.
 Antworte nur mit JSON: {"claims": [{"claim": "…", "urteil": "…", "korrektur": "…", "begruendung": "…", "sourceIds": ["L0001"]}]}. Sprache: {sprache}."""
+
+
+SYSTEM_LEDGER_EVENTS = """Du extrahierst ein Ereignis-Ledger aus EINEM Abschnitt des ORIGINALTRANSKRIPTS einer Pen-&-Paper-Session. Jede Zeile hat eine unveränderliche Source-ID Lxxxx. Schreibe keine Chronik und keine Prosa, sondern atomare, belegte Ereignisse.
+Erfasse besonders Wendepunkte, Handlungen mit Folgen, Rettung/Tod/Verletzung, Orts- und Besitzwechsel, Entdeckungen, Abmachungen, Ziele, Identitäten und Transformationen. Ein Ereignis darf mehrere kinds haben.
+Für Zustände nutze assertions: subject = betroffene Entität, property = eine der universellen Eigenschaften life_status, physical_condition, location, possession, relationship, identity, knowledge, allegiance, goal, obligation, reputation, control, role_status oder other; value = der konkrete Zustand. epistemic hält fest, ob etwas beobachtet, nur gesagt/berichtet/geglaubt/vermutet/erinnert, Vision/Traum oder unklar ist.
+Wichtig: "für tot gehalten" ist NICHT dasselbe wie tatsächlich tot. Geplant ist nicht geschehen, versucht ist nicht gelungen. Eine spätere Enthüllung darf einem früheren Eindruck widersprechen; beide Ereignisse bleiben im Ledger.
+sourceIds müssen die Aussage direkt tragen und dürfen ausschließlich aus diesem Abschnitt stammen. Keine Source-ID erfinden. Lieber zwei kleine Events als ein vermischtes.
+Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
+
+SYSTEM_LEDGER_CONTINUITY = """Du extrahierst aus EINEM Abschnitt des ORIGINALTRANSKRIPTS die leicht übersehenen Kontinuitätsfakten einer Pen-&-Paper-Session. Jede Zeile hat eine Source-ID Lxxxx.
+Suche ausdrücklich nach Beziehungen ("wir kennen uns seit …", Verwandtschaft, Loyalität, Feindschaft), Besitz und Übergaben mit Richtung, Versprechen/Schulden/Deals, Wissen und Enthüllungen, Identität/Verkleidung, scheinbaren oder behaupteten Zuständen, benannten Gegenständen sowie Unterschieden zwischen Person A und Person B. Erfasse auch einen kurzen Nebensatz, wenn er später wichtig werden kann.
+Nutze dieselbe Event-Struktur wie das Ereignis-Ledger. assertions tragen subject/property/value und den epistemischen Status. Erfinde nichts und leite keine Weltwahrheit aus einem bloßen Gerücht ab. sourceIds müssen die Aussage direkt belegen und im Abschnitt vorhanden sein.
+Antworte nur mit JSON {"events": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
+
+SYSTEM_LEDGER_HISTORY = """Du ordnest aktuelle, source-belegte Ledger-Events in eine bereits bekannte Kampagnenhistorie ein. Die aktuellen Events sind Wahrheit über diese Session nur in dem epistemischen Status, der dort steht. Historische Quellen haben IDs Hxxxx und stammen aus früheren Recaps oder bestätigter öffentlicher Bibel.
+Für jedes aktuelle Event mit passenden historischen Quellen entscheide:
+- confirms: bestätigt denselben Zustand/Fakt.
+- extends: ergänzt Historie ohne Widerspruch.
+- contradicts: aktuelles und historisches Wissen sind unvereinbar, aber es ist keine klare spätere Auflösung.
+- revises: das neue Ereignis erklärt oder korrigiert einen früher geglaubten/berichteten Zustand (z. B. jemand galt als tot und erscheint lebend; eine frühere Aussage wird als Lüge entlarvt).
+- none: keine belastbare Beziehung.
+Bei einem echten Zustandswechsel (verletzt → geheilt, Ort A → Ort B) normalerweise extends, nicht contradicts. Ein früherer Recap ist historische Quelle, keine absolute Weltwahrheit.
+historyIds nur aus den bereitgestellten H-IDs. Keine neuen Fakten. Antworte nur mit JSON {"links": [{"eventId":"E0001","relation":"…","historyIds":["H0001"],"reason":"…"}]}. Sprache: {sprache}."""
 
 SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
 sie beanstandet; der Grund steht jeweils dabei.
@@ -722,6 +750,17 @@ def _kennwoerter(text: str) -> set[str]:
     return {w for w in _notizkern(text).split() if len(w) >= 6 and w not in _FUELL}
 
 
+_RELATION_KURZ = {"tot", "lebt", "leben", "gab", "gibt", "nahm", "kennt", "kind", "bruder", "vater", "mutter",
+                  "besuch", "lüge", "luege", "lügt", "rettet", "rettete", "heilt", "stirbt"}
+
+
+def _relation_anker(text: str) -> set[str]:
+    """Billiger positiver Gegenbeleg: ein Widerspruch braucht im echten Source-Text wenigstens ein inhaltliches
+    Ankerwort aus Claim/Korrektur. Das verhindert, dass bloße Abwesenheit im lokalen Fenster als Widerspruch patcht."""
+    return {w for w in _notizkern(text).split()
+            if (len(w) >= 5 and w not in _FUELL) or w in _RELATION_KURZ}
+
+
 def absaetze(text: str) -> list[str]:
     """Absätze eines Recaps (durch Leerzeile getrennt) – wie die App sie zählt."""
     return [a.strip() for a in re.split(r"\n\s*\n", text.strip()) if a.strip()]
@@ -797,6 +836,35 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 S_STR = {"type": "string"}
+S_ARR_STR = {"type": "array", "items": S_STR}
+S_LEDGER_ASSERTION = _obj({
+    "subject": S_STR,
+    "property": {"type": "string", "enum": ["life_status", "physical_condition", "location", "possession",
+                                               "relationship", "identity", "knowledge", "allegiance", "goal",
+                                               "obligation", "reputation", "control", "role_status", "other"]},
+    "value": S_STR,
+    "epistemic": {"type": "string", "enum": ["observed", "stated", "reported", "believed", "suspected",
+                                                "remembered", "vision", "dream", "inferred", "unknown"]},
+    "certainty": {"type": "string", "enum": ["high", "medium", "low"]},
+}, ["subject", "property", "value", "epistemic", "certainty"])
+S_LEDGER_EVENT = _obj({
+    "sourceIds": {"type": "array", "minItems": 1, "maxItems": 6,
+                  "items": {"type": "string", "pattern": "^L[0-9]{4,6}$"}},
+    "summary": S_STR,
+    "kinds": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": [
+        "action", "interaction", "state_change", "relationship", "possession", "knowledge", "goal", "commitment",
+        "location_change", "identity", "status", "condition", "creation_destruction", "resource_change",
+        "discovery", "conflict", "transformation", "death_return", "travel", "scene_change", "other"
+    ]}},
+    "actors": S_ARR_STR, "targets": S_ARR_STR, "objects": S_ARR_STR, "locations": S_ARR_STR, "factions": S_ARR_STR,
+    "assertions": {"type": "array", "items": S_LEDGER_ASSERTION},
+    "epistemic": {"type": "string", "enum": ["observed", "stated", "reported", "believed", "suspected",
+                                                "remembered", "vision", "dream", "inferred", "unknown"]},
+    "modality": {"type": "string", "enum": ["actual", "attempted", "planned", "hypothetical", "alleged", "unknown"]},
+    "importance": {"type": "string", "enum": ["critical", "important", "minor"]},
+    "tags": S_ARR_STR,
+}, ["sourceIds", "summary", "kinds", "actors", "targets", "objects", "locations", "factions", "assertions",
+    "epistemic", "modality", "importance", "tags"])
 S_SCHEMAS = {
     "notes": _obj({"notizen": {"type": "array", "items": S_STR}, "_gerettet": {"type": "boolean"}}, ["notizen"]),
     "plan": _obj({
@@ -833,6 +901,13 @@ S_SCHEMAS = {
         "flags": {"type": "array", "items": {"type": "string"}},
         "evidence": {"type": "array", "items": _obj({"start": S_STR, "quote": S_STR}, ["start", "quote"])}
     }, ["entryType", "action", "title"])}}, ["proposals"]),
+    "ledger": _obj({"events": {"type": "array", "items": S_LEDGER_EVENT}}, ["events"]),
+    "ledger_history": _obj({"links": {"type": "array", "items": _obj({
+        "eventId": S_STR,
+        "relation": {"type": "string", "enum": ["confirms", "extends", "contradicts", "revises", "none"]},
+        "historyIds": {"type": "array", "items": {"type": "string", "pattern": "^H[0-9]{4,6}$"}},
+        "reason": S_STR,
+    }, ["eventId", "relation", "historyIds", "reason"])}}, ["links"]),
     "relations": _obj({"claims": {"type": "array", "items": _obj({
         "claim": S_STR,
         "urteil": {"type": "string", "enum": ["stimmt", "widerspricht", "unklar"]},
@@ -855,6 +930,10 @@ def _schema_fuer(system: str) -> dict | None:
         return S_SCHEMAS["proposals"]
     if system.startswith("Du vergleichst den Recap"):
         return S_SCHEMAS["missing"]
+    if system.startswith("Du extrahierst"):
+        return S_SCHEMAS["ledger"]
+    if system.startswith("Du ordnest aktuelle"):
+        return S_SCHEMAS["ledger_history"]
     if system.startswith("Du prüfst genau EINEN Absatz"):
         return S_SCHEMAS["relations"]
     if system.startswith("Du prüfst den Recap"):
@@ -1134,6 +1213,8 @@ class Ablauf:
     letztes_kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
     letzte_relationen_vorher: list = field(default_factory=list)  # Relationsprüfung gegen das Transkript
     letzte_relationen_nachher: list = field(default_factory=list)
+    ledger_shadow: bool = False  # 0.4.51: nur Diagnose; beeinflusst Recap/Bibel niemals
+    letztes_ledger: dict = field(default_factory=dict)
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1459,22 +1540,29 @@ class Ablauf:
                               if str(x).strip() in erlaubte_ids][:3]
                 zitat = " | ".join(erlaubte_ids[x] for x in source_ids)[:600]
                 belegt = bool(source_ids)
-                # Automatisch eingreifen nur mit zwei harten Ankern: exakter Recap-Claim + echte Source-ID(s)
-                # aus genau dem Transkriptfenster, das der Prüfer gesehen hat.
-                if urteil == "widerspricht" and (not exakt or not belegt):
+                korrektur = klartext(c.get("korrektur") or "")[:500]
+                gegenbeleg = bool(
+                    belegt and korrektur
+                    and (_relation_anker(zitat) & (_relation_anker(claim) | _relation_anker(korrektur)))
+                )
+                # Automatisch eingreifen nur mit drei harten Ankern: exakter Recap-Claim, echte Source-ID(s) und
+                # positiver inhaltlicher Gegenbeleg. "Im Fenster nicht gefunden" ist ausdrücklich kein Widerspruch.
+                if urteil == "widerspricht" and (not exakt or not gegenbeleg):
                     urteil = "unklar"
                 claims.append({
                     "claim": claim,
                     "urteil": urteil,
-                    "korrektur": klartext(c.get("korrektur") or "")[:500],
+                    "korrektur": korrektur,
                     "begruendung": klartext(c.get("begruendung") or "")[:400],
                     "sourceIds": source_ids,
                     "zitat": zitat,
                     "zitatBelegt": belegt,
+                    "gegenbelegBelegt": gegenbeleg,
                     "exakt": exakt,
                     "gepatcht": False,
                 })
-            widerspruch = [c for c in claims if c["urteil"] == "widerspricht" and c["exakt"] and c["zitatBelegt"]]
+            widerspruch = [c for c in claims if c["urteil"] == "widerspricht" and c["exakt"]
+                            and c.get("gegenbelegBelegt")]
             if widerspruch:
                 urteil = "widerspricht"
             elif any(c["urteil"] == "unklar" for c in claims):
@@ -1503,7 +1591,7 @@ class Ablauf:
                 continue
             for c in r.get("claims") or []:
                 if (c.get("urteil") != "widerspricht" or not c.get("exakt")
-                        or not c.get("zitatBelegt")):
+                        or not c.get("gegenbelegBelegt")):
                     continue
                 alt = str(c.get("claim") or "").strip()
                 neu = klartext(c.get("korrektur") or "")
@@ -1516,15 +1604,28 @@ class Ablauf:
         return "\n\n".join(teile) if geaendert else None
 
     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
-        """Gegenprüfung (Stufe 3): jeden Absatz gegen die Grundlage bewerten – ein eigener Aufruf, der den Recap
-        nicht geschrieben hat und nichts umschreibt."""
+        """Gegenprüfung (Stufe 3) in kleinen Absatzpaketen. Ein abgeschnittener strukturierter Call macht nur sein
+        Paket 'unchecked', nicht mehr die gesamte Gegenprüfung."""
         teile = absaetze(text)
         if not teile:
             return []
-        liste = "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))
-        nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nRecap, Absatz für Absatz:\n{liste}"
         system = SYSTEM_PRUEFUNG.replace("{sprache}", _sprache(ein))
-        return pruefung_lesen(self.zaehler.aufruf(self.klient, system, nutzer), len(teile))
+        aus = []
+        for ab in range(0, len(teile), PRUEF_BATCH):
+            paket = teile[ab:ab + PRUEF_BATCH]
+            # Lokal 1..N nummerieren hält Schema und Antwort klein; danach auf globale Indizes zurücksetzen.
+            liste = "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(paket))
+            nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nRecap, Absatz für Absatz:\n{liste}"
+            try:
+                teil = pruefung_lesen(self.zaehler.aufruf(self.klient, system, nutzer), len(paket))
+            except SprachmodellFehler as e:
+                log.warning("Gegenprüfung Absätze %d–%d übersprungen: %s", ab + 1, ab + len(paket), e)
+                teil = [{"index": i, "verdict": "unchecked", "note": None, "evidence": []}
+                        for i in range(len(paket))]
+            for b in teil:
+                b["index"] += ab
+            aus += teil
+        return aus
 
     def nachbessern(self, ein: dict, titel: str, grundlage: str, text: str, befund: list[dict]) -> str | None:
         """Beanstandete Absätze einmal neu schreiben lassen. None, wenn nichts zu tun war oder nichts kam."""
@@ -1608,6 +1709,201 @@ class Ablauf:
                                       for i in range(len(absaetze(r["text"])))]
         return pruefung
 
+    @staticmethod
+    def _ledger_event_text(e: dict) -> str:
+        teile = [e.get("summary", "")] + list(e.get("actors") or []) + list(e.get("targets") or [])
+        teile += list(e.get("objects") or []) + list(e.get("locations") or []) + list(e.get("factions") or [])
+        teile += [f"{a.get('subject', '')} {a.get('property', '')} {a.get('value', '')}"
+                  for a in e.get("assertions") or [] if isinstance(a, dict)]
+        return " ".join(str(x) for x in teile if x)
+
+    def _ledger_pass(self, ein: dict, system: str, zeilen: list[tuple[str, str]]) -> list[dict]:
+        """Ein Ledger-Pass über Originalzeilen. Nur Events mit realen Source-IDs überleben."""
+        quelle = {lid: z for lid, z in zeilen}
+        aus = []
+        teile = stuecke([f"{lid} | {z}" for lid, z in zeilen], LEDGER_STUECK_TOKEN)
+        for nr, teil in enumerate(teile, 1):
+            im_teil = {m.group(1) for m in re.finditer(r"(?m)^(L\d{4,6}) \|", teil)}
+            try:
+                d = self.zaehler.aufruf(
+                    self.klient, system.replace("{sprache}", _sprache(ein)),
+                    f"{_kopf(ein)}\n\nAbschnitt {nr} von {len(teile)}:\n{teil}")
+            except SprachmodellFehler as e:
+                log.warning("Ledger-Pass Abschnitt %d übersprungen: %s", nr, e)
+                continue
+            for e in d.get("events") or []:
+                if not isinstance(e, dict):
+                    continue
+                ids = [str(x) for x in e.get("sourceIds") or [] if str(x) in im_teil and str(x) in quelle][:6]
+                summary = klartext(e.get("summary") or "")[:500]
+                if not ids or not summary:
+                    continue
+                event = {**e, "sourceIds": ids, "summary": summary}
+                event["evidence"] = [{"sourceId": lid, "text": quelle[lid]} for lid in ids]
+                zeiten = [_zeit_vorn(quelle[lid]) for lid in ids]
+                event["time"] = min((t for t in zeiten if t is not None), default=None)
+                aus.append(event)
+        return aus
+
+    @staticmethod
+    def _ledger_states(events: list[dict]) -> list[dict]:
+        """Zeitabhängige Assertions reduzieren, ohne alte Aussagen zu löschen. 'believed/reported' bleibt Historie;
+        eine spätere beobachtete Gegenlage markiert sie als Revision statt aus ihr eine Weltwahrheit zu machen."""
+        gruppen: dict[tuple[str, str], list[dict]] = {}
+        nicht_kanonisch = {"stated", "reported", "believed", "suspected", "remembered", "vision", "dream",
+                           "inferred", "unknown"}
+        for e in events:
+            for a in e.get("assertions") or []:
+                if not isinstance(a, dict):
+                    continue
+                subject, prop, value = (klartext(a.get("subject")), str(a.get("property") or ""),
+                                        klartext(a.get("value")))
+                if not subject or not prop or not value:
+                    continue
+                x = {"eventId": e["eventId"], "time": e.get("time"), "sourceIds": list(e.get("sourceIds") or []),
+                     "subject": subject, "property": prop, "value": value,
+                     "epistemic": str(a.get("epistemic") or "unknown"),
+                     "certainty": str(a.get("certainty") or "medium")}
+                gruppen.setdefault((subject.casefold(), prop), []).append(x)
+        aus = []
+        for _, hist in sorted(gruppen.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+            hist.sort(key=lambda x: (x["time"] is None, x["time"] or 0, x["eventId"]))
+            vorher = None
+            for x in hist:
+                if vorher is None:
+                    x["resolution"] = "initial"
+                elif x["value"].casefold() == vorher["value"].casefold():
+                    x["resolution"] = "confirmation"
+                elif vorher["epistemic"] in nicht_kanonisch and x["epistemic"] not in nicht_kanonisch:
+                    x["resolution"] = "revision"
+                    vorher["resolvedBy"] = x["eventId"]
+                else:
+                    x["resolution"] = "state_change"
+                vorher = x
+            beobachtet = [x for x in hist if x["epistemic"] not in nicht_kanonisch]
+            aus.append({"subject": hist[0]["subject"], "property": hist[0]["property"], "history": hist,
+                        "current": (beobachtet[-1] if beobachtet else hist[-1])})
+        return aus
+
+    def _ledger_history_sources(self, ein: dict, events: list[dict]) -> tuple[list[dict], dict[str, list[str]]]:
+        """Kleines Retrieval statt komplette Kampagnenhistorie im Prompt. Öffentliche Bibel + frühere Recaps werden
+        nur dann Quelle, wenn eine aktuell extrahierte Entität darin tatsächlich vorkommt."""
+        namen = []
+        for e in events:
+            for feld in ("actors", "targets", "objects", "locations", "factions"):
+                namen += [klartext(x) for x in e.get(feld) or [] if klartext(x)]
+            for a in e.get("assertions") or []:
+                if isinstance(a, dict) and klartext(a.get("subject")):
+                    namen.append(klartext(a["subject"]))
+        namen = list(dict.fromkeys(n for n in namen if len(n) >= 2))
+        sources, event_map = [], {}
+        hid = 1
+
+        def add(typ: str, text: str, meta: dict) -> str:
+            nonlocal hid
+            sid = f"H{hid:04d}"
+            hid += 1
+            sources.append({"historyId": sid, "type": typ, "text": text[:1200], **meta})
+            return sid
+
+        bibel_ids = {}
+        for b in ein.get("bibel") or []:
+            name = klartext(b.get("name"))
+            if not name:
+                continue
+            bibel_ids[name.casefold()] = add("bible", f"{name}: {b.get('zusammenfassung') or ''}",
+                                             {"entryId": b.get("id"), "name": name})
+        recap_sources = []
+        for h in ein.get("_historie") or []:
+            text = "\n".join([str(h.get("title") or ""), str(h.get("text") or ""),
+                              " ".join(h.get("openThreads") or [])])
+            if text.strip():
+                recap_sources.append((h, text))
+
+        for e in events:
+            et = self._ledger_event_text(e)
+            passende_namen = [n for n in namen if _erwaehnt(n, et)]
+            ids = []
+            for n in passende_namen:
+                if n.casefold() in bibel_ids:
+                    ids.append(bibel_ids[n.casefold()])
+            for h, ht in recap_sources:
+                treffer = [n for n in passende_namen if _erwaehnt(n, ht)]
+                if not treffer:
+                    continue
+                # Nur kurze lokale Ausschnitte um die erste passende Entität; der ganze alte Recap bleibt draußen.
+                klein = ht.casefold()
+                pos = min((klein.find(n.casefold()) for n in treffer if klein.find(n.casefold()) >= 0), default=-1)
+                snippet = ht[max(0, pos - 350):pos + 850] if pos >= 0 else ht[:1200]
+                ids.append(add("recap", snippet, {"session": h.get("session"), "title": h.get("title")}))
+            if ids:
+                event_map[e["eventId"]] = list(dict.fromkeys(ids))
+        return sources, event_map
+
+    def _ledger_history_links(self, ein: dict, events: list[dict], sources: list[dict],
+                              event_map: dict[str, list[str]]) -> list[dict]:
+        by_id = {x["historyId"]: x for x in sources}
+        relevant = [e for e in events if e["eventId"] in event_map]
+        aus = []
+        system = SYSTEM_LEDGER_HISTORY.replace("{sprache}", _sprache(ein))
+        for ab in range(0, len(relevant), LEDGER_RECONCILE_BATCH):
+            paket = relevant[ab:ab + LEDGER_RECONCILE_BATCH]
+            erlaubte_h = {hid for e in paket for hid in event_map.get(e["eventId"], [])}
+            hist = "\n".join(f"{hid} | {by_id[hid]['type']} | {by_id[hid]['text']}" for hid in sorted(erlaubte_h))
+            aktuell = "\n".join(
+                f"{e['eventId']} | {e['summary']} | epistemic={e.get('epistemic')} | modality={e.get('modality')}"
+                for e in paket)
+            try:
+                d = self.zaehler.aufruf(self.klient, system,
+                                         f"{_kopf(ein)}\n\nAKTUELLE EVENTS:\n{aktuell}\n\nHISTORISCHE QUELLEN:\n{hist}")
+            except SprachmodellFehler as e:
+                log.warning("Ledger-History-Abgleich übersprungen: %s", e)
+                continue
+            erlaubte_e = {e["eventId"] for e in paket}
+            for x in d.get("links") or []:
+                if not isinstance(x, dict) or x.get("eventId") not in erlaubte_e:
+                    continue
+                ids = [str(i) for i in x.get("historyIds") or [] if str(i) in erlaubte_h][:5]
+                relation = str(x.get("relation") or "none")
+                if relation == "none" or not ids:
+                    continue
+                aus.append({"eventId": x["eventId"], "relation": relation, "historyIds": ids,
+                            "reason": klartext(x.get("reason") or "")[:500]})
+        return aus
+
+    def ledger(self, ein: dict) -> dict:
+        """0.4.51 Schatten-Ledger. Liest immer das Originaltranskript, läuft in zwei gezielten Pässen und beeinflusst
+        weder Recap noch Bibelvorschläge. Historie wird erst NACH der aktuellen Extraktion selektiv hinzugenommen."""
+        zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
+        if not zeilen:
+            return {"version": 1, "state": "empty", "events": [], "states": [], "historySources": [], "historyLinks": []}
+        self._schritt("ledger")
+        roh = (self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
+               + self._ledger_pass(ein, SYSTEM_LEDGER_CONTINUITY, zeilen))
+        # Doppelte atomare Aussage aus beiden Pässen vereinigen, aber verschiedene Facetten derselben Source behalten.
+        gesehen, events = set(), []
+        for e in sorted(roh, key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", ""))):
+            key = (tuple(e.get("sourceIds") or []), _notizkern(e.get("summary") or ""))
+            if key in gesehen:
+                continue
+            gesehen.add(key)
+            e["eventId"] = f"E{len(events) + 1:04d}"
+            # vorhandene Bibel-ID nur deterministisch über Namensnennung anbinden
+            et = self._ledger_event_text(e)
+            e["linkedEntries"] = [b.get("id") for b in ein.get("bibel") or []
+                                  if b.get("id") and _erwaehnt(str(b.get("name") or ""), et)]
+            events.append(e)
+        states = self._ledger_states(events)
+        sources, event_map = self._ledger_history_sources(ein, events)
+        links = self._ledger_history_links(ein, events, sources, event_map) if sources else []
+        link_map: dict[str, list[dict]] = {}
+        for x in links:
+            link_map.setdefault(x["eventId"], []).append(x)
+        for e in events:
+            e["history"] = link_map.get(e["eventId"], [])
+        return {"version": 1, "state": "ok", "events": events, "states": states,
+                "historySources": sources, "historyLinks": links}
+
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
             z = f"- id={e['id']} [{e['typ']}] {e['name']}"
@@ -1672,6 +1968,13 @@ class Ablauf:
         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         fortschritt(0.8)
         v = self.vorschlaege(vorschlag_ein, titel, grundlage)
+        if self.ledger_shadow:
+            try:
+                self.letztes_ledger = self.ledger(recap_ein)
+            except SprachmodellFehler as e:
+                log.warning("Schatten-Ledger übersprungen: %s", e)
+                self.letztes_ledger = {"version": 1, "state": "failed", "error": str(e), "events": [], "states": [],
+                                       "historySources": [], "historyLinks": []}
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
                "tokensOut": self.zaehler.tokens_out}
