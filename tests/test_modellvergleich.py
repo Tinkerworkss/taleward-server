@@ -110,14 +110,14 @@ Grünkappen
                     vorschlaege=[{"title": "Pipo", "detail": "Wache", "gmNotes": None}])
     ein = {"transkript": [{"start": 0.0, "sprecher": "Spielleitung", "member_id": None, "text": "Zehn Tage Kerker. Pipo gibt euch sein Schwert."}]}
     aus = mv.pruefliste_anwenden(punkte, ein, e)
-    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel": True,
-                                   "Vorschläge": False}
+    assert aus[0]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel 2": None,
+                                   "Kapitel": True, "Vorschläge": False}
     assert aus[1]["vorkommen"]["Kapitel"] is False and aus[1]["vorkommen"]["Notizen"] is True  # im Kapitel verloren
-    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel": None,
-                                   "Vorschläge": True}
+    assert aus[2]["vorkommen"] == {"Transkript": True, "Notizen": True, "Teile": None, "Kapitel 1": None, "Kapitel 2": None,
+                                   "Kapitel": None, "Vorschläge": True}
     e.pruefliste = aus
     md = mv.pruefliste_md(e)
-    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
+    assert "| 2 | Pipo gibt sein Schwert | ✓ | ✓ | · | · | · | – | – |" in md and "*Kapitel: 1 von 2*" in md
     e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."  # erster Entwurf ohne Pipo → Ergänzung hat ihn gerettet
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False

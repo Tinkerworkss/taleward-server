@@ -463,14 +463,15 @@ def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
                     {"zeit": "0:00", "notiz": "Ein Drache greift an."}]}), 1, 1)
             if system.startswith("Du ergänzt den Recap"):
                 assert "Handfesseln" in nutzer and "Drache" not in nutzer  # nur belegte Punkte
+                assert "steht zwischen:" in nutzer  # Nachbarn gehen mit
                 return Antwort(json.dumps({"absaetze": [
-                    {"nr": 1, "text": "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln."},
+                    {"nr": 1, "text": "Die Gruppe ritt zum Ereignis. Jemand löste mit einem Dolch ihre Handfesseln."},
                     {"nr": 2, "text": "Kurz."}]}), 1, 1)  # Absatz 2 gekürzt → wird nicht übernommen
             if system.startswith("Du prüfst den Recap"):
                 return Antwort(json.dumps({"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": []},
                                                         {"nr": 2, "urteil": "belegt", "stellen": []}]}), 1, 1)
             if "Recap" in system:
-                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt.\n\nDann rasteten alle lange.",
+                return Antwort(json.dumps({"title": "Kapitel 1: X", "text": "Die Gruppe ritt zum Ereignis.\n\nDann rasteten alle lange.",
                                            "openThreads": []}), 1, 1)
             return Antwort(json.dumps({"proposals": []}), 1, 1)
 
@@ -478,12 +479,86 @@ def test_vollstaendigkeit_ergaenzt_genau_einmal_und_streicht_nichts():
     ablauf = Ablauf(k, max_transkript_tokens=3000, stueck_tokens=1500)
     ein = _ein(600)
     d = ablauf.ausfuehren(ein, ein, gegenpruefen=True)
-    assert ablauf.letztes_kapitel1 == "Die Gruppe ritt.\n\nDann rasteten alle lange."
-    assert d["text"] == "Die Gruppe ritt. Jemand löste mit einem Dolch ihre Handfesseln.\n\nDann rasteten alle lange."
-    assert [f["belegt"] for f in ablauf.letzter_befund_fehlend] == [True, False]
+    assert ablauf.letztes_kapitel1 == "Die Gruppe ritt zum Ereignis.\n\nDann rasteten alle lange."
+    assert d["text"] == "Die Gruppe ritt zum Ereignis. Jemand löste mit einem Dolch ihre Handfesseln.\n\nDann rasteten alle lange."
+    assert ablauf.letztes_kapitel2 == d["text"]
+    assert [(f["belegt"], f["ergaenzt"]) for f in ablauf.letzter_befund_fehlend] == [(True, True), (False, False)]
+    assert ablauf.letzter_befund_fehlend[0]["davor"].startswith("[") and ablauf.letzter_befund_fehlend[0]["wichtigkeit"] == "wichtig"
     assert sum(1 for s, _ in k.aufrufe if s.startswith("Du ergänzt")) == 1
     # Reihenfolge: Recap → Vollständigkeit → Ergänzung → Prüfung
     arten = [s.split(" ")[1] for s, _ in k.aufrufe if s.startswith("Du ")]
     assert arten[-3:] == ["vergleichst", "ergänzt", "prüfst"] or arten[-4:-1] == ["vergleichst", "ergänzt", "prüfst"]
     assert ablauf.letzte_pruefung_vorher and ablauf.letzte_pruefung_nachher == [] and d["review"]["revised"] is False
     assert "Wer gibt wem was" in [s for s, _ in k.aufrufe if s.startswith("Du prüfst")][0]
+
+
+def test_ergaenzung_nur_an_passender_stelle_und_nur_wichtige():
+    """Nachbarnotizen bestimmen den Absatz; passt kein Absatz, wird nicht ergänzt. Nebensächliches nie."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append((system, nutzer))
+            return Antwort(json.dumps({"absaetze": [
+                {"nr": 2, "text": "Dann rasteten alle lange. Pipo übergab sein Schwert Lostriana."}]}), 1, 1)
+
+    k = Klient()
+    ablauf = Ablauf(k)
+    ein = _ein(10)
+    text = "Die Gruppe kletterte aus dem Krater und fand Pipo verletzt.\n\nDann rasteten alle lange."
+    fehlend = [
+        {"zeit": 4299.0, "notiz": "Pipo gibt der Gruppe sein Schwert Lostriana.", "wichtigkeit": "kritisch", "belegt": True,
+         "davor": "[1:10:00] Orasilas verbindet Pipo im Krater.", "danach": "[1:13:05] Die Gruppe verlässt den Krater.",
+         "ergaenzt": False},
+        {"zeit": 100.0, "notiz": "Arlekin schläft im Heubett.", "wichtigkeit": "nebensächlich", "belegt": True,
+         "davor": "", "danach": "", "ergaenzt": False}]
+    # Absatz 2 („rasteten“) erzählt die Nachbarn (Krater, Pipo) nicht → Ergänzung an falscher Stelle wird verworfen
+    assert ablauf.ergaenzen(ein, text, fehlend) is None
+    assert "Heubett" not in k.nutzer[0][1] and "Lostriana" in k.nutzer[0][1]  # Nebensächliches geht nicht mit
+    assert fehlend[0]["ergaenzt"] is False
+    # richtiger Absatz → übernommen
+    k.chat = lambda system, nutzer: Antwort(json.dumps({"absaetze": [
+        {"nr": 1, "text": "Die Gruppe kletterte aus dem Krater und fand Pipo verletzt. Pipo übergab ihnen sein Schwert Lostriana."}]}), 1, 1)
+    neu = ablauf.ergaenzen(ein, text, fehlend)
+    assert neu.startswith("Die Gruppe kletterte") and "Lostriana" in neu and fehlend[0]["ergaenzt"] is True
+    # nur Nebensächliches → kein Aufruf
+    assert ablauf.ergaenzen(ein, text, fehlend[1:]) is None
+
+
+def test_relationen_gegen_transkript():
+    """Die Relationsprüfung sieht nur Transkriptausschnitte um die belegten Stellen; „widerspricht“ schlägt „belegt“."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append(nutzer)
+            return Antwort(json.dumps({"absaetze": [
+                {"nr": 1, "urteil": "widerspricht", "begruendung": "Pipo gibt der Gruppe das Schwert, nicht umgekehrt.",
+                 "zitat": "nehmt mein Schwert"},
+                {"nr": 2, "urteil": "stimmt"}]}), 1, 1)
+
+    ein = _ein(400)  # 400 Zeilen à 20 s
+    ein["transkript"][215]["text"] = "Senke dein Schwert, Pipo. Nehmt mein Schwert, sagt Pipo."  # bei 1:11:40
+    text = "Orasilas gab Pipo sein Schwert.\n\nDann rasteten alle lange."
+    befund = [{"index": 0, "verdict": "supported", "note": None, "evidence": [{"start": 4300.0, "quote": "Schwert"}]},
+              {"index": 1, "verdict": "supported", "note": None, "evidence": [{"start": 7000.0, "quote": "rasten"}]}]
+    k = Klient()
+    aus = Ablauf(k).relationen(ein, text, befund)
+    nutzer = k.nutzer[0]
+    assert "Senke dein Schwert, Pipo" in nutzer and "Satz 100 " not in nutzer  # nur ± 60 s um 1:11:40 und 1:56:40
+    assert "Satz 214 " in nutzer and "Satz 218 " in nutzer and "Satz 230 " not in nutzer
+    assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"] and aus[1]["urteil"] == "stimmt"
+    assert befund[0]["verdict"] == "contradicted" and befund[0]["note"].startswith("Transkript: Pipo gibt")
+    assert befund[1]["verdict"] == "supported"
+    # ohne belegte Stellen: kein Aufruf
+    assert Ablauf(k).relationen(ein, text, [{"index": 0, "verdict": "supported", "note": None, "evidence": []}]) == []

@@ -467,6 +467,9 @@ wer wem etwas gibt, verspricht oder schuldet, welche Abmachungen mit welchen Bed
 Anführungszeichen.
 - Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
 Fragen.
+- Auch Nebensätze mit Folgen: der Tod einer Nebenfigur („der ist tot“), bestehende Beziehungen („wir kennen uns, seit \
+…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Lostriana“ statt \
+„ein Schwert“ – mit dem Namen, der gesagt wird), und bei mehreren Personen in einer Szene, wer genau was tut.
 Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
 nicht getan.
 Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über seine Dauer verteilt – bis zur letzten \
@@ -564,24 +567,47 @@ Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "stellen": [{"ze
 SYSTEM_VOLLSTAENDIGKEIT = """Du vergleichst den Recap einer Pen-&-Paper-Session mit seiner Grundlage (Szenennotizen \
 oder Transkript, Zeitangaben vorn in eckigen Klammern). Du bewertest nicht, ob der Recap richtig ist – du suchst nur, \
 was FEHLT: wichtige Ereignisse der Grundlage, die im Recap nicht vorkommen.
-Wichtig ist ein Ereignis, wenn es die Lage ändert: Zustand einer Figur (verletzt, gerettet, gefangen, befreit, tot), \
-Besitz (wer gibt wem was), Versprechen, Schulden und Abmachungen, Wissen (eine entscheidende Information, eine \
-Vision oder Botschaft), Ziel oder Auftrag der Gruppe, Beziehung zwischen Figuren, das erste Auftreten einer wichtigen \
-Figur oder eines Ortes. Kleinigkeiten (Essen, Wege, Smalltalk) zählen nicht.
+Der einzige Maßstab: Würde das Weglassen einem Spieler vor der nächsten Runde Wissen nehmen über die Lage, den \
+Zustand einer Figur (verletzt, gerettet, gefangen, befreit, tot), eine Beziehung, einen Besitz (wer gibt wem was), ein \
+Ziel oder einen Auftrag, eine Verpflichtung (Versprechen, Schuld, Abmachung) oder eine offene Handlungsmöglichkeit? \
+Nur dann ist ein Ereignis wichtig. Ausdrücklich nicht wichtig, solange daraus kein bleibender Zustand entsteht: \
+Schlafplätze, Essen und Trinken, Regeln und Würfe, kleine Segnungen ohne Folge, einzelne gescheiterte Versuche, \
+Beschreibungen ohne Folgen, Witze, Smalltalk, Nebenhandlungen ohne spätere Bedeutung.
+Rang je Ereignis: "kritisch" (Wendepunkt, Tod, Rettung, Abmachung, entscheidende Information), "wichtig" (ändert \
+Zustand, Besitz, Beziehung oder Ziel), "nebensächlich" (alles andere – nur nennen, wenn sonst nichts fehlt).
 Höchstens {hoechstens} fehlende Ereignisse, die wichtigsten zuerst. Jedes mit dem Zeitstempel der Grundlage genau so, \
 wie er dort steht, und der Notiz wörtlich oder fast wörtlich – nichts umformulieren, nichts hinzufügen, nichts \
 erfinden. Fehlt nichts Wichtiges, antworte mit einer leeren Liste.
-Antworte nur mit JSON: {"fehlend": [{"zeit": "m:ss", "notiz": "…"}]}. Sprache: {sprache}."""
+Antworte nur mit JSON: {"fehlend": [{"zeit": "m:ss", "wichtigkeit": "kritisch", "notiz": "…"}]}. Sprache: {sprache}."""
 
 SYSTEM_ERGAENZUNG = """Du ergänzt den Recap einer Pen-&-Paper-Session um Ereignisse, die eine Prüfung als fehlend \
-erkannt hat. Jedes fehlende Ereignis steht mit Zeitstempel und Notiz da; die Absätze des Recaps sind nummeriert.
-Füge jedes Ereignis an der zeitlich passenden Stelle in den passenden Absatz ein – ein bis zwei Sätze, im Ton des \
-Recaps, Erzählstimme in der Vergangenheit, Figuren nach ihren Charakteren, die Spielleitung ist keine Figur. Streiche \
-nichts, kürze nichts, ändere keine vorhandenen Aussagen, erfinde nichts über die Notiz hinaus. Gib nur die Absätze \
-zurück, die du geändert hast, jeweils vollständig. Reiner Text ohne Markdown.
+erkannt hat. Jedes fehlende Ereignis steht mit Zeitstempel und Notiz da, dazu die Ereignisse unmittelbar davor und \
+danach („steht zwischen … und …“); die Absätze des Recaps sind nummeriert.
+Füge jedes Ereignis genau in den Absatz ein, der die Ereignisse davor oder danach erzählt, an der Stelle dazwischen – \
+ein bis zwei Sätze, im Ton des Recaps, Erzählstimme in der Vergangenheit, Figuren nach ihren Charakteren, die \
+Spielleitung ist keine Figur. Erzählt kein Absatz die Nachbarn, lass das Ereignis weg. Streiche nichts, kürze nichts, \
+ändere keine vorhandenen Aussagen, erfinde nichts über die Notiz hinaus. Gib nur die Absätze zurück, die du geändert \
+hast, jeweils vollständig. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
+ERGAENZEN_RAENGE = ("kritisch", "wichtig")  # nur diese Ränge werden ergänzt
+RELATION_FENSTER_S = 60.0  # Transkript ± so viele Sekunden um die belegten Stellen eines Absatzes
+RELATION_ZEICHEN = 6000  # höchstens so viel Transkript je Absatz
+
+SYSTEM_RELATIONEN = """Du prüfst einzelne Absätze des Recaps einer Pen-&-Paper-Session gegen kurze Ausschnitte des \
+ORIGINALTRANSKRIPTS (automatisch erkannt, mit Fehlern; der Sprecher „Spielleitung“ spricht für Nichtspielercharaktere). \
+Es geht nur um Beziehungen, nicht um Vollständigkeit oder Stil:
+- Wer tut was wem? Wer gibt wem was, und wer hat es danach? War jemand schon verletzt, oder wird er es erst durch die \
+erzählte Handlung? Wer verspricht wem was, gegen welche Gegenleistung? Wer kennt wen, seit wann, wer bürgt für wen? \
+Ist eine Figur in der Szene anwesend oder wird nur über sie gesprochen? Sind zwei Figuren verwechselt oder zu einer \
+verschmolzen? Ist etwas beobachtet, behauptet, vermutet, geplant, erinnert oder eine Vision?
+Für jeden Absatz: urteil "stimmt" (alle Beziehungen wie im Transkript), "widerspricht" (mindestens eine Beziehung ist \
+im Transkript anders: Richtung vertauscht, Zustand umgedreht, Figuren verwechselt, Vermutung als Tatsache, Erwähnte \
+als Anwesende) oder "unklar" (der Ausschnitt reicht nicht). Bei "widerspricht": begruendung mit der richtigen \
+Beziehung in einem Satz und einem kurzen wörtlichen Zitat aus dem Transkript.
+Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "begruendung": "…", "zitat": "…"}]}. \
+Sprache: {sprache}."""
 
 SYSTEM_NACHBESSERUNG = """Du überarbeitest einzelne Absätze des Recaps einer Pen-&-Paper-Session. Eine Prüfung hat \
 sie beanstandet; der Grund steht jeweils dabei.
@@ -613,7 +639,8 @@ def fehlend_lesen(d: dict, grundlage: str) -> list[dict]:
     """Antwort der Vollständigkeitsprüfung → [{zeit, notiz, belegt}]. belegt: Es gibt in der Grundlage eine Zeile mit
     diesem Zeitstempel, deren Text zur Notiz passt, oder eine Zeile, die den Notiztext enthält. Nur belegte Punkte
     dürfen ergänzt werden – der Prüfer darf keine neue Wahrheit erzeugen."""
-    zeilen = [(_zeit_vorn(z), _notizkern(z)) for z in grundlage.split("\n") if z.strip()]
+    roh = [z.strip() for z in grundlage.split("\n") if z.strip() and _zeit_vorn(z) is not None]  # nur Notizen mit Zeit
+    zeilen = [(_zeit_vorn(z), _notizkern(z), z) for z in roh]
     aus = []
     for f in d.get("fehlend") or d.get("missing") or []:
         if len(aus) >= FEHLEND_HOECHSTENS:
@@ -624,22 +651,38 @@ def fehlend_lesen(d: dict, grundlage: str) -> list[dict]:
         notiz = klartext(f.get("notiz") or f.get("note") or "")[:400]
         if not notiz:
             continue
+        rang = RAENGE.get(str(f.get("wichtigkeit") or f.get("importance") or "").strip().lower(), "wichtig")
         kern = _notizkern(notiz)
         woerter = set(kern.split())
-        belegt = False
-        for zt, zk in zeilen:
+        treffer = None
+        for i, (zt, zk, _z) in enumerate(zeilen):
             if not zk:
                 continue
             if kern and (kern in zk or zk in kern):
-                belegt = True
+                treffer = i
                 break
             if zeit is not None and zt is not None and abs(zt - zeit) < 1 and woerter:
                 gemeinsam = len(woerter & set(zk.split())) / len(woerter)
                 if gemeinsam >= 0.6:
-                    belegt = True
+                    treffer = i
                     break
-        aus.append({"zeit": zeit, "notiz": notiz, "belegt": belegt})
+        davor = zeilen[treffer - 1][2] if treffer is not None and treffer > 0 else ""
+        danach = zeilen[treffer + 1][2] if treffer is not None and treffer + 1 < len(zeilen) else ""
+        aus.append({"zeit": zeit, "notiz": notiz, "wichtigkeit": rang, "belegt": treffer is not None,
+                    "davor": davor[:300], "danach": danach[:300], "ergaenzt": False})
     return aus
+
+
+RAENGE = {"kritisch": "kritisch", "critical": "kritisch", "wichtig": "wichtig", "major": "wichtig",
+          "nebensächlich": "nebensächlich", "nebensaechlich": "nebensächlich", "minor": "nebensächlich"}
+_FUELL = {"nicht", "einer", "einem", "einen", "eines", "gruppe", "wurde", "wurden", "werden", "haben", "hatte",
+          "hatten", "sowie", "dieser", "diese", "dieses", "seine", "seinen", "ihrer", "ihren", "durch", "während",
+          "nachdem", "bevor", "danach", "dabei", "wieder", "sagte", "fragt", "fragte", "spielleitung", "charakter"}
+
+
+def _kennwoerter(text: str) -> set[str]:
+    """Kennzeichnende Wörter eines Textes (ab sechs Buchstaben, ohne Füllwörter) – zum Wiederfinden einer Stelle."""
+    return {w for w in _notizkern(text).split() if len(w) >= 6 and w not in _FUELL}
 
 
 def absaetze(text: str) -> list[str]:
@@ -928,6 +971,9 @@ class Ablauf:
     letzter_befund_fehlend: list = field(default_factory=list)  # Befund der Vollständigkeitsprüfung
     letzte_pruefung_vorher: list = field(default_factory=list)  # Fakten-/Relationsprüfung vor der Nachbesserung
     letzte_pruefung_nachher: list = field(default_factory=list)  # … und danach (leer, wenn nicht nachgebessert)
+    letztes_kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
+    letzte_relationen_vorher: list = field(default_factory=list)  # Relationsprüfung gegen das Transkript
+    letzte_relationen_nachher: list = field(default_factory=list)
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1102,11 +1148,18 @@ class Ablauf:
     def ergaenzen(self, ein: dict, text: str, fehlend: list[dict]) -> str | None:
         """Genau eine Ergänzung um belegte fehlende Ereignisse. Nur geänderte Absätze kommen zurück; ein Absatz wird
         nur übernommen, wenn er nicht kürzer geworden ist (die Anweisung lautet: nichts streichen)."""
-        punkte = [f for f in fehlend if f.get("belegt")]
+        punkte = [f for f in fehlend if f.get("belegt") and f.get("wichtigkeit", "wichtig") in ERGAENZEN_RAENGE]
         if not punkte:
             return None
         teile = absaetze(text)
-        liste = "\n".join(f"- [{_zeit(f['zeit']) if f.get('zeit') is not None else '?'}] {f['notiz']}" for f in punkte)
+
+        def zeile(f: dict) -> str:
+            z = f"- [{_zeit(f['zeit']) if f.get('zeit') is not None else '?'}] {f['notiz']}"
+            if f.get("davor") or f.get("danach"):
+                z += f"\n  (steht zwischen: {f.get('davor') or '(Anfang)'} – und – {f.get('danach') or '(Ende)'})"
+            return z
+
+        liste = "\n".join(zeile(f) for f in punkte)
         nummeriert = "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))
         nutzer = f"{_kopf(ein)}\n\nFehlende Ereignisse:\n{liste}\n\nRecap, Absatz für Absatz:\n{nummeriert}"
         self._schritt("revision")
@@ -1118,11 +1171,71 @@ class Ablauf:
             except (TypeError, ValueError, AttributeError):
                 continue
             t = klartext(a.get("text")) if isinstance(a.get("text"), str) else ""
-            if 1 <= nr <= len(teile) and len(t) >= len(teile[nr - 1]):
+            if not (1 <= nr <= len(teile)) or len(t) < len(teile[nr - 1]):
+                continue  # gekürzt oder unbekannter Absatz
+            alt = _kennwoerter(teile[nr - 1])
+            # Deterministische Absicherung: Der alte Absatz muss die Nachbarn eines eingefügten Ereignisses erzählen,
+            # und der neue Text muss das Ereignis enthalten – sonst stünde es an der falschen Stelle.
+            passend = False
+            for f in punkte:
+                nachbarn = _kennwoerter(f.get("davor", "")) | _kennwoerter(f.get("danach", ""))
+                if nachbarn and not (nachbarn & alt):
+                    continue
+                if _kennwoerter(f["notiz"]) & (_kennwoerter(t) - alt):
+                    f["ergaenzt"], passend = True, True
+            if passend:
                 neu[nr - 1] = t
         if not neu:
             return None
         return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
+
+    def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
+        """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die
+        Gegenprüfung belegt hat. Szenennotizen können selbst schon falsch sein; das Transkript nicht. Liefert je
+        Absatz {index, urteil, begruendung, zitat, fenster} und setzt im Befund "contradicted", wo es widerspricht."""
+        zeilen = [(_zeit_vorn(z), z) for z in transkript_zeilen(ein.get("transkript") or [])]
+        zeilen = [(t, z) for t, z in zeilen if t is not None]
+        teile = absaetze(text)
+        bloecke, fenster = [], {}
+        for b in befund:
+            i = b.get("index", -1)
+            zeiten = sorted({e["start"] for e in b.get("evidence") or [] if e.get("start") is not None})[:3]
+            if not (0 <= i < len(teile)) or not zeiten:
+                continue
+            spans = [z for t, z in zeilen if any(abs(t - zt) <= RELATION_FENSTER_S for zt in zeiten)]
+            text_spans = "\n".join(spans)[:RELATION_ZEICHEN]
+            if not text_spans.strip():
+                continue
+            fenster[i] = [_zeit(zt) for zt in zeiten]
+            bloecke.append(f"Absatz {i + 1}:\n{teile[i]}\n\nTranskript dazu ({', '.join(fenster[i])}):\n{text_spans}")
+        if not bloecke:
+            return []
+        self._schritt("review")
+        d = self.zaehler.aufruf(self.klient, SYSTEM_RELATIONEN.replace("{sprache}", _sprache(ein)),
+                                f"{_kopf(ein)}\n\n" + "\n\n---\n\n".join(bloecke))
+        aus = []
+        for a in d.get("absaetze") or d.get("paragraphs") or []:
+            if not isinstance(a, dict):
+                continue
+            try:
+                nr = int(a.get("nr") or a.get("index") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= nr <= len(teile)) or (nr - 1) not in fenster:
+                continue
+            urteil = str(a.get("urteil") or a.get("verdict") or "").strip().lower()
+            urteil = {"stimmt": "stimmt", "ok": "stimmt", "supported": "stimmt", "widerspricht": "widerspricht",
+                      "contradicted": "widerspricht", "contradiction": "widerspricht"}.get(urteil, "unklar")
+            eintrag = {"index": nr - 1, "urteil": urteil, "begruendung": klartext(a.get("begruendung") or "")[:400],
+                       "zitat": klartext(a.get("zitat") or "")[:300], "fenster": fenster[nr - 1]}
+            aus.append(eintrag)
+            if urteil == "widerspricht":
+                for b in befund:
+                    if b.get("index") == nr - 1:
+                        b["verdict"] = "contradicted"
+                        b["note"] = ("Transkript: " + (eintrag["begruendung"] or "Beziehung anders als im Recap")
+                                     + (f" („{eintrag['zitat']}“)" if eintrag["zitat"] else ""))[:600]
+        return aus
 
     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
         """Gegenprüfung (Stufe 3): jeden Absatz gegen die Grundlage bewerten – ein eigener Aufruf, der den Recap
@@ -1165,7 +1278,9 @@ class Ablauf:
         try:
             self._schritt("review")
             befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
+            self.letzte_relationen_vorher = self.relationen(ein, r["text"], befund)
             self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
+            self.letzte_relationen_nachher = []
             if any(b["verdict"] in BEANSTANDET for b in befund):
                 self._schritt("revision")
                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
@@ -1173,6 +1288,7 @@ class Ablauf:
                     r["text"], pruefung["revised"] = neu, True
                     self._schritt("review")
                     befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
+                    self.letzte_relationen_nachher = self.relationen(ein, neu, befund)
                     self.letzte_pruefung_nachher = befund
             pruefung["paragraphs"] = befund
         except SprachmodellFehler as e:
@@ -1238,6 +1354,7 @@ class Ablauf:
                 r["text"] = neu
         except SprachmodellFehler as e:
             log.warning("Vollständigkeitsprüfung übersprungen: %s", e)
+        self.letztes_kapitel2 = r["text"]
         fortschritt(0.6 if gegenpruefen else 0.8)
         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         fortschritt(0.8)
