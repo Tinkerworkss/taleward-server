@@ -1806,13 +1806,14 @@ class Ablauf:
             sources.append({"historyId": sid, "type": typ, "text": text[:1200], **meta})
             return sid
 
-        bibel_ids = {}
+        # Bibelquellen erst dann materialisieren, wenn ein aktuelles Event die Entität wirklich nennt.
+        # So bleibt auch ledger.json bei großen Kampagnen klein.
+        bibel_nach_name = {}
         for b in ein.get("bibel") or []:
             name = klartext(b.get("name"))
-            if not name:
-                continue
-            bibel_ids[name.casefold()] = add("bible", f"{name}: {b.get('zusammenfassung') or ''}",
-                                             {"entryId": b.get("id"), "name": name})
+            if name:
+                bibel_nach_name[name.casefold()] = (name, b)
+        bibel_ids = {}
         recap_sources = []
         for h in ein.get("_historie") or []:
             text = "\n".join([str(h.get("title") or ""), str(h.get("text") or ""),
@@ -1825,8 +1826,13 @@ class Ablauf:
             passende_namen = [n for n in namen if _erwaehnt(n, et)]
             ids = []
             for n in passende_namen:
-                if n.casefold() in bibel_ids:
-                    ids.append(bibel_ids[n.casefold()])
+                key = n.casefold()
+                if key in bibel_nach_name and key not in bibel_ids:
+                    name, b = bibel_nach_name[key]
+                    bibel_ids[key] = add("bible", f"{name}: {b.get('zusammenfassung') or ''}",
+                                         {"entryId": b.get("id"), "name": name})
+                if key in bibel_ids:
+                    ids.append(bibel_ids[key])
             for h, ht in recap_sources:
                 treffer = [n for n in passende_namen if _erwaehnt(n, ht)]
                 if not treffer:
@@ -1891,7 +1897,8 @@ class Ablauf:
             # vorhandene Bibel-ID nur deterministisch über Namensnennung anbinden
             et = self._ledger_event_text(e)
             e["linkedEntries"] = [b.get("id") for b in ein.get("bibel") or []
-                                  if b.get("id") and _erwaehnt(str(b.get("name") or ""), et)]
+                                  if b.get("id") and klartext(b.get("name"))
+                                  and _erwaehnt(klartext(b.get("name")), et)]
             events.append(e)
         states = self._ledger_states(events)
         sources, event_map = self._ledger_history_sources(ein, events)
