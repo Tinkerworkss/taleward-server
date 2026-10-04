@@ -1835,7 +1835,7 @@ class Ablauf:
 
         ersetzt: dict[str, dict | None] = {}
         diag = {"state": "ok", "candidates": len(kandidaten), "accepted": 0, "repaired": 0,
-                "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageAdded": 0}
+                "merged": 0, "rejected": 0, "reviewErrors": 0, "coverageAdded": 0, "actions": []}
         system = SYSTEM_LEDGER_REVIEW.replace("{sprache}", _sprache(ein))
 
         def pruefen(batch: list[dict], chunk_nr: int, suffix: str = "") -> None:
@@ -1892,6 +1892,13 @@ class Ablauf:
                     # Genau einmal anhängen: unter der ersten Origin-ID liegt der Ersatz, die übrigen sind Tombstones.
                     ersetzt[origin[0]] = replacement
                 diag[{"repair": "repaired", "merge": "merged", "reject": "rejected"}[verdict]] += 1
+                diag["actions"].append({
+                    "verdict": verdict, "originIds": origin,
+                    "reason": klartext(r.get("reason") or "")[:500],
+                    "replacement": ({"sourceIds": replacement.get("sourceIds") or [],
+                                     "summary": replacement.get("summary") or ""}
+                                    if replacement is not None else None),
+                })
 
         for chunk_nr, gruppe in sorted(gruppen.items()):
             for ab in range(0, len(gruppe), LEDGER_REVIEW_BATCH):
@@ -1948,6 +1955,10 @@ class Ablauf:
                     continue
                 neu.append(event)
                 diag["coverageAdded"] += 1
+                diag.setdefault("actions", []).append({
+                    "verdict": "coverage_added", "originIds": [], "reason": "fehlte nach Review",
+                    "replacement": {"sourceIds": event.get("sourceIds") or [], "summary": event.get("summary") or ""},
+                })
         return events + neu
 
     @staticmethod
@@ -2125,8 +2136,9 @@ class Ablauf:
             link_map.setdefault(x["eventId"], []).append(x)
         for e in events:
             e["history"] = link_map.get(e["eventId"], [])
-        return {"version": 2, "state": "ok", "rawCandidates": len(kandidaten), "events": events, "states": states,
-                "historySources": sources, "historyLinks": links, "review": review}
+        return {"version": 2, "state": "ok", "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
+                "events": events, "states": states, "historySources": sources, "historyLinks": links,
+                "review": review}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
         def eintrag(e: dict) -> str:
