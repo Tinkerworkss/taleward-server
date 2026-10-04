@@ -882,6 +882,7 @@ def _ledger_event(source_ids, summary, *, subject="Alrik", value="alive", episte
         "epistemic": epistemic,
         "modality": "actual",
         "importance": "critical",
+        "relevance": {"recap": True, "openThread": False, "bible": True},
         "tags": [],
     }
 
@@ -1014,6 +1015,7 @@ def test_ledger_review_kann_widerspruechliche_kandidaten_mergen_und_richtung_rep
         "epistemic": "observed",
         "modality": "actual",
         "importance": "critical",
+        "relevance": {"recap": True, "openThread": False, "bible": True},
         "tags": [],
     }
 
@@ -1096,42 +1098,44 @@ def test_ledger_054_hat_keinen_zweiten_extraktions_oder_separaten_coverage_pass(
     assert not any(s.startswith("Du suchst im ORIGINALTRANSKRIPT") for s in k.systeme)
 
 
-def test_ledger_054_anchor_quarantaenisiert_verknuepfte_falsche_relation_und_ersetzt_sie():
-    """Ein kanonischer Anchor darf eine verknüpfte, widersprechende Relation ersetzen – ohne systemspezifische Regel."""
+def test_ledger_055_anchor_ist_nur_pruefhinweis_und_ueberschreibt_nichts_lokal():
+    """0.4.55: Ein widersprechender Anchor darf ohne Micro-Review niemals selbst zur Wahrheit werden."""
     from app.sprachmodell import Ablauf, transkript_zeilen_mit_ids
 
     ein = _ein(1)
-    ein["transkript"][0]["text"] = "Die Besitzerin übergibt das Artefakt an die Gruppe."
     zeilen = transkript_zeilen_mit_ids(ein["transkript"])
-    falsch = _ledger_event(["L0001"], "Das Artefakt bleibt bei der Besitzerin.", subject="Artefakt",
-                            value="bei der Besitzerin", epistemic="observed")
-    falsch["assertions"][0]["property"] = "possession"
-    falsch["_review"] = {"verdict": "accepted", "originIds": ["C0001"], "reason": ""}
+    event = _ledger_event(["L0001"], "Das Artefakt bleibt bei der Besitzerin.", subject="Artefakt",
+                           value="bei der Besitzerin", epistemic="observed")
+    event["assertions"][0]["property"] = "possession"
+    event["_review"] = {"verdict": "accepted", "originIds": ["C0001"], "reason": ""}
     anchor = {"originIds": ["C0001"], "sourceIds": ["L0001"], "subject": "Artefakt", "property": "possession",
               "value": "bei der Gruppe", "epistemic": "observed", "certainty": "high", "importance": "critical",
               "chunk": 0}
-    events, diag = Ablauf.__new__(Ablauf)._ledger_integrity([falsch], [anchor], zeilen)
-    assert len(events) == 1
-    assert events[0]["assertions"][0]["value"] == "bei der Gruppe"
-    assert events[0]["extractionPass"] == "integrity_anchor"
-    assert diag["anchorConflicts"] == 1 and diag["anchorAdded"] == 1
+    events, diag = Ablauf.__new__(Ablauf)._ledger_integrity([event], [anchor], zeilen)
+    assert events[0]["assertions"][0]["value"] == "bei der Besitzerin"
+    assert diag["anchorAdded"] == 0 and diag["anchorConflicts"] == 1
 
 
-def test_ledger_054_tischrolle_wird_nicht_weltentitaet():
-    """Spielleitung/Game Master ist eine strukturelle Tischrolle, kein systemspezifischer NPC."""
+def test_ledger_055_tischrolle_wird_sanitized_wenn_weltfakt_erhalten_bleibt():
+    """Spielleitung/Game Master verschwindet als Entity, ein unabhängiger belegter Weltfakt bleibt erhalten."""
     from app.sprachmodell import Ablauf, transkript_zeilen_mit_ids
 
     ein = _ein(1)
     zeilen = transkript_zeilen_mit_ids(ein["transkript"])
-    e = _ledger_event(["L0001"], "Die Spielleitung übergibt den Schlüssel.")
-    e["actors"] = ["Spielleitung"]
+    e = _ledger_event(["L0001"], "Spielleitung (Wachmann) bringt die Mahlzeit.", subject="Wachmann",
+                       value="Bringer der Mahlzeit")
+    e["assertions"][0]["property"] = "role_status"
+    e["actors"] = ["Spielleitung (Wachmann)"]
     e["_review"] = {"verdict": "accepted", "originIds": ["C0001"], "reason": ""}
     events, diag = Ablauf.__new__(Ablauf)._ledger_integrity([e], [], zeilen)
-    assert events == []
-    assert diag["metaRejected"] == 1
+    assert len(events) == 1 and events[0]["actors"] == []
+    assert "Spielleitung" not in events[0]["summary"]
+    assert events[0]["assertions"][0]["subject"] == "Wachmann"
+    assert "table_role_sanitized" in events[0]["tags"]
+    assert diag["metaSanitized"] == 1 and diag["metaRejected"] == 0
 
 
-def test_ledger_054_encounter_fragmente_werden_systemagnostisch_verbunden():
+def test_ledger_055_encounter_fragmente_werden_systemagnostisch_verbunden():
     from app.sprachmodell import Ablauf
 
     fragmente = [
@@ -1154,6 +1158,65 @@ def test_ledger_054_encounter_fragmente_werden_systemagnostisch_verbunden():
     assert len(encounters[0]["phases"]) == 3
     assert encounters[0]["participants"] == ["Team", "Wachen"]
     assert encounters[0]["outcomes"][0]["text"] == "Die Zielperson wird befreit."
+
+
+def test_ledger_055_irrelevantes_event_faellt_schon_beim_normalisieren_weg():
+    from app.sprachmodell import Ablauf
+
+    e = _ledger_event(["L0001"], "Belanglose Routine.")
+    e["relevance"] = {"recap": False, "openThread": False, "bible": False}
+    assert Ablauf.__new__(Ablauf)._ledger_event_normalisieren(e, {"L0001"}, {"L0001": "[0:00] X: Routine"}) is None
+
+
+def test_ledger_055_anchor_microreview_nutzt_gespraechsrolle_bei_falschem_speakerlabel():
+    """Goldfall Kano: Frage nach NPC-Zustand + unmittelbare autoritative Antwort trotz falschem Diarisierungslabel."""
+    from app.sprachmodell import Ablauf, Antwort, transkript_zeilen_mit_ids
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            assert system.startswith("Du löst NUR wenige strittige")
+            assert "Was tut der Kano?" in nutzer and "Der ist tot." in nutzer
+            event = _ledger_event(["L0001", "L0002"], "Kano ist tot.", subject="Kano",
+                                  value="dead", epistemic="observed")
+            event["tags"] = ["speaker_conflict"]
+            return Antwort(json.dumps({"resolutions": [{
+                "anchorId": "A0001", "verdict": "confirmed", "event": event,
+                "reason": "Die unmittelbare Antwort hat die Gesprächsrolle einer autoritativen Weltantwort."
+            }]}), 1, 1)
+
+    ein = _ein(2)
+    ein["transkript"][0]["sprecher"] = "Lysander"
+    ein["transkript"][0]["text"] = "Ich gucke nach Kano. Was tut der Kano?"
+    ein["transkript"][1]["sprecher"] = "Orasilas"  # absichtlich falsches Whisper-Speakerlabel
+    ein["transkript"][1]["text"] = "Der ist tot."
+    zeilen = transkript_zeilen_mit_ids(ein["transkript"])
+    anchor = {"originIds": [], "sourceIds": ["L0002"], "subject": "Kano", "property": "life_status",
+              "value": "dead", "epistemic": "observed", "certainty": "high", "importance": "critical", "chunk": 0}
+    events, diag = Ablauf(Klient())._ledger_anchor_resolve(ein, [], [anchor], zeilen)
+    assert len(events) == 1
+    assert events[0]["assertions"][0]["subject"] == "Kano"
+    assert events[0]["assertions"][0]["value"] == "dead"
+    assert "speaker_conflict" in events[0]["tags"]
+    assert diag["calls"] == 1 and diag["confirmed"] == 1 and diag["added"] == 1
+
+
+def test_ledger_055_gleiche_teilnehmer_allein_verbinden_keine_encounters():
+    from app.sprachmodell import Ablauf
+
+    fragmente = [
+        {"chunk": 1, "sourceIds": ["L0100"], "kind": "conflict", "boundary": "middle",
+         "participants": ["Gruppe", "Wachen"], "locations": ["Hof"], "objectives": ["Gefangenen befreien"],
+         "domains": [], "summary": "Die Gruppe kämpft um den Gefangenen.", "turningPoints": ["Tor fällt."],
+         "outcomes": [], "consequences": [], "unresolved": []},
+        {"chunk": 2, "sourceIds": ["L0150"], "kind": "conflict", "boundary": "middle",
+         "participants": ["Gruppe", "Wachen"], "locations": ["Hof"], "objectives": ["Archiv durchsuchen"],
+         "domains": [], "summary": "Später streitet die Gruppe um das Archiv.", "turningPoints": ["Alarm ertönt."],
+         "outcomes": [], "consequences": [], "unresolved": []},
+    ]
+    encounters = Ablauf._ledger_encounters(fragmente)
+    assert len(encounters) == 2
 
 
 def test_ledger_bibelhistorie_nicht_mehr_nur_wegen_gleichem_namen():
