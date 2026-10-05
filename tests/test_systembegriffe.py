@@ -77,7 +77,7 @@ def test_stufe_b_bleibt_aus_dem_normalen_whisper_prompt():
 
     hotwords = namenshilfe.systembegriffe("dsa")
     assert "Aventurien" in hotwords
-    assert "Borbarad" not in hotwords
+    assert "Zornbold" not in hotwords
     assert "Fex => Phex" not in hotwords
 
 
