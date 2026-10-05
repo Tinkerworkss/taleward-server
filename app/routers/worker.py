@@ -309,12 +309,20 @@ def result(jobId: str, body: ResultIn, worker: Worker = Depends(current_worker),
 
 
 def _terminologie_regeln(db: Session, s: GameSession):
-    """Korrekturregeln einmal pro Ergebnis bauen; fuzzy Ersetzungen sind absichtlich ausgeschlossen."""
+    """Den beim Einreihen eingefrorenen Regelstand nutzen; alte Sessions fallen auf den aktuellen Stand zurück."""
     from app import namenshilfe, terminologie
 
     campaign = db.get(Campaign, s.campaign_id)
-    kanonisch = namenshilfe.anzeige(db, campaign) if campaign is not None else []
-    return campaign, terminologie.regeln(campaign, kanonisch) if campaign is not None else []
+    if campaign is None:
+        return None, []
+    try:
+        snap = json.loads(s.hotword_snapshot or "{}")
+    except ValueError:
+        snap = {}
+    eingefroren = terminologie.aus_snapshot(snap.get("terminologyRules")) if isinstance(snap, dict) else None
+    if eingefroren is not None:
+        return campaign, eingefroren
+    return campaign, terminologie.regeln(campaign, namenshilfe.anzeige(db, campaign))
 
 
 def _terminologie_snapshot(s: GameSession, zaehler) -> None:
