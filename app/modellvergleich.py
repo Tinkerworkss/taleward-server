@@ -258,7 +258,7 @@ class Einstellungen:
     temperatur: float | None = None  # nur für die Szenennotizen
     pruefliste: list[dict] = field(default_factory=list)
     notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
-    ledger_gold: dict = field(default_factory=dict)  # 0.4.56 selektives atomisches Ledger-Gold
+    ledger_gold: dict = field(default_factory=dict)  # 0.4.58 selektives atomisches Ledger-Gold
     hardware_label: str = ""  # frei: GPU/Backend/Host für reproduzierbare Hardwarevergleiche
     nur_ledger: bool = False  # 0.4.52 Diagnose: nur Schatten-Ledger, keine Notizen/Recap/Review/Vorschläge
 
@@ -650,8 +650,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                      "ledgerEncounters": len((e.ledger or {}).get("encounters") or []),
                                                      "ledgerIntegrity": (e.ledger or {}).get("integrity") or {},
                                                      "ledgerRelevance": (e.ledger or {}).get("relevance") or {},
-                                                     "ledgerRelevanceReview": (e.ledger or {}).get("relevanceReview") or {},
-                                                     "ledgerCritical": (e.ledger or {}).get("critical") or {},
+                                                     "ledgerRiskReview": (e.ledger or {}).get("riskReview") or {},
                                                      "ledgerReview": (e.ledger or {}).get("review") or {},
                                                      "ledgerHarnessMetrics": (e.ledger_harness or {}).get("metrics") or {},
                                                      "ledgerHarnessGates": (e.ledger_harness or {}).get("gates") or {},
@@ -768,21 +767,17 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
                 if erg.ledger:
                     lr = erg.ledger.get("review") or {}
                     ar = lr.get("anchorResolution") or {}
-                    cr = erg.ledger.get("critical") or {}
-                    rr = erg.ledger.get("relevanceReview") or {}
-                    integ = erg.ledger.get("integrity") or {}
                     rel = erg.ledger.get("relevance") or {}
-                    melden(f"  Ledger (Schatten v5): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
+                    rr = erg.ledger.get("riskReview") or {}
+                    melden(f"  Ledger (Schatten v4): {erg.ledger.get('rawCandidates') or 0} Kandidaten → "
                            f"{len(erg.ledger.get('events') or [])} Events, {len(erg.ledger.get('states') or [])} States, "
                            f"{len(erg.ledger.get('historyLinks') or [])} History-Links; Relevanz: "
                            f"Recap {rel.get('recap', 0)}, Fäden {rel.get('openThread', 0)}, Bibel {rel.get('bible', 0)}; "
                            f"Review: {lr.get('repaired', 0)} repariert, {lr.get('merged', 0)} zusammengeführt, "
                            f"{lr.get('rejected', 0)} verworfen, {lr.get('coverageAdded', 0)} ergänzt; "
-                           f"Critical: {cr.get('calls', 0)} Calls, {cr.get('added', 0)} ergänzt, "
-                           f"{cr.get('replaced', 0)} ersetzt; Relevance: {rr.get('calls', 0)} Calls, "
-                           f"{rr.get('classified', 0)} klassifiziert, {rr.get('unclassified', 0)} offen; "
-                           f"Micro-Review: {ar.get('flagged', 0)} Hinweise, {ar.get('calls', 0)} Calls; "
-                           f"Duplikate entfernt: {integ.get('exactDuplicatesRemoved', 0)}")
+                           f"Micro-Review: {ar.get('flagged', 0)} Hinweise, {ar.get('calls', 0)} Calls, "
+                           f"{ar.get('confirmed', 0)} bestätigt; Risk: {rr.get('flagged', 0)} markiert, "
+                           f"{rr.get('calls', 0)} Call, {rr.get('repaired', 0)} repariert")
                     if erg.ledger_harness:
                         hm = erg.ledger_harness.get("metrics") or {}
                         melden(f"  Harness: {hm.get('factsMatched', 0)}/{hm.get('factsTotal', 0)} atomare Fakten; "

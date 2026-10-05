@@ -1,6 +1,6 @@
 """Deterministischer Ledger-Harness für Modellvergleiche.
 
-0.4.56 trennt bewusst Produktionslogik und Qualitätsmessung: Ein selektives Gold beschreibt atomare
+0.4.58 behält bewusst Produktionslogik und Qualitätsmessung: Ein selektives Gold beschreibt atomare
 Fakten und ausdrücklich verbotene Claims. Der Scorer arbeitet ausschließlich auf strukturierten Ledger-Feldern;
 Stichwörter aus getrennten Events werden niemals zu einem Treffer zusammengesetzt.
 """
@@ -236,6 +236,7 @@ def ledger_bewerten(ledger: dict, gold: dict, valid_source_ids: set[str] | None 
     events = [e for e in ledger.get("events") or [] if isinstance(e, dict)]
     fact_results = []
     attr_ok = attr_total = rel_ok = rel_total = epi_ok = epi_total = relevance_ok = relevance_total = 0
+    epi_hit_ok = epi_hit_total = relevance_hit_ok = relevance_hit_total = 0
     critical_ok = critical_total = important_ok = important_total = 0
 
     for fact in gold.get("facts") or []:
@@ -263,11 +264,17 @@ def ledger_bewerten(ledger: dict, gold: dict, valid_source_ids: set[str] | None 
             epi_total += 1
             ok = bool(matched and str(event.get("epistemic") or "") in expected["epistemic"])
             epi_ok += int(ok)
+            if matched:
+                epi_hit_total += 1
+                epi_hit_ok += int(ok)
             checks["epistemic"] = ok
         for k, soll in (expected.get("relevance") or {}).items():
             relevance_total += 1
             ok = bool(matched and (event.get("relevance") or {}).get(k) is soll)
             relevance_ok += int(ok)
+            if matched:
+                relevance_hit_total += 1
+                relevance_hit_ok += int(ok)
             checks[f"relevance.{k}"] = ok
         if expected.get("importance"):
             checks["importance"] = bool(matched and event.get("importance") in expected["importance"])
@@ -318,7 +325,9 @@ def ledger_bewerten(ledger: dict, gold: dict, valid_source_ids: set[str] | None 
         "attributionAccuracy": _ratio(attr_ok, attr_total),
         "relationAccuracy": _ratio(rel_ok, rel_total),
         "epistemicAccuracy": _ratio(epi_ok, epi_total),
+        "epistemicAccuracyMatchedFacts": _ratio(epi_hit_ok, epi_hit_total),
         "relevanceAccuracy": _ratio(relevance_ok, relevance_total),
+        "relevanceAccuracyMatchedFacts": _ratio(relevance_hit_ok, relevance_hit_total),
         "expectedNonClaimViolations": violations,
         "expectedNonClaimsTotal": len(non_results),
         "provenanceCompleteness": _ratio(prov_ok, len(events)),
@@ -355,8 +364,8 @@ def harness_md(result: dict) -> str:
         f"- Important recall: **{pct(m.get('importantRecall'))}**",
         f"- Attribution: **{pct(m.get('attributionAccuracy'))}**",
         f"- Relation: **{pct(m.get('relationAccuracy'))}**",
-        f"- Epistemik: **{pct(m.get('epistemicAccuracy'))}**",
-        f"- Relevanz: **{pct(m.get('relevanceAccuracy'))}**",
+        f"- Epistemik: **{pct(m.get('epistemicAccuracy'))}** (bei gematchten Fakten: **{pct(m.get('epistemicAccuracyMatchedFacts'))}**)",
+        f"- Relevanz: **{pct(m.get('relevanceAccuracy'))}** (bei gematchten Fakten: **{pct(m.get('relevanceAccuracyMatchedFacts'))}**)",
         f"- Expected-non-claim violations: **{m.get('expectedNonClaimViolations', 0)}**",
         f"- Provenance completeness: **{pct(m.get('provenanceCompleteness'))}**",
         f"- Tischrollen als Weltentität: **{m.get('tableRoleWorldEntityCount', 0)}**",

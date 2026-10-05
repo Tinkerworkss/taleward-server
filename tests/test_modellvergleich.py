@@ -33,10 +33,6 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
             inhalt = {"events": []}
         elif system.startswith("Du prüfst Ledger-Kandidaten"):
             inhalt = {"reviews": [], "coverage": [], "anchors": [], "encounters": []}
-        elif system.startswith("Du sicherst wenige HOCHRISIKO-FAKTEN"):
-            inhalt = {"facts": []}
-        elif system.startswith("Du klassifizierst bereits geprüfte Ledger-Fakten"):
-            inhalt = {"classifications": []}
         elif system.startswith("Du ordnest aktuelle"):
             inhalt = {"links": []}
         elif system.startswith("Du prüfst"):
@@ -112,10 +108,7 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
 
     systeme = [b["messages"][0]["content"] for b in aufrufe]
     assert systeme
-    assert all(s.startswith(("Du extrahierst", "Du prüfst Ledger-Kandidaten",
-                             "Du sicherst wenige HOCHRISIKO-FAKTEN",
-                             "Du klassifizierst bereits geprüfte Ledger-Fakten",
-                             "Du ordnest aktuelle")) for s in systeme)
+    assert all(s.startswith(("Du extrahierst", "Du prüfst Ledger-Kandidaten", "Du ordnest aktuelle")) for s in systeme)
     assert not any(s.startswith("Du extrahierst aus EINEM Abschnitt") for s in systeme)
     assert not any(s.startswith("Du suchst im ORIGINALTRANSKRIPT") for s in systeme)
     assert all(b["model"] != "richter:1" for b in aufrufe)
@@ -123,12 +116,12 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
     d = ordner / "a_1-ctx12288"
     ledger = json.loads((d / "ledger.json").read_text(encoding="utf-8"))
     erg = json.loads((d / "ergebnis.json").read_text(encoding="utf-8"))
-    assert ledger["version"] == 5 and ledger["state"] == "ok"
+    assert ledger["version"] == 4 and ledger["state"] == "ok"
     assert erg["nur_ledger"] is True and erg["grundlage"] == "Originaltranskript"
     assert not (d / "recap.txt").exists()
     assert not (d / "vorschlaege.json").exists()
     assert not (d / "plan.json").exists()
-    assert any("Ledger (Schatten v5)" in m for m in meldungen)
+    assert any("Ledger (Schatten v4)" in m for m in meldungen)
 
 
 

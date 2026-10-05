@@ -1,4 +1,4 @@
-"""0.4.56 Ledger-Harness: atomare Fakten, expected non-claims, Provenance und Modellkonsistenz."""
+"""0.4.58 Ledger-Harness: atomare Fakten, expected non-claims, Provenance und Modellkonsistenz."""
 import json
 from pathlib import Path
 
@@ -202,3 +202,28 @@ def test_time_range_und_property_alternativen_sind_atomare_match_bedingungen():
     e["time"] = 250.0
     r = ledger_bewerten({"sourceFingerprint": "src-1", "events": [e]}, gold, {"L0001"})
     assert r["metrics"]["factsMatched"] == 0
+
+
+def test_ledger_058_relevance_bei_gematchten_fakten_wird_separat_gemessen():
+    from app.ledger_harness import ledger_bewerten
+
+    e = _event()
+    gold = _gold()
+    gold["facts"].append({
+        "id": "missing",
+        "importance": "important",
+        "match": {"assertions": [{"subject": ["Niemand"], "property": "identity", "value": ["Nichts"]}]},
+        "expected": {"relevance": {"bible": True}},
+    })
+    r = ledger_bewerten({"sourceFingerprint": "src-1", "events": [e]}, gold, {"L0001"})
+    assert r["metrics"]["relevanceAccuracy"] < 1.0
+    assert r["metrics"]["relevanceAccuracyMatchedFacts"] == 1.0
+
+
+def test_nostria_nonclaims_decken_identity_und_role_status_ab():
+    from app.ledger_harness import ledger_gold_lesen
+
+    pfad = Path(__file__).parent / "data" / "ledger_gold_nostria_v1.json"
+    gold = ledger_gold_lesen(pfad.read_text(encoding="utf-8"))
+    by_id = {x["id"]: x for x in gold["expectedNonClaims"]}
+    assert by_id["satuna_not_altvater"]["match"]["assertions"][0]["property"] == ["identity", "role_status"]
