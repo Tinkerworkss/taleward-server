@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import utcnow
-from app.models import GameSession, Job, Upload, Worker
+from app.models import Campaign, GameSession, Job, Upload, Worker
 from app.services import set_state
 from app import storage
 
@@ -21,6 +21,13 @@ def status_message(key: str, **params) -> str:
 
 
 def create_transcribe_job(db: Session, s: GameSession, upload: Upload) -> Job:
+    # Beim Einreihen einfrieren, nicht erst beim Claim. Ein Lease-Retry bekommt damit exakt dieselbe
+    # Hotword-Auswahl; eine bewusste Nachtranskription erzeugt dagegen einen neuen Snapshot.
+    from app import namenshilfe
+
+    c = db.get(Campaign, s.campaign_id)
+    if c is not None:
+        s.hotword_snapshot = json.dumps(namenshilfe.aufloesen(db, c, s).snapshot(), ensure_ascii=False)
     job = Job(type="transcribe", session_id=s.id, upload_id=upload.id, required_capability="asr", engine="local")
     db.add(job)
     set_state(s, "queued", progress=0.0)
