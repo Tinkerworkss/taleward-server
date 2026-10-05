@@ -88,8 +88,9 @@ def test_tischaufnahme_extern(client, world, dbs, tmp_path):
     assert anfrage.headers["authorization"] == "Bearer test-schluessel"
     roh = anfrage.read()
     for teil in (b'name="model"\r\n\r\nvoxtral-mini-latest', b'name="diarize"\r\n\r\ntrue',
-                 b'name="timestamp_granularities"\r\n\r\nsegment', b'name="context_bias"\r\n\r\nMira'):
+                 b'name="timestamp_granularities"\r\n\r\nsegment'):
         assert teil in roh
+    assert b'name="context_bias"' not in roh  # Terminologie wird nach der ASR korrigiert
     st = status(client, w["gm"], s["id"])
     assert st["state"] == "awaiting_speakers"
     sess = client.get(f"{API}/sessions/{s['id']}", headers=w["gm"]).json()
