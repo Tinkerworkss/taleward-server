@@ -56,3 +56,15 @@ def test_echter_kampagnenname_schuetzt_vor_globaler_systemkorrektur():
     )
     assert neu == "Tschummer kommt herein."
     assert dict(zaehler) == {}
+
+
+def test_regeln_lassen_sich_reproduzierbar_einfrieren():
+    c = kampagne()
+    namenshilfe.korrektur_lernen(c, "Tharvok", "Darvok")
+    regeln = terminologie.regeln(c, ["Mr. Johnson"])
+    snap = terminologie.snapshot(regeln)
+    wieder = terminologie.aus_snapshot(snap)
+
+    assert wieder == regeln
+    assert terminologie.fingerprint(wieder) == terminologie.fingerprint(regeln)
+    assert terminologie.aus_snapshot([{"heard": "", "correct": "x", "source": "learned"}]) is None
