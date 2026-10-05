@@ -744,9 +744,10 @@ def modellvergleich(
     laeufe: int = typer.Option(1, "--laeufe", min=1, max=10, help="So oft läuft jedes Modell (Streuung sichtbar machen)"),
     grundlage: str = typer.Option("auto", "--grundlage", help="Lange Runden: auto | direkt (Notizen in Zeitabschnitten) | teile (Teil-Zusammenfassungen)"),
     temperatur: float = typer.Option(None, "--temperatur", min=0.0, max=1.0, help="Testoption: Temperatur nur für die Szenennotizen (Standard 0.3)"),
-    pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
+    pruefliste: Path = typer.Option(None, "--pruefliste", help="Alte Stichwort-Prüfliste; nur diagnostisch, kein Relationsurteil"),
+    ledger_gold: Path = typer.Option(None, "--ledger-gold", help="0.4.56 JSON-Gold mit atomaren Fakten und expectedNonClaims"),
     notizen: Path = typer.Option(None, "--notizen", help="Fertige notizen.txt eines früheren Laufs statt neuer Szenennotizen – für Vergleiche auf identischer Grundlage"),
-    nur_ledger: bool = typer.Option(False, "--nur-ledger", help="Nur den 0.4.52-Schatten-Ledger aus dem Originaltranskript testen; überspringt Notizen, Plan, Recap, Reviews und Vorschläge"),
+    nur_ledger: bool = typer.Option(False, "--nur-ledger", help="Nur den Schatten-Ledger aus dem Originaltranskript testen; überspringt Notizen, Plan, Recap, Reviews und Vorschläge"),
 ):
     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
     Vergleichen am eigenen PC. Liest nur über die Schnittstelle, ändert nichts auf dem Server."""
@@ -764,19 +765,30 @@ def modellvergleich(
         typer.echo(f"Ollama unter {url}")
         if grundlage not in ("auto", "direkt", "teile"):
             raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
-        for name, datei in (("Prüfliste", pruefliste), ("Notizen", notizen)):
+        for name, datei in (("Prüfliste", pruefliste), ("Ledger-Gold", ledger_gold), ("Notizen", notizen)):
             if datei is not None and not datei.is_file():
                 raise mv.VergleichFehler(f"{name} nicht gefunden: {datei.resolve()} – Datei in diesen Ordner legen "
                                          "oder den vollen Pfad angeben.")
+        gold = {}
+        if ledger_gold:
+            from app.ledger_harness import LedgerGoldFehler, ledger_gold_lesen
+            try:
+                gold = ledger_gold_lesen(ledger_gold.read_text(encoding="utf-8"))
+            except LedgerGoldFehler as e:
+                raise mv.VergleichFehler(str(e)) from e
         einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
                                  pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [],
+                                 ledger_gold=gold,
                                  notizen=notizen.read_text(encoding="utf-8") if notizen else "", nur_ledger=nur_ledger)
         if pruefliste:
             typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
+        if ledger_gold:
+            typer.echo(f"Ledger-Gold: {len(einst.ledger_gold.get('facts') or [])} Fakten + "
+                       f"{len(einst.ledger_gold.get('expectedNonClaims') or [])} expected non-claims aus {ledger_gold}")
         if notizen:
             typer.echo(f"Szenennotizen aus {notizen} ({len(einst.notizen.splitlines())} Zeilen), keine neue Extraktion")
         if nur_ledger:
-            typer.echo("Ledger-only: Originaltranskript → Extraktion → Review → Coverage → States/History; Recap-Pipeline übersprungen")
+            typer.echo("Ledger-only: Originaltranskript → Extraktion → Review → Micro-Review → States/History; Recap-Pipeline übersprungen")
         ordner = mv.ausfuehren(s, session, mv.modelle_lesen(modelle, kontext), richter.strip(), kontext, url, ziel,
                                einst=einst)
     except mv.VergleichFehler as e:
