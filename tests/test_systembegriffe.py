@@ -70,3 +70,43 @@ def test_eingecheckte_kernlisten_haben_a_b_und_keine_pfeile_in_hotwords():
         assert len(liste.verhoerer) == v
         assert all("=>" not in x for x in liste.stufe_a)
         assert not ({x.casefold() for x in liste.stufe_a} & {x.casefold() for x in liste.stufe_b})
+
+
+def test_stufe_b_bleibt_aus_dem_normalen_whisper_prompt():
+    from app import namenshilfe
+
+    hotwords = namenshilfe.systembegriffe("dsa")
+    assert "Aventurien" in hotwords
+    assert "Borbarad" not in hotwords
+    assert "Fex => Phex" not in hotwords
+
+
+def test_neue_systeme_koennen_ueber_freien_systemnamen_erkannt_werden():
+    assert systembegriffe.erkennen("other", "Vampire V5").schluessel == "vampire"
+    assert systembegriffe.erkennen("other", "Cyberpunk RED").schluessel == "cyberpunk"
+    assert systembegriffe.erkennen("other", "Der Eine Ring 2e").schluessel == "herrderringe"
+    assert systembegriffe.erkennen("other", "Starfinder 1e").schluessel == "starfinder"
+    assert systembegriffe.erkennen("other", "Genesys") is None
+    assert systembegriffe.erkennen("other", "Imperium") is None
+
+
+def test_zusaetzliche_listen_sind_formal_sauber():
+    erwartet = {
+        "warhammer": (40, 309, 5),
+        "midgard": (40, 316, 2),
+        "vampire": (40, 303, 6),
+        "cyberpunk": (40, 310, 4),
+        "starwars": (40, 326, 5),
+        "degenesis": (40, 251, 1),
+        "starfinder": (40, 219, 5),
+    }
+    for system, (a, b, v) in erwartet.items():
+        liste = systembegriffe.lesen(system)
+        assert liste is not None
+        assert (len(liste.stufe_a), len(liste.stufe_b), len(liste.verhoerer)) == (a, b, v)
+        assert not ({x.casefold() for x in liste.stufe_a} & {x.casefold() for x in liste.stufe_b})
+
+    # Die übergebene Sammelübersicht nennt 313 B-Begriffe, die konkret übergebene Datei enthält 311.
+    # Nicht künstlich auffüllen: Datensatz gesondert gegen die Quelle prüfen.
+    ring = systembegriffe.lesen("herrderringe")
+    assert ring is not None and len(ring.stufe_a) == 40 and len(ring.stufe_b) == 311 and len(ring.verhoerer) == 6
