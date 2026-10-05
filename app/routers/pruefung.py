@@ -296,6 +296,9 @@ def corrections(sessionId: str, body: schemas.CorrectionsIn, request: Request, u
             namenshilfe.ignorieren(c, heard)
             continue
         paare.append((heard, correct))
+        # Eine von der SL bestätigte Schreibweise wird künftig nach der ASR gelernt,
+        # nicht mehr als Prompt-Hotword an Whisper geschickt.
+        namenshilfe.korrektur_lernen(c, heard, correct)
         if k.add_to_hotwords:
             namenshilfe.hinzufuegen(db, c, correct)
     if body.retranscribe:
