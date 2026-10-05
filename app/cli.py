@@ -201,8 +201,11 @@ def probelauf(
     sprecher: int = typer.Option(None, "--sprecher", help="Genaue Anzahl Sprecher, falls bekannt"),
     min_sprecher: int = typer.Option(None, "--min-sprecher"),
     max_sprecher: int = typer.Option(None, "--max-sprecher"),
-    namen: str = typer.Option(None, "--namen", help="Zusätzliche Eigennamen, kommagetrennt: \"Borbarad,Gareth\""),
-    system: str = typer.Option(None, "--system", help="Rollenspielsystem für Stufe-A-Hotwords, z. B. shadowrun, dsa oder \"Vampire V5\""),
+    namen: str = typer.Option(None, "--namen", help="Kampagnen-/Eigennamen, kommagetrennt"),
+    system: str = typer.Option(None, "--system", help="Rollenspielsystem, z. B. shadowrun, dsa oder \"Vampire V5\""),
+    hotword_modus: str = typer.Option("dynamic", "--hotword-modus", help="none | system | dynamic"),
+    kontext_datei: str = typer.Option(None, "--kontext-datei",
+                                     help="UTF-8-Text mit Kampagnenkontext; promoted passende Stufe-B-Begriffe"),
     ohne_sprecher: bool = typer.Option(False, "--ohne-sprecher", help="Nur transkribieren, keine Sprechertrennung"),
     sprache: str = typer.Option("de", "--sprache"),
     modell: str = typer.Option("large-v3", "--modell", help="Whisper-Modell (large-v3, large-v3-turbo, medium …)"),
@@ -218,34 +221,33 @@ def probelauf(
 
     s = get_settings()
 
-    # Serverloser Probelauf: optionale Systemliste direkt aus dem Git-Stand laden.
-    # Nur Stufe A geht an Whisper; Stufe B bleibt bewusst draußen.
-    system_hotwords: list[str] = []
-    if system:
-        from app import systembegriffe as begriffslisten
+    # Serverloser Benchmark derselben Resolver-Logik: null / reiner Systemkern / dynamisch.
+    from app import namenshilfe
 
-        liste = begriffslisten.lesen(system) or begriffslisten.erkennen("other", system)
-        if liste is None:
-            typer.echo(f"Unbekanntes oder nicht validiertes System für Hotwords: {system}", err=True)
-            raise typer.Exit(2)
-        system_hotwords = list(liste.stufe_a)
-
+    modus = hotword_modus.casefold().strip()
+    if modus not in {"none", "system", "dynamic"}:
+        typer.echo("--hotword-modus muss none, system oder dynamic sein.", err=True)
+        raise typer.Exit(2)
     manuell = [x.strip() for x in (namen or "").split(",") if x.strip()]
-    kombiniert: list[str] = []
-    gesehen: set[str] = set()
-    zeichen = 0
-    for wort in manuell + system_hotwords:
-        wort = " ".join(wort.split())
-        key = wort.casefold()
-        plus = len(wort) + (2 if kombiniert else 0)
-        if not wort or key in gesehen or len(kombiniert) >= 80 or zeichen + plus > 700:
-            continue
-        kombiniert.append(wort)
-        gesehen.add(key)
-        zeichen += plus
-    namen_effektiv = ",".join(kombiniert) if kombiniert else None
-    if system_hotwords:
-        typer.echo(f"System-Hotwords: {len(kombiniert)} aktiv ({system})")
+    kontext: list[str] = []
+    if kontext_datei:
+        kp = Path(kontext_datei).expanduser()
+        if not kp.is_file():
+            typer.echo(f"Kontextdatei nicht gefunden: {kp}", err=True)
+            raise typer.Exit(2)
+        kontext = [kp.read_text(encoding="utf-8")]
+
+    auswahl = namenshilfe.statische_auswahl(
+        system, None, sprache, extra=manuell, kontext=kontext, modus=modus
+    )
+    if system and auswahl.system is None:
+        typer.echo(f"Unbekanntes oder nicht validiertes System für Hotwords: {system}", err=True)
+        raise typer.Exit(2)
+    namen_effektiv = ",".join(auswahl.begriffe) if auswahl.begriffe else None
+    typer.echo(
+        f"Hotwords: Modus={modus}, System={auswahl.system or '–'}, Sprache={sprache}, "
+        f"{len(auswahl.begriffe)} Begriffe, Fingerprint={auswahl.fingerprint[:12]}"
+    )
 
     ausgabe_basis = Path(ziel).expanduser() if ziel else s.data_dir / "probelauf"
 
