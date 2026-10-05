@@ -1,0 +1,269 @@
+# Starfinder – Begriffe für die Transkription
+# Erkennungsnamen: starfinder, starfinder 2e, sf2e, sfrpg, paktwelten, pact worlds
+# Stufe A (höchstens 40, häufigste zuerst)
+Starfinder
+Pact Worlds
+Paktwelten
+Absalom Station
+Absalom-Station
+Drift
+Drift Engine
+The Gap
+Die Lücke
+Eox
+Akiton
+Castrovel
+Verces
+Triaxus
+Vesk
+Veskarium
+Kasatha
+Lashunta
+Shirren
+Ysoki
+Android
+Swarm
+Starfinder Society
+Stamina Points
+Resolve Points
+Ausdauerpunkte
+EAC
+KAC
+Credits
+UPB
+Solarian
+Envoy
+Operative
+Mechanic
+Mystic
+Technomancer
+Triune
+Weydan
+Hylax
+Pharasma
+# Stufe B
+Energy Armor Class
+Kinetic Armor Class
+Hit Points
+Saving Throw
+Fortitude
+Reflex
+Will Save
+Spell Slot
+Cantrip
+Hero Points
+Universal Polymer Base
+Credstick
+Drift Beacon
+Driftnet
+Drift Rock
+Augmentations
+Hybrid Item
+Solar Weapon
+Solar Flare
+Solar Armor
+Stellar Mode
+Graviton
+Photon
+Stellar Revelation
+Zenith Revelation
+Envoy Improvisation
+Mechanic Trick
+Exocortex
+Custom Rig
+Operative Exploit
+Trick Attack
+Starship Combat
+Science Officer
+Build Points
+Hull Points
+Critical Threshold
+Biohacker
+Vanguard
+Witchwarper
+Nanocyte
+Evolutionist
+Precog
+Solarier
+Technomant
+Aballon
+Apostae
+Idari
+Diaspora
+Liavara
+Bretheda
+Near Space
+Nahraum
+The Vast
+Die Weiten
+Azlanti Star Empire
+Sternenreich der Azlanti
+Corpse Fleet
+Stewards
+Free Captains
+Freie Kapitäne
+Eoxian
+Bone Sages
+Knochenweise
+Hellknights
+Aspis Consortium
+AbadarCorp
+Pact Council
+Xenowardens
+Arcanamirium
+Golarion
+Casandalee
+Epoch
+Ibra
+Talavet
+Oras
+Yaraesa
+Eloritu
+Damoritosh
+Lao Shu Po
+Urgathoa
+Zon-Kuthon
+Nyarlathotep
+Besmara
+Sarenrae
+Abadar
+Desna
+Iomedae
+Lamashtu
+Asmodeus
+Ryphorian
+Skittermander
+Barathu
+Contemplative
+Dragonkin
+Formian
+Kalo
+Pahtra
+Vlaka
+Khizar
+Sarcesian
+Shobhad
+Uplifted Bear
+Nuar
+Haan
+Astrazoan
+Borai
+Bantrid
+Brenneri
+Draelik
+Gnoll
+Hobgoblin
+Ikeshti
+Ghibrani
+Sro
+Embri
+Osharu
+Quorlu
+Reptoid
+Reptoids
+Dessamar
+Stelliferas
+Kish
+Dirindi
+Elebrian
+Drow
+Pact Worlds Guide
+Armory
+Character Operations Manual
+Alien Archive
+Starfinder Core Rulebook
+Dead Suns
+Against the Aeon Throne
+Signal of Screams
+Dawn of Flame
+Attack of the Swarm
+Fly Free or Die
+Sunrise Maiden
+Ring of Fates
+Armada
+Lorespire Complex
+Lorespire
+Chiskisk
+Ehu Hadif
+Luwazi Elsebo
+Iseph
+Keskodai
+Navasi
+Obozaya
+Altronus
+Quig
+Raia
+Damaya
+Korasha
+Qabarat
+Elytrioi
+Bolida
+Raxilites
+Starstone
+Sternenstein
+Absalom
+Kortos
+Pegasus Spiele
+Paizo
+Aucturn
+Brightside
+Darkside
+Vesk Prime
+Exo-Guardians
+Dataphiles
+Acquisitives
+Wayfinders
+Second Seekers
+First Seeker
+Scoured Stars
+Rovagug
+The Devourer
+Mystic Cure
+Magic Missile
+Energy Ray
+Psychokinetic Hand
+Token Spell
+Telekinetic Projectile
+Mind Thrust
+Supercharge Weapon
+Jolting Surge
+Overheat
+Holographic Image
+Laser Pistol
+Azimuth Laser Pistol
+Tactical Pistol
+Pulsecaster Pistol
+Static Arc Pistol
+Tactical Dueling Sword
+Second Skin
+Freebooter Armor
+Personal Comm Unit
+Comm Unit
+Datapad
+Serum of Healing
+Spell Gem
+Fusion Seal
+Weapon Fusion
+Armor Upgrade
+Jetpack
+Holoskin
+Witchwyrd
+Akata
+Ellicoth
+Ksarik
+Hanakan
+Dromada
+Ferran
+Morlamaw
+Tashtari
+Space Goblin
+Space Goblins
+Bone Trooper
+Necrovite
+Contemplatives
+# Verhörer
+Absolom => Absalom
+Kasata => Kasatha
+Lashuntha => Lashunta
+Eoks => Eox
+Solarien => Solarian
