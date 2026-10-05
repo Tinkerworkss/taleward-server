@@ -1,5 +1,6 @@
 """0.4.56 Ledger-Harness: atomare Fakten, expected non-claims, Provenance und Modellkonsistenz."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -163,3 +164,41 @@ def test_modellvergleich_paarvergleich_nutzt_gold_als_referenz_nicht_das_andere_
     assert r[0]["sameSourceFingerprint"] is True
     assert r[0]["semanticEventJaccard"] == pytest.approx(1 / 3, abs=0.0001)
     assert r[0]["goldFactAgreement"] == 0.5
+
+
+def test_nostria_gold_v1_ist_valide_und_selektiv():
+    from app.ledger_harness import ledger_gold_lesen
+
+    pfad = Path(__file__).parent / "data" / "ledger_gold_nostria_v1.json"
+    gold = ledger_gold_lesen(pfad.read_text(encoding="utf-8"))
+    assert gold["scope"] == "selective"
+    assert len(gold["facts"]) == 10
+    assert len(gold["expectedNonClaims"]) == 5
+
+
+def test_time_range_und_property_alternativen_sind_atomare_match_bedingungen():
+    from app.ledger_harness import ledger_bewerten
+
+    e = _event()
+    e["time"] = 150.0
+    e["assertions"][0]["property"] = "identity"
+    gold = {
+        "version": 1, "name": "time", "scope": "selective",
+        "facts": [{
+            "id": "x",
+            "match": {
+                "timeRange": [100, 200],
+                "assertions": [{
+                    "subject": ["Lostriana"],
+                    "property": ["identity", "role_status"],
+                    "value": ["bei der Gruppe"]
+                }]
+            }
+        }],
+        "expectedNonClaims": []
+    }
+    r = ledger_bewerten({"sourceFingerprint": "src-1", "events": [e]}, gold, {"L0001"})
+    assert r["metrics"]["factsMatched"] == 1
+    e["time"] = 250.0
+    r = ledger_bewerten({"sourceFingerprint": "src-1", "events": [e]}, gold, {"L0001"})
+    assert r["metrics"]["factsMatched"] == 0
