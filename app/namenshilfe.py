@@ -191,7 +191,16 @@ def _kontexttexte(db: Session, campaign: Campaign, session: GameSession | None =
     return [str(t) for t in texte if t]
 
 
-def _packen(gruppen: list[tuple[str, list[str] | tuple[str, ...]]]) -> tuple[list[str], tuple[tuple[str, int], ...]]:
+def _packen(
+    gruppen: list[tuple[str, list[str] | tuple[str, ...]]], *,
+    max_begriffe: int = MAX_BEGRIFFE,
+) -> tuple[list[str], tuple[tuple[str, int], ...]]:
+    """Priorisierte Gruppen in das Whisper-Budget packen.
+
+    max_begriffe ist nur für reproduzierbare Benchmarks variabel; normale
+    Produktionsaufrufe bleiben beim bisherigen MAX_BEGRIFFE-Budget.
+    """
+    max_begriffe = max(0, min(MAX_BEGRIFFE, max_begriffe))
     ergebnis: list[str] = []
     gesehen: set[str] = set()
     laenge = 0
@@ -205,7 +214,7 @@ def _packen(gruppen: list[tuple[str, list[str] | tuple[str, ...]]]) -> tuple[lis
             if not n or k in gesehen:
                 continue
             zusaetzlich = len(n) + (2 if ergebnis else 0)
-            if len(ergebnis) >= MAX_BEGRIFFE or laenge + zusaetzlich > MAX_ZEICHEN:
+            if len(ergebnis) >= max_begriffe or laenge + zusaetzlich > MAX_ZEICHEN:
                 continue
             ergebnis.append(n)
             gesehen.add(k)
@@ -222,7 +231,7 @@ def _liste(system: str | None, system_name: str | None = None):
 
 def statische_auswahl(
     system: str | None, system_name: str | None, sprache: str, *,
-    extra=(), kontext=(), modus: str = "dynamic",
+    extra=(), kontext=(), modus: str = "dynamic", hotword_limit: int | None = None,
 ) -> HotwordAuswahl:
     """Serverloser Resolver für reproduzierbare Null/System/Dynamik-Benchmarks.
 
@@ -231,6 +240,8 @@ def statische_auswahl(
     """
     if modus not in {"none", "system", "dynamic"}:
         raise ValueError("hotword mode must be none, system or dynamic")
+    if hotword_limit is not None and not 1 <= hotword_limit <= MAX_BEGRIFFE:
+        raise ValueError(f"hotword limit must be between 1 and {MAX_BEGRIFFE}")
     liste = _liste(system, system_name)
     key = liste.schluessel if liste else None
     dfp = liste.fingerprint(sprache) if liste else None
@@ -251,7 +262,9 @@ def statische_auswahl(
             ("system_shared", list(liste.stufe_a) if liste else []),
             ("system_language", list(liste.a_overlay(sprache)) if liste else []),
         ]
-    begriffe, quellen = _packen(gruppen)
+    begriffe, quellen = _packen(
+        gruppen, max_begriffe=hotword_limit if hotword_limit is not None else MAX_BEGRIFFE
+    )
     return HotwordAuswahl(tuple(begriffe), modus, sprache, key, dfp, quellen)
 
 
