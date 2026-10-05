@@ -500,6 +500,9 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
             zeilen += ["Offene Fäden:"] + [f"- {f}" for f in e.offene_faeden]
         if e.pruefliste:
             zeilen += ["", pruefliste_md(e)]
+        if e.ledger_harness:
+            from app.ledger_harness import harness_md
+            zeilen += ["", harness_md(e.ledger_harness).rstrip()]
     return "\n".join(zeilen) + "\n"
 
 
@@ -547,9 +550,21 @@ def bericht_html(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
                 + "</tr>" for i, p in enumerate(e.pruefliste, 1))
             liste = (f"<details><summary>Prüfpunkte je Stufe (Vorkommen, kein Urteil)</summary><table><tr><th>Nr</th>"
                      f"<th>Prüfpunkt</th>{''.join(f'<th>{e_(x)}</th>' for x in STUFEN)}</tr>{reihen_}</table></details>")
+        harness = ""
+        if e.ledger_harness:
+            m = e.ledger_harness.get("metrics") or {}
+            harness = (f"<details open><summary>Ledger Harness</summary><ul>"
+                       f"<li>Atomic facts: {m.get('factsMatched', 0)}/{m.get('factsTotal', 0)}</li>"
+                       f"<li>Critical recall: {m.get('criticalRecall')}</li>"
+                       f"<li>Relation: {m.get('relationAccuracy')}</li>"
+                       f"<li>Attribution: {m.get('attributionAccuracy')}</li>"
+                       f"<li>Epistemik: {m.get('epistemicAccuracy')}</li>"
+                       f"<li>Relevanz: {m.get('relevanceAccuracy')}</li>"
+                       f"<li>Expected non-claim violations: {m.get('expectedNonClaimViolations', 0)}</li>"
+                       f"<li>Provenance: {m.get('provenanceCompleteness')}</li></ul></details>")
         return (f"<section><h2>{e_(_name(e))}</h2><h3>{e_(e.titel)}</h3>{''.join(teile)}"
                 f"{'<h4>Offene Fäden</h4><ul>' + faeden + '</ul>' if faeden else ''}"
-                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details>{liste}</section>")
+                f"<details><summary>Vorschläge ({len(e.vorschlaege)})</summary><ul>{vorschl}</ul></details>{liste}{harness}</section>")
 
     return f"""<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Modellvergleich</title>
