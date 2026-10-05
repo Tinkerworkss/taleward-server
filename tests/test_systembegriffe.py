@@ -51,3 +51,22 @@ Sigmar
     assert systembegriffe.erkennen("other", "Warhammer Fantasy 4e").schluessel == "warhammer"
     assert systembegriffe.erkennen("other", "Warhammer 40k") is None
     assert systembegriffe.erkennen("other", "Dark Heresy") is None
+
+
+def test_eingecheckte_kernlisten_haben_a_b_und_keine_pfeile_in_hotwords():
+    erwartet = {
+        "dsa": (40, 436, 6),
+        "dnd": (40, 427, 8),
+        "pathfinder": (40, 336, 4),
+        "cthulhu": (40, 321, 7),
+        "shadowrun": (40, 306, 8),
+        "splittermond": (40, 310, 1),
+    }
+    for system, (a, b, v) in erwartet.items():
+        liste = systembegriffe.lesen(system)
+        assert liste is not None
+        assert len(liste.stufe_a) == a
+        assert len(liste.stufe_b) == b
+        assert len(liste.verhoerer) == v
+        assert all("=>" not in x for x in liste.stufe_a)
+        assert not ({x.casefold() for x in liste.stufe_a} & {x.casefold() for x in liste.stufe_b})
