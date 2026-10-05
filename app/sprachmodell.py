@@ -2824,20 +2824,22 @@ class Ablauf:
         return aus
 
     def ledger(self, ein: dict) -> dict:
-        """0.4.56 Schatten-Ledger v4: 0.4.55-Core unverändert in der Semantik; zusätzlich deterministische
-        Provenance-/Fingerprint-Instrumentierung für Harness und Modellvergleich. Noch ohne Einfluss auf Recap/Bibel."""
+        """0.4.57 Schatten-Ledger v5: breite Faktenextraktion, eigener Hochrisiko-Fakten-Pass und erst danach
+        Relevanzklassifikation. Die 0.4.56-Provenance-/Harness-Instrumentierung bleibt erhalten."""
         zeilen = transkript_zeilen_mit_ids(ein.get("transkript") or [])
         source_fingerprint = self._ledger_fingerprint({"sourceType": "TRANSCRIPT", "lines": zeilen})
         if not zeilen:
-            return {"version": 4, "state": "empty", "parserVersion": LEDGER_PARSER_VERSION,
+            return {"version": 5, "state": "empty", "parserVersion": LEDGER_PARSER_VERSION,
                     "sourceFingerprint": source_fingerprint, "events": [], "states": [], "encounters": [],
                     "historySources": [], "historyLinks": [], "review": {"state": "empty"},
+                    "critical": {"calls": 0, "accepted": 0, "added": 0, "replaced": 0},
                     "integrity": {"anchors": 0, "anchorAdded": 0, "anchorConflicts": 0, "anchorMissing": 0,
                                   "metaSanitized": 0, "metaRejected": 0},
-                    "relevance": {"recap": 0, "openThread": 0, "bible": 0}}
+                    "relevance": {"recap": 0, "openThread": 0, "bible": 0},
+                    "relevanceReview": {"calls": 0, "classified": 0, "unclassified": 0}}
         self._schritt("ledger")
-        # Kein zweiter Volltranskript-Pass: Primärpass + source-grounded Review. Nur strittige Hochrisiko-Anchors
-        # bekommen danach einen kleinen Micro-Review mit wenigen Nachbarzeilen.
+        # 0.4.57 priorisiert Recall: breiter Primärpass + Quellen-Review. Ein eigener enger Critical-Pass prüft
+        # danach nur wenige Hochrisiko-Klassen; Relevanz wird erst nach der Faktenprüfung entschieden.
         roh = self._ledger_pass(ein, SYSTEM_LEDGER_EVENTS, zeilen)
 
         # Nur wirklich identische Kandidaten vor dem Review entfernen. Semantisch ähnliche/konfligierende Kandidaten
@@ -2852,8 +2854,11 @@ class Ablauf:
             kandidaten.append(e)
 
         events, review, anchors, encounter_fragmente = self._ledger_review(ein, kandidaten, zeilen)
+        events, critical = self._ledger_critical(ein, events, zeilen)
         events, anchor_resolution = self._ledger_anchor_resolve(ein, events, anchors, zeilen)
         events, integrity = self._ledger_integrity(events, anchors, zeilen)
+        events, exact_duplicates_removed = self._ledger_dedupe(events)
+        events, relevance_review = self._ledger_relevance(ein, events)
         encounters = self._ledger_encounters(encounter_fragmente)
         events.sort(key=lambda x: (x.get("time") is None, x.get("time") or 0, x.get("summary", "")))
 
@@ -2889,11 +2894,15 @@ class Ablauf:
         review["encounterFragments"] = len(encounter_fragmente)
         relevance = {k: sum(1 for e in events if (e.get("relevance") or {}).get(k) is True)
                      for k in ("recap", "openThread", "bible")}
-        return {"version": 4, "state": "ok", "parserVersion": LEDGER_PARSER_VERSION,
+        views = {k: [e["eventId"] for e in events if (e.get("relevance") or {}).get(k) is True]
+                 for k in ("recap", "openThread", "bible")}
+        integrity["exactDuplicatesRemoved"] = exact_duplicates_removed
+        return {"version": 5, "state": "ok", "parserVersion": LEDGER_PARSER_VERSION,
                 "sourceFingerprint": source_fingerprint,
                 "ledgerFingerprint": self._ledger_fingerprint(sorted(e.get("eventFingerprint") or "" for e in events)),
                 "rawCandidates": len(kandidaten), "rawEvents": kandidaten,
                 "events": events, "states": states, "encounters": encounters, "relevance": relevance,
+                "views": views, "relevanceReview": relevance_review, "critical": critical,
                 "historySources": sources, "historyLinks": links, "review": review, "integrity": integrity}
 
     def vorschlaege(self, ein: dict, titel: str, grundlage: str) -> list[dict]:
