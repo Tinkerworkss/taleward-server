@@ -1,54 +1,487 @@
-# Das Schwarze Auge – häufige Eigennamen und Begriffe (Schreibhilfe für die Transkription)
+# Das Schwarze Auge – Begriffe für die Transkription
+# Erkennungsnamen: das schwarze auge, dsa, dsa4, dsa5, aventurien, schwarzes auge
+# Stufe A (höchstens 40, häufigste zuerst)
 Aventurien
-Gareth
-Mittelreich
-Horasreich
-Thorwal
-Al'Anfa
-Tobrien
-Weiden
-Almada
-Andergast
-Nostria
-Bornland
-Festum
-Vinsalt
-Punin
-Havena
-Kosch
-Maraskan
-Aranien
-Rashdul
-Khunchom
 Praios
 Rondra
-Efferd
-Travia
 Boron
+Phex
+Travia
+Efferd
 Hesinde
+Peraine
 Firun
 Tsa
-Phex
-Peraine
 Ingerimm
 Rahja
-Borbarad
-Rohal
-Hal
+Nostria
+Andergast
+Nostrier
+Andergaster
 Dukaten
 Silbertaler
 Heller
 Kreuzer
+Praioslauf
 Astralpunkte
 Karmapunkte
 Lebenspunkte
-Novadi
-Tulamiden
+Schicksalspunkte
+Salzarelen
+Grünkappen
+Fringlasshof
+Gareth
+Mittelreich
+Thorwal
 Thorwaler
+Horasreich
+Al'Anfa
+Kasmyrin
+Satuaria
+Balsam Salabunde
+Ignifaxius
+Steineichenwald
+# Stufe B
+Salzarele
+Grünkappe
+Zornbold
+Haus Kasmyrin
+Yolande Kasmyrin
+Kasimir Kasmyrin
+Efferdan Zornbold
+Wendolyn Zornbold
+Salzerhaven
+Kendrar
+Lyckmoor
+Lycker Moor
+Seenland
+Ilsur
+Albenhus
+Winhall
+Joborn
+Teshkal
+Thuranien
+Ingval
+Ingvaltal
+Salza
+Streitende Königreiche
+Nostrisch-Andergastische Kriege
+Akademie von Licht und Dunkelheit
+Kampfseminar Andergast
+Schule des direkten Weges
+Altvater
+Köpendaaler
+Sumu
+Sumupriester
+Druidenzirkel
+Töchter Satuarias
+Hexenzirkel
+Dere
+Alveran
+Limbus
+Niederhöllen
+Güldenland
+Myranor
+Uthuria
+Riesland
+Bosparan
+Bosparans Fall
+Garetien
+Darpatien
+Greifenfurt
+Nordmarken
+Albernia
+Weiden
+Tobrien
+Almada
+Kosch
+Bornland
+Aranien
+Maraskan
+Mhanadistan
+Svellttal
+Orkland
+Gjalskerland
+Schwarze Lande
+Transysilien
+Warunk
+Mendena
+Ysilia
+Beilunk
+Perricum
+Rommilys
+Gallys
+Wehrheim
+Ragath
+Punin
+Elenvina
+Angbar
+Ferdok
+Gratenfels
+Havena
+Honingen
+Trallop
+Baliho
+Bjaldorn
+Festum
+Norburg
+Neersand
+Vallusa
+Riva
+Paavi
+Lowangen
+Gashok
+Phexcaer
+Donnerbach
+Gerasim
+Notmark
+Xorlosch
+Vinsalt
+Kuslik
+Grangor
+Methumis
+Belhanka
+Arivor
+Bethana
+Neetha
+Drôl
+Chorhop
+Zorgan
+Baburin
+Elburum
+Anchopal
+Khunchom
+Rashdul
+Fasar
+Mherwed
+Unau
+Keft
+Thalusa
+Mirham
+Brabak
+Mengbilla
+Charypso
+Sylla
+Hôt-Alem
+Port Corrad
+H'Rabaal
+Altoum
+Olport
+Prem
+Hjaldingard
+Waskir
+Selem
+Tuzak
+Sinoda
+Boran
+Enqui
+Yaquir
+Yaquirbruch
+Großer Fluss
+Svellt
+Tommel
+Breite
+Radrom
+Barun-Ulah
+Mhanadi
+Gadang
+Born
+Darpat
+Neunaugensee
+Blautann
+Reichsforst
+Raschtulswall
+Ehernes Schwert
+Finsterkamm
+Salamandersteine
+Rote Sichel
+Schwarze Sichel
+Koschberge
+Trollzacken
+Walberge
+Khôm
+Gorische Wüste
+Echsensümpfe
+Regengebirge
+Hohe Eternen
+Blutige See
+Meer der Sieben Winde
+Perlenmeer
+Ifirns Ozean
+Los
+Satinav
+Mada
+Madamal
+Tote Mada
+Levthan
+Swafnir
+Ifirn
+Aves
+Kor
+Nandus
+Marbo
+Simia
+Angrosch
+Rastullah
+Zsahh
+H'Szint
+Kamaluq
+Tairach
+Brazoragh
+Gravesh
+Namenlose
+Namenloser
+Namenlose Tage
+Pyrdacor
+Fuldigor
+Famerlor
+Rhazzazor
+Blakharaz
+Belhalhar
+Charyptoroth
+Lolgramoth
+Thargunitoth
+Amazeroth
+Belshirash
+Asfaloth
+Tasfarelel
+Belzhorash
+Agrimoth
+Belkelel
+Heshthot
+Karmanath
+Gotongi
+Zant
+Shruuf
+Arkhobal
+Nirraven
+Morcan
+Irrhalk
+Ulchuchu
+Yo'Nahoh
+Dämonenkrone
+Borbarad
+Borbaradianer
+Rohal
+Galotta
+Answin von Rabenmund
+Rohaja
+Rohaja von Gareth
+Hal
+Brin
+Reto
+Emer
+Selindian Hal
+Jast Gorsam
+Raidri Conchobair
+Thalionmel
+Liscom von Fasar
+Xeraan
+Helme Haffax
+Haffax
+Phileasson
+Beorn der Blender
+Pardona
+Fenvarien
+Nahema
+Rohezal
+Fran-Horas
+Amene-Horas
+Tulamiden
+Novadi
 Firnelfen
 Auelfen
 Waldelfen
+Halbelfen
+Angroschim
+Brillantzwerge
+Erzzwerge
+Hügelzwerge
+Ambosszwerge
+Achaz
+Echsenmenschen
+Grolme
 Ferkina
-Balsaminde
-Namenlose
-Siebenstreich
+Gjalskerländer
+Nivesen
+Norbarden
+Moha
+Utulu
+Waldmenschen
+Tocamuyac
+Fjarninger
+Zahori
+Maraskaner
+Aranier
+Mittelländer
+Horasier
+Bornländer
+Almadaner
+Svellttaler
+Albernier
+Morfu
+Tatzelwurm
+Krakenmolch
+Höhlendrache
+Kaiserdrache
+Purpurwurm
+Baumdrache
+Riesenlindwurm
+Westwinddrache
+Perldrache
+Mantikor
+Harpyie
+Schrat
+Spektabilität
+Magus
+Magister
+Adeptus
+Akoluth
+Geode
+Scharlatan
+Schelm
+Reichsbehüter
+Reichsbehüterin
+Markgraf
+Junker
+Edler
+Euer Gnaden
+Euer Hochgeboren
+Euer Hochwohlgeboren
+Euer Wohlgeboren
+Euer Erlaucht
+Euer Hochwürden
+Weiße Gilde
+Graue Gilde
+Schwarze Gilde
+Bund des Weißen Pentagramms
+Große Graue Gilde des Geistes
+Bruderschaft der Wissenden
+Bannstrahler
+Golgariten
+Ardariten
+Draconiter
+Noioniten
+Theaterritter
+Sonnenlegion
+Praios-Kirche
+Rondra-Kirche
+Boron-Kirche
+Travia-Kirche
+Hesinde-Kirche
+Phex-Kirche
+Rahja-Kirche
+Peraine-Kirche
+Hand Borons
+Windstag
+Erdstag
+Markttag
+Praiostag
+Rohalstag
+Feuertag
+Wassertag
+Götterlauf
+Tsatag
+Batzen
+Groschen
+Oreal
+Dublone
+Marawedi
+Zechine
+Muwlat
+Horasdor
+Abenteuerpunkte
+Astralenergie
+Karmaenergie
+Lebensenergie
+Fertigkeitspunkte
+Qualitätsstufe
+Seelenkraft
+Zähigkeit
+Wundschwelle
+Sonderfertigkeit
+Rüstungsschutz
+Trefferpunkte
+Talentwert
+Zauberprobe
+Liturgie
+Zeremonie
+Armatrutz
+Axxeleratus
+Bannbaladin
+Blick in die Gedanken
+Blitz dich find
+Corpofesso
+Duplicatus
+Eisenrost
+Exposami
+Flim Flam
+Flim Flam Funkel
+Foramen
+Fulminictus
+Fulminictus Donnerkeil
+Ignifaxius Flammenstrahl
+Gardianum
+Große Gier
+Horriphobus
+Ignisphaero
+Invocatio minor
+Invocatio maior
+Klarum Purum
+Motoricus
+Odem Arcanum
+Paralysis
+Penetrizzel
+Plumbumbarum
+Psychostabilis
+Respondami
+Silentium
+Somnigravis
+Spinnenlauf
+Visibili
+Analys Arcanstruktur
+Applicatus
+Arcanovi
+Attributo
+Chamaelioni
+Claudibus
+Destructibo
+Ecliptifactus
+Fortifex
+Ignorantia
+Pentagramma
+Reversalis
+Salander
+Salander Mutanderer
+Satuarias Herrlichkeit
+Transversalis
+Krähenruf
+Hexenknoten
+Harmlose Gestalt
+Hexenblick
+Krötensprung
+Katzenaugen
+Hexenspeichel
+Unitatio
+Adlerauge
+Abvenenum
+Höllenpein
+Rondrakamm
+Khunchomer
+Doppelkhunchomer
+Amazonensäbel
+Felsspalter
+Lindwurmschläger
+Orknase
+Tuzakmesser
+Wolfsmesser
+Waqqif
+Sklaventod
+Robbentöter
+# Verhörer
+Praeuslauf => Praioslauf
+Preuslauf => Praioslauf
+Al Anfa => Al'Anfa
+Ignifaxus => Ignifaxius
+Aventurin => Aventurien
+Fex => Phex
