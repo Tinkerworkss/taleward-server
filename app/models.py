@@ -209,6 +209,8 @@ class GameSession(Base):
     # 0.4.6: erneute Transkription mit korrigierter Namenshilfe (höchstens zweimal; läuft gerade → True)
     nachtranskriptionen: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     nachtranskription: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Resolver-Snapshot der Kurzliste, die das aktuell gespeicherte Transkript tatsächlich gesehen hat.
+    hotword_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     state_updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
