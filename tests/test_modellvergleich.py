@@ -123,6 +123,34 @@ def test_modellvergleich_nur_ledger_ueberspringt_recap_pipeline(client, world, d
     assert any("Ledger (Schatten v4)" in m for m in meldungen)
 
 
+
+def test_modellvergleich_nur_ledger_mit_atomic_gold_exportiert_harness(client, world, dbs, tmp_path):
+    from app import modellvergleich as mv
+
+    s = _zur_pruefung(client, world, dbs, tmp_path)
+    server = mv.Server("http://testserver", client=client)
+    server.anmelden("anna", "geheim123")
+    gold = {
+        "version": 1, "name": "unit", "scope": "selective",
+        "facts": [{"id": "x", "match": {"assertions": [{
+            "subject": ["Alrik"], "property": "life_status", "value": ["alive"]
+        }]}}],
+        "expectedNonClaims": [],
+    }
+    einst = mv.Einstellungen(nur_ledger=True, laeufe=1, ledger_gold=gold)
+    ordner = mv.ausfuehren(server, s["id"], [("a:1", 12288)], "", 12288,
+                           "http://ollama", tmp_path / "gold", lambda _x: None,
+                           client=_ollama([]), einst=einst)
+    d = ordner / "a_1-ctx12288"
+    harness = json.loads((d / "ledger-harness.json").read_text(encoding="utf-8"))
+    erg = json.loads((d / "ergebnis.json").read_text(encoding="utf-8"))
+    assert harness["goldName"] == "unit"
+    assert harness["metrics"]["factsTotal"] == 1
+    assert (d / "ledger-harness.md").is_file()
+    assert erg["ledgerHarnessMetrics"]["factsTotal"] == 1
+    assert erg["ledger_harness"] is None
+
+
 def test_modelle_lesen():
     from app.modellvergleich import modelle_lesen
 
