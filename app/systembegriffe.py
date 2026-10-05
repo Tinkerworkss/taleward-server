@@ -152,7 +152,7 @@ def erkennen(system: str | None, system_name: str | None = None) -> Begriffslist
         return None
 
     # Solange keine eigene 40k-Liste existiert, Fantasy-Warhammer nicht aus einem 40k-Namen ableiten.
-    if any(x in name.split() for x in ("40k", "40000")) or _phrase_enthalten(name, "dark heresy") \
+    if any(x in name.split() for x in ("40k", "40000")) or _phrase_enthalten(name, "40 000") or _phrase_enthalten(name, "dark heresy") \
             or _phrase_enthalten(name, "wrath glory") or _phrase_enthalten(name, "rogue trader"):
         return None
 
