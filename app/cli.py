@@ -204,6 +204,9 @@ def probelauf(
     namen: str = typer.Option(None, "--namen", help="Kampagnen-/Eigennamen, kommagetrennt"),
     system: str = typer.Option(None, "--system", help="Rollenspielsystem, z. B. shadowrun, dsa oder \"Vampire V5\""),
     hotword_modus: str = typer.Option("dynamic", "--hotword-modus", help="none | system | dynamic"),
+    hotword_limit: int = typer.Option(
+        None, "--hotword-limit", help="Benchmark: maximal 1–80 aktive Hotwords; ohne Angabe normales Budget"
+    ),
     kontext_datei: str = typer.Option(None, "--kontext-datei",
                                      help="UTF-8-Text mit Kampagnenkontext; promoted passende Stufe-B-Begriffe"),
     ohne_sprecher: bool = typer.Option(False, "--ohne-sprecher", help="Nur transkribieren, keine Sprechertrennung"),
@@ -228,6 +231,9 @@ def probelauf(
     if modus not in {"none", "system", "dynamic"}:
         typer.echo("--hotword-modus muss none, system oder dynamic sein.", err=True)
         raise typer.Exit(2)
+    if hotword_limit is not None and not 1 <= hotword_limit <= namenshilfe.MAX_BEGRIFFE:
+        typer.echo(f"--hotword-limit muss zwischen 1 und {namenshilfe.MAX_BEGRIFFE} liegen.", err=True)
+        raise typer.Exit(2)
     manuell = [x.strip() for x in (namen or "").split(",") if x.strip()]
     kontext: list[str] = []
     if kontext_datei:
@@ -238,15 +244,16 @@ def probelauf(
         kontext = [kp.read_text(encoding="utf-8")]
 
     auswahl = namenshilfe.statische_auswahl(
-        system, None, sprache, extra=manuell, kontext=kontext, modus=modus
+        system, None, sprache, extra=manuell, kontext=kontext, modus=modus, hotword_limit=hotword_limit
     )
     if system and auswahl.system is None:
         typer.echo(f"Unbekanntes oder nicht validiertes System für Hotwords: {system}", err=True)
         raise typer.Exit(2)
     namen_effektiv = ",".join(auswahl.begriffe) if auswahl.begriffe else None
+    limit_text = str(hotword_limit) if hotword_limit is not None else "normal"
     typer.echo(
         f"Hotwords: Modus={modus}, System={auswahl.system or '–'}, Sprache={sprache}, "
-        f"{len(auswahl.begriffe)} Begriffe, Fingerprint={auswahl.fingerprint[:12]}"
+        f"Limit={limit_text}, {len(auswahl.begriffe)} Begriffe, Fingerprint={auswahl.fingerprint[:12]}"
     )
 
     ausgabe_basis = Path(ziel).expanduser() if ziel else s.data_dir / "probelauf"
