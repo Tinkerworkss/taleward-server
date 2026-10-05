@@ -1,0 +1,359 @@
+# Warhammer Fantasy Rollenspiel – Begriffe für die Transkription
+# Erkennungsnamen: warhammer, wfrp, wfrsp, warhammer fantasy, warhammer fantasy rollenspiel, warhammer fantasy roleplay, alte welt, old world, imperium
+# Stufe A (höchstens 40, häufigste zuerst)
+Imperium
+Sigmar
+Altdorf
+Reikland
+Middenheim
+Nuln
+Ubersreik
+Bögenhafen
+Marienburg
+Ulric
+Morr
+Shallya
+Ranald
+Taal
+Myrmidia
+Verena
+Manann
+Khorne
+Nurgle
+Tzeentch
+Slaanesh
+Skaven
+Warpstein
+Morrslieb
+Mannslieb
+Goldkronen
+Silberschillinge
+Messingpfennige
+Hexenjäger
+Tiermenschen
+Grünhäute
+Schicksalspunkte
+Glückspunkte
+Korruption
+Erfolgsgrade
+Advantage
+Kislev
+Bretonia
+Sylvania
+Fate Points
+# Stufe B
+Alte Welt
+Old World
+Empire
+Talabheim
+Averheim
+Wissenburg
+Kemperbad
+Carroburg
+Grünburg
+Middenland
+Nordland
+Ostland
+Hochland
+Talabecland
+Stirland
+Averland
+Wissenland
+Ostermark
+Mootland
+Moot
+Drakwald
+Reik
+Talabec
+Stir
+Aver
+Sol
+Graue Berge
+Schwarze Berge
+Weltrandgebirge
+Worlds Edge Mountains
+Mittelberge
+Bretonnia
+Tilea
+Estalia
+Grenzgrafschaften
+Border Princes
+Norsca
+Arabia
+Lustria
+Ulthuan
+Naggaroth
+Albion
+Cathay
+Nippon
+Khemri
+Nehekhara
+Karaz-a-Karak
+Karak Kadrin
+Karak Acht Gipfel
+Karak Eight Peaks
+Zhufbar
+Barak Varr
+Karak Izor
+Karak Hirn
+Karak Norn
+Karak Azgal
+Praag
+Erengrad
+Couronne
+Miragliano
+Magritta
+Mousillon
+Chaoswüste
+Chaos Wastes
+Handrich
+Rhya
+Khaine
+Grungni
+Valaya
+Grimnir
+Isha
+Asuryan
+Lileath
+Hashut
+Chaos Undivided
+Ungeteiltes Chaos
+Gehörnte Ratte
+Horned Rat
+Hochelfen
+Waldelfen
+Dunkelelfen
+Halblinge
+Ogers
+Oger
+Orks
+Goblins
+Snotlinge
+Snotlings
+Zwerge
+Slayer
+Trollslayer
+Chaoskrieger
+Chaosbarbaren
+Chaosbrut
+Chaos Spawn
+Gor
+Ungor
+Bestigor
+Minotauren
+Mutant
+Mutanten
+Mutation
+Ghul
+Vampirfürsten
+Grabkönige
+Tomb Kings
+Vlad von Carstein
+Mannfred von Carstein
+Konrad von Carstein
+Von Carstein
+Nagash
+Heinrich Kemmler
+Karl Franz
+Kaiser Karl Franz
+Magnus der Fromme
+Teclis
+Volkmar
+Großtheogonist
+Grand Theogonist
+Ar-Ulric
+Kurfürsten
+Elector Counts
+Boris Todbringer
+Emmanuelle von Liebwitz
+Archaon
+Be'lakor
+Gotrek Gurnisson
+Gotrek
+Felix Jaeger
+Winde der Magie
+Winds of Magic
+Aethyr
+Ghur
+Ghyran
+Chamon
+Aqshy
+Hysh
+Azyr
+Ulgu
+Shyish
+Dhar
+Qhaysh
+Colleges of Magic
+Kollegien der Magie
+Amber College
+Bright College
+Celestial College
+Gold College
+Grey College
+Jade College
+Light College
+Amethyst College
+Hexer
+Hedge Witch
+Heckenhexe
+Sigmarpriester
+Sigmarit
+Templer
+Reiksgarde
+Reiksguard
+Ritter des Weißen Wolfs
+Knights of the White Wolf
+Pantherritter
+Knights Panther
+Orden des Silbernen Hammers
+Order of the Silver Hammer
+Purple Hand
+Purpurne Hand
+Red Crown
+Rote Krone
+Imperial Calendar
+Kaiserlicher Kalender
+Nachexen
+Jahrdrung
+Pflugzeit
+Sigmarzeit
+Sommerzeit
+Vorgeheim
+Nachgeheim
+Erntezeit
+Brauzeit
+Kaldezeit
+Ulriczeit
+Vorhexen
+Wellentag
+Aubentag
+Marktag
+Backertag
+Bezahltag
+Konistag
+Angestag
+Festag
+Hexensnacht
+Geheimnisnacht
+Mondstille
+Sonnstill
+Mittherbst
+Mitterfruhl
+Gold Crown
+Silver Shilling
+Brass Penny
+Goldkrone
+Silberschilling
+Messingpfennig
+Fortune Points
+Resilience
+Resolve
+Corruption
+Critical Wounds
+Success Levels
+Weapon Skill
+Ballistic Skill
+Kampfgeschick
+Ballistische Fertigkeit
+Willpower
+Fellowship
+Careers
+Karriere
+Rattenfänger
+Rat Catcher
+Witch Hunter
+Grail Knight
+Gralsritter
+Herrin des Sees
+Lady of the Lake
+Fay Enchantress
+Feenzauberin
+Warpstone
+Warplightning
+Rattenogre
+Rat Ogre
+Clan Eshin
+Clan Moulder
+Clan Pestilens
+Clan Skryre
+Grauer Seher
+Grey Seer
+Black Orcs
+Schwarzorks
+Wolfsreiter
+Orc Boyz
+Ungrim Ironfist
+Thorgrim Grudgebearer
+Buch des Grolls
+Book of Grudges
+Dawi
+Grobi
+Umgi
+Elgi
+Asur
+Druchii
+Asrai
+Athel Loren
+Laurëlorn
+Drachenfels
+Konstantin Drachenfels
+Der Feind im Innern
+The Enemy Within
+Sturm des Chaos
+Storm of Chaos
+Sigmars Hammer
+Ghal Maraz
+Reiksmarschall
+Hochkönig
+Altdorfer
+Middenheimer
+Reikländer
+Kislevit
+Bretone
+Norse
+Kurgan
+Hung
+Ulthuaner
+Clan Mors
+Clan Rictus
+Skavenblight
+Lahmia
+Blutdrachen
+Blood Dragons
+Necrarch
+Strigoi
+Neferata
+Settra
+Grimgor Ironhide
+Stromfels
+Dazh
+Tor
+Ursun
+Eiskönigin
+Ice Queen
+Katarin
+Kossars
+Burgomeister
+Teutogen
+Unberogen
+Sigmar Heldenhammer
+Heldenhammer
+Schwarzfeuerpass
+Black Fire Pass
+Solkan
+Mordheim
+Hergig
+Wolfenburg
+Salzenmund
+Bechafen
+Pfeildorf
+Streissen
+Grissenwald
+Weissbruck
+# Verhörer
+Bögen Hafen => Bögenhafen
+Überreik => Ubersreik
+Ubersreich => Ubersreik
+Zentsch => Tzeentch
+Slanesh => Slaanesh
