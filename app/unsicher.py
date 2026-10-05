@@ -144,7 +144,7 @@ def begriffe(db: Session, s: GameSession) -> list[dict]:
             "heard": heard, "alternatives": alternativen, "occurrences": vorkommen,
             "confidence": max(0.0, min(1.0, sicherheit)), "examples": g["beispiele"],
             "suggestedEntryId": bester[2] if bester else None, "suggestedMemberId": bester[3] if bester else None,
-            "_rang": (bool(passend), vorkommen * (1 - sicherheit)),
+            "_rang": (bool(direkt or passend), vorkommen * (1 - sicherheit)),
         })
     aus.sort(key=lambda t: t["_rang"], reverse=True)
     for t in aus:
