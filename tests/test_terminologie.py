@@ -47,3 +47,12 @@ def test_kampagnenbegriff_normalisiert_nur_orthografie():
     )
     assert neu == "Mr. Johnson wartet bei Saeder-Krupp."
     assert dict(zaehler) == {"orthography": 1, "system": 1}
+
+
+def test_echter_kampagnenname_schuetzt_vor_globaler_systemkorrektur():
+    c = kampagne()
+    neu, zaehler = terminologie.korrigieren(
+        "Tschummer kommt herein.", c, kanonische_begriffe=["Tschummer"]
+    )
+    assert neu == "Tschummer kommt herein."
+    assert dict(zaehler) == {}
