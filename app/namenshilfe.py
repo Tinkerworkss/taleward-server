@@ -136,7 +136,9 @@ def _packen(gruppen: list[list[str]]) -> list[str]:
     laenge = 0
     for gruppe in gruppen:
         for roh in gruppe:
-            n = " ".join(str(roh or "").split())[:MAX_LAENGE]
+            n = " ".join(str(roh or "").split())
+            if len(n) > MAX_LAENGE:
+                continue  # lange Systemphrasen nicht verstümmelt als Hotword senden
             k = n.casefold()
             if not n or k in gesehen:
                 continue
@@ -163,8 +165,8 @@ def fuer_kampagne(db: Session, campaign: Campaign) -> list[str]:
     raus = {x.casefold() for x in d["entfernt"]}
     basis = [n for n in abgeleitet(db, campaign) if n.casefold() not in raus]
     wichtig, rest = basis[:12], basis[12:]
-    promoviert = list(begriffslisten.promovierte_stufe_b(
+    promoviert = [n for n in begriffslisten.promovierte_stufe_b(
         campaign.system, campaign.system_name, _kontexttexte(db, campaign), limit=MAX_PROMOVIERT
-    ))
-    stufe_a = list(systembegriffe(campaign.system, campaign.system_name))
+    ) if n.casefold() not in raus]
+    stufe_a = [n for n in systembegriffe(campaign.system, campaign.system_name) if n.casefold() not in raus]
     return _packen([d["extra"], wichtig, promoviert, stufe_a, rest])
