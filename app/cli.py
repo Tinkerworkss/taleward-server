@@ -203,7 +203,10 @@ def probelauf(
     max_sprecher: int = typer.Option(None, "--max-sprecher"),
     namen: str = typer.Option(None, "--namen", help="Kampagnen-/Eigennamen, kommagetrennt"),
     system: str = typer.Option(None, "--system", help="Rollenspielsystem, z. B. shadowrun, dsa oder \"Vampire V5\""),
-    hotword_modus: str = typer.Option("dynamic", "--hotword-modus", help="none | system | dynamic"),
+    hotword_modus: str = typer.Option(
+        "none", "--hotword-modus",
+        help="Benchmark-Hotwords: none (Produktionsbaseline) | system | dynamic"
+    ),
     hotword_limit: int = typer.Option(
         None, "--hotword-limit", help="Benchmark: maximal 1–80 aktive Hotwords; ohne Angabe normales Budget"
     ),
