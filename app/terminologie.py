@@ -52,11 +52,15 @@ def _orthografie_varianten(kanonisch: str) -> set[str]:
 def regeln(campaign, kanonische_begriffe=()) -> list[Regel]:
     liste = begriffslisten.erkennen(campaign.system, campaign.system_name)
     mapping: dict[str, Regel] = {}
+    geschuetzt = {str(x).casefold() for x in kanonische_begriffe if str(x).strip()}
+    geschuetzt |= namenshilfe.ignoriert(campaign)
 
-    # Systemregeln zuerst.
+    # Systemregeln zuerst. Ein echter Kampagnenbegriff mit genau dieser Schreibweise
+    # schlägt die globale Verhörerregel (z. B. ein NPC, der tatsächlich "Tschummer" heißt).
     if liste is not None:
         for gehoert, korrekt in liste.verhoerer_fuer(campaign.language):
-            mapping[gehoert.casefold()] = Regel(gehoert, korrekt, "system")
+            if gehoert.casefold() not in geschuetzt:
+                mapping[gehoert.casefold()] = Regel(gehoert, korrekt, "system")
 
     # Orthografie nur, wenn eine Variante genau einem kanonischen Begriff entspricht.
     varianten: dict[str, set[str]] = {}
