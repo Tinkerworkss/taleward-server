@@ -1,41 +1,356 @@
-# Splittermond – häufige Eigennamen und Begriffe (Schreibhilfe für die Transkription)
+# Splittermond – Begriffe für die Transkription
+# Erkennungsnamen: splittermond, lorakis, splitter mond
+# Stufe A (höchstens 40, häufigste zuerst)
 Lorakis
-Selenia
-Dragorea
-Farukan
-Takasadu
-Arakea
-Pash Anar
-Zwingard
-Mertalischer Städtebund
-Wintholt
-Midstad
-Sadu
-Kintai
-Surmakar
-Jagodien
 Splitterträger
-Splittermond
-Mondzeichen
-Mondpfad
-Feenwelten
-Varg
-Alb
-Gnom
-Zwerg
-Ticks
-Tickleiste
 Splitterpunkte
-Fokus
-Lebenspunkte
-Heldengrad
-Meisterschaft
-Magieschule
-Stärke
-Fertigkeit
+Mondzeichen
+Tickleiste
+Ticks
 Lunare
+Telare
+Solare
+Dragorea
+Selenia
+Zwingard
+Wintholt
+Patalis
+Farukan
+Mertalischer Städtebund
+Takasadu
+Pash Anar
+Arakea
+Frostlande
+Sarnburg
+Feenwelt
+Mondfall
+Mondpfade
+Alben
+Varge
 Drachlinge
-Vargen
-Albenhain
-Lichtalben
-Nachtalben
+Schwertalben
+Heldengrad
+Sicherheitswurf
+Risikowurf
+Erfolgsgrade
+Geistiger Widerstand
+Körperlicher Widerstand
+Kanalisierter Fokus
+Erschöpfter Fokus
+Verzehrter Fokus
+Zhoujiang
+Kintai
+Splittermond
+# Stufe B
+Splitterpunkt
+Lunar
+Telar
+Solar
+Splitter
+Fokus
+Standardwurf
+Triumph
+Meisterschaft
+Meisterschaften
+Schwerpunkt
+Stärken
+Ressourcen
+Gefolge
+Gesundheitsstufen
+Wundabzüge
+Lebenspunkte
+Erfahrungspunkte
+Steigerungskosten
+Mystik
+Willenskraft
+Ausstrahlung
+Beweglichkeit
+Blutiges Antlitz des Mondes
+Das zweite Gesicht
+Der Blitz
+Der Fels
+Der Spieler
+Freundschaft der Trabanten
+Geist der Gedanken
+Gunst des reichen Mannes
+Omen des schwarzen Mondes
+Segen der Mondkraft
+Bannmagie
+Beherrschungsmagie
+Bewegungsmagie
+Erkenntnismagie
+Felsmagie
+Feuermagie
+Heilungsmagie
+Illusionsmagie
+Kampfmagie
+Lichtmagie
+Naturmagie
+Schattenmagie
+Schicksalsmagie
+Schutzmagie
+Stärkungsmagie
+Todesmagie
+Verwandlungsmagie
+Wassermagie
+Windmagie
+Smaragdküste
+Länder am Binnenmeer
+Exotenküste
+Galonea
+Kristallsee
+Blutgrasweite
+Magura-Archipel
+Dalmarisches Reich
+Reich des himmlischen Kranichs
+Mahaluu
+Gotor
+Surmakar
+Verheerte Lande
+Immersommerwald
+Westergroms
+Ioria
+Sadu
+Unreich
+Termark
+Kungaitan
+Jaguardschungel
+Herzogtum Calten
+Calten
+Arwinger Mark
+Gondalis
+Shahandir
+Badashan
+Pashtar
+Demerai
+Aitushar
+Inani
+Teleshai
+Auge von Telwari
+Randmeer
+Tiefdunkel
+Schattenwand
+Himmelsraum
+Anderswelten
+Mondsteinkriege
+Dracurische Herrschaft
+Drachlingsherrschaft
+Bund der Bewahrer
+Wächterbund
+Seealben
+Dämmeralben
+Lamassu
+Rattlinge
+Raugarr
+Frynjord
+Taigavarge
+Keshabid
+Tarr
+Mond-Trias
+Farukanisches Pantheon
+Titanen der Elemente
+Himmlische Familie
+Göttliches Rudel
+Himmlisches Rudel
+Pantheon der See
+Pilzpantheon
+Töchter der Götter
+Götterwelt des Jaguardschungels
+Fünf Tugenden der Kintarai
+Kintarai
+Fasnirr der Wanderer
+Splitterwiki
+Uhrwerk Verlag
+Aand
+Adalu
+Aewynna
+Agomai
+Ahas
+Akahara
+Alwodin
+Amantia
+Anding
+Anios
+Asha-Vera
+Atlatoto
+Avyn
+Balang
+Baowayara
+Baruo
+Bawalin
+Cabrid
+Cashu
+Cictlapactona
+Cuapochtli
+Dagener
+Darunwal
+Dernwan
+Din-Loh
+Dornius
+Drugon
+Durbash
+Egaris
+Errezid
+Eughos
+Fatargon
+Firrgin
+Fiure
+Fleadyne
+Furbrom
+Gagamba
+Gasharika
+Gol Gara
+Gorri
+Grimman
+Gunwar
+Hamion
+Valtara
+Hanib
+Hapzhab
+Hekaria
+Helarianakarathaa
+Herilie
+Hüeng
+Iosaris
+Iruka
+Isageir
+Isgar
+Itztochitl
+Jaga-Mersaj
+Jarakah
+Jasane
+Jausei
+Jesavis
+Jivon
+Kanatauna
+Karzadai
+Kashrok
+Katiar
+Krarach
+Kronar
+Kunmai
+Liabar
+Lukton
+Luseria
+Lyxa
+Lyxerion
+Maddad
+Mairir
+Mak-Manuu
+Mama Wawilla
+Manigong
+Manildan
+Mersiela
+Monbo Gara
+Morkai
+Moroun
+Morri
+Morwano
+Myuriko
+Nahid
+Naraka
+Niangur
+Niantaui
+Nigali
+Nunogoumbawatahang
+Nurghon
+Oma Barka
+Onkel Swentu
+Padraik
+Pajur
+Papa Drugo
+Porukalaos
+Prllklegutr
+Pudjari
+Pudschu
+Quatikul
+Rahidi
+Rim Gara
+Ronash
+Ronay
+Rraika
+Ruchorr
+Shalenki
+Shandirr
+Shanezi
+Shar Anar
+Shasandiri
+Sheiniu
+Siala
+Sinbara
+Skalangor
+Starrekyng
+Sunja
+Swibalga
+Tamtamkamara
+Tanglang
+Tante Kanja
+Taomai
+Tayru
+Thatarr
+Tomi Gara
+Turagorr
+Ulmon
+Unggoy
+Unjurai
+Urgano
+Uryat
+Valkyrji
+Vangara
+Vanusuri
+Varnu
+Vi'Ela
+Vordan
+Wesantia
+Wesinta
+Wugei
+Yayu Shai
+Yelat
+Yonnus
+Ysgarr
+Zarusz
+Zeshid
+Zul Gara
+Zurasi
+Zuru
+Myra
+Damos
+Theris
+Caran
+Lania
+Shura
+Sylar
+Garus
+Jord
+Midstad
+Wyrmbann-Orden
+Dakardsmyr
+Zirkel der Zinne
+Fee
+Feen
+Flimmerfee
+Feenblut
+Feenwesen
+Lorakier
+Absolute Stille
+Ahnenrat
+Allerweltsgesicht
+Altersgespür
+Asche zu Asche
+Atemkontrolle
+Auftrieb
+Befehlswort
+Betäubungsschlag
+Blitzer
+Blitzschild
+Böses Omen
+Brennender Zorn
+Dahinsiechen
+Dämonenaugen
+Donnerschlag
+Dornenranken
+Druckwelle
+Antimagischer Wall
+Arkaner Bogenschütze
+# Verhörer
+Splitter Mond => Splittermond
