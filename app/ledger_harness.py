@@ -23,7 +23,7 @@ _ASSERTION = {
     "type": "object",
     "properties": {
         "subject": _ALIAS,
-        "property": {"type": "string", "minLength": 1},
+        "property": {"anyOf": [{"type": "string", "minLength": 1}, _ALIAS]},
         "value": _ALIAS,
         "epistemic": _ALIAS,
     },
@@ -41,6 +41,11 @@ _MATCH = {
         "kindsAny": {"type": "array", "items": {"type": "string"}},
         "tagsAll": {"type": "array", "items": {"type": "string"}},
         "assertions": {"type": "array", "items": _ASSERTION},
+        "timeRange": {
+            "type": "array", "minItems": 2, "maxItems": 2,
+            "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number", "minimum": 0}],
+            "items": False,
+        },
     },
     "minProperties": 1,
     "additionalProperties": False,
@@ -133,7 +138,8 @@ def _assertion_passt(a: dict, spec: dict) -> bool:
         return False
     if not _alias_passt(a.get("subject"), spec.get("subject") or []):
         return False
-    if str(a.get("property") or "") != str(spec.get("property") or ""):
+    props = spec.get("property") if isinstance(spec.get("property"), list) else [spec.get("property")]
+    if str(a.get("property") or "") not in {str(x) for x in props if x}:
         return False
     if not _alias_passt(a.get("value"), spec.get("value") or []):
         return False
@@ -155,6 +161,14 @@ def _event_pruefen(event: dict, spec: dict) -> tuple[bool, int, int, dict]:
             total += 1
         if checks:
             details[feld] = checks
+
+    if spec.get("timeRange"):
+        start, end = spec["timeRange"]
+        t = event.get("time")
+        ok = isinstance(t, (int, float)) and start <= float(t) <= end
+        details["timeRange"] = ok
+        score += int(ok)
+        total += 1
 
     if spec.get("kindsAny"):
         ok = any(str(x) in set(spec["kindsAny"]) for x in event.get("kinds") or [])
