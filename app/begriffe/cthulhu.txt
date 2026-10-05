@@ -1,45 +1,373 @@
-# Cthulhu – häufige Eigennamen und Begriffe (Schreibhilfe für die Transkription)
+# Cthulhu / Call of Cthulhu – Begriffe für die Transkription
+# Erkennungsnamen: cthulhu, call of cthulhu, coc, cthulhu 7, pulp cthulhu, delta green, cthulhu now, lovecraft
+# Stufe A (höchstens 40, häufigste zuerst)
+Cthulhu
+Investigatoren
+Investigator
+Stabilität
+Sanity
+Stabilitätswurf
+Cthulhu-Mythos
+Yog-Sothoth
+Nyarlathotep
+Azathoth
+Shub-Niggurath
+Hastur
+Dagon
 Arkham
 Innsmouth
 Dunwich
 Kingsport
 Miskatonic
+Miskatonic University
 Necronomicon
-Cthulhu
-Nyarlathotep
-Azathoth
-Yog-Sothoth
-Shub-Niggurath
-Hastur
-Dagon
-Hydra
 R'lyeh
-Leng
-Kadath
-Yuggoth
+Tiefe Wesen
+Deep Ones
 Mi-Go
 Shoggoth
-Tiefe Wesen
-Ghule
 Byakhee
-Dhole
+Yuggoth
+Verborgenes erkennen
+Spot Hidden
+Bibliotheksnutzung
+Library Use
+Bonuswürfel
+Maluswürfel
+Bonus Die
+Penalty Die
+Pushed Roll
+Keeper
+Abdul Alhazred
 Elder Sign
 Älteres Zeichen
-Mythos
-Cthulhu-Mythos
-Investigator
-Investigatorin
-Spielleiter
-Keeper
-Stabilität
-Geistige Stabilität
+# Stufe B
+Stabilitätspunkte
+Sanity Roll
+Sanity Points
+Luck
 Glückswurf
-Bibliotheksnutzung
+Mythoswissen
+Bout of Madness
+Temporary Insanity
+Indefinite Insanity
+Hard Success
+Extreme Success
+Fumble
+Credit Rating
+Occult
 Okkultismus
-Lovecraft
-Pnakotische Manuskripte
-Unaussprechliche Kulte
+Horchen
+Listen
+Psychologie
+Erste Hilfe
+First Aid
+Überreden
+Überzeugen
+Persuade
+Fast Talk
+Intimidate
+Charm
+Dodge
+Ausweichen
+Spot Hidden Roll
+Idea Roll
+Know Roll
+Luck Points
+Magic Points
+Magiepunkte
+Hit Points
+Trefferpunkte
+Damage Bonus
+Schadensbonus
+Build
+Statur
+Major Wound
+Schwere Wunde
+Mythos Tome
+Spielleiter
+Yithian
+Yithianer
+Große Rasse von Yith
+Great Race of Yith
+Elder Things
+Ältere Wesen
+Nightgaunts
+Dürre Nachtgestalten
+Ghoul
+Ghule
+Gugs
+Ghasts
+Dholes
+Hounds of Tindalos
+Hunde von Tindalos
+Dimensional Shambler
+Star Vampire
+Flying Polyps
+Moon-Beasts
+Mondbestien
+Fire Vampires
+Formless Spawn
+Serpent People
+Schlangenmenschen
+Dark Young
+Dunkle Junge
+Chthonians
+Hunting Horror
+Servitor of the Outer Gods
+Tcho-Tcho
+Voormis
+Gnoph-Keh
+Lloigor
+Colour out of Space
+Die Farbe aus dem All
+Great Old Ones
+Große Alte
+Outer Gods
+Äußere Götter
+Elder Gods
+Ältere Götter
+Old Ones
+Mother Hydra
+Hydra
+Tsathoggua
+Ithaqua
+Cthugha
+Nodens
+Yig
+Y'golonac
+Glaaki
+Gla'aki
+Shudde M'ell
+Chaugnar Faugn
+Rhan-Tegoth
+Ghatanothoa
+Zhar
+Bokrug
+Abhoth
+Atlach-Nacha
+Yibb-Tstll
+Daoloth
+Nug
+Yeb
+Zoth-Ommog
+Gol-goroth
+Ubbo-Sathla
+Bast
+Nephren-Ka
+Schwarzer Pharao
+Black Pharaoh
+Crawling Chaos
+Kriechendes Chaos
+Haunter of the Dark
+Der Schwarze Mann
+Black Goat of the Woods
+Schwarze Ziege der Wälder
+King in Yellow
+Der König in Gelb
+Yellow Sign
+Gelbes Zeichen
+Leng
+Plateau of Leng
+Hochebene von Leng
+Kadath
+Carcosa
+Hali
+Lake of Hali
+Celaeno
+Ulthar
+Dylath-Leen
+Celephaïs
+Sarnath
+Irem
+Pnakotus
+Aylesbury
+Providence
+Boston
+Mountains of Madness
+Berge des Wahnsinns
+Dreamlands
+Traumlande
+Dunwich Horror
+Devil Reef
+Teufelsriff
+Al Azif
 De Vermis Mysteriis
-Celaeno-Fragmente
-Großer Alter
-Äußerer Gott
+Unaussprechliche Kulte
+Cultes des Goules
+Pnakotic Manuscripts
+Pnakotische Manuskripte
+Book of Eibon
+Buch Eibon
+R'lyeh Text
+Eltdown Shards
+Revelations of Glaaki
+Seven Cryptical Books of Hsan
+Liber Ivonis
+Book of Dzyan
+Eibon
+Randolph Carter
+Herbert West
+Henry Armitage
+Wilbur Whateley
+Lavinia Whateley
+Whateley
+Joseph Curwen
+Charles Dexter Ward
+Keziah Mason
+Brown Jenkin
+Asenath Waite
+Ephraim Waite
+Obed Marsh
+Zadok Allen
+Nahum Gardner
+Erich Zann
+George Gammell Angell
+Francis Wayland Thurston
+Gustaf Johansen
+Legrasse
+Richard Upton Pickman
+Pickman
+Nathaniel Peaslee
+William Dyer
+Danforth
+Walter Gilman
+Lovecraft
+Esoteric Order of Dagon
+Esoterischer Orden des Dagon
+Silver Twilight
+Orden des Silbernen Zwielichts
+Starry Wisdom
+Sternenweisheit
+Cthulhu Fhtagn
+Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn
+Iä
+Voorish Sign
+Pulver des Ibn-Ghazi
+Powder of Ibn-Ghazi
+Dust of Suleiman
+Shrivelling
+Mythos Spell
+Cthulhu by Gaslight
+Gaslight
+Delta Green
+Pulp Cthulhu
+Cthulhu Now
+Masks of Nyarlathotep
+Horror on the Orient Express
+Beyond the Mountains of Madness
+Corbitt House
+Pegasus Spiele
+Chaosium
+1920er
+Prohibition
+Accounting
+Anthropology
+Appraise
+Archaeology
+Climb
+Disguise
+Drive Auto
+Electrical Repair
+Fighting Brawl
+Firearms
+Handgun
+Rifle
+Shotgun
+Jump
+Law
+Locksmith
+Mechanical Repair
+Natural World
+Navigate
+Operate Heavy Machinery
+Psychoanalysis
+Ride
+Stealth
+Swim
+Throw
+Track
+Anthropologie
+Archäologie
+Buchführung
+Elektrische Reparaturen
+Mechanische Reparaturen
+Rechtswesen
+Spurensuche
+Verkleiden
+Einschüchtern
+Finanzkraft
+Handgemenge
+Psychoanalyse
+Naturkunde
+Orientierung
+Appearance
+Education
+Power
+Erscheinung
+Bildung
+Chase
+Verfolgungsjagd
+Insane Insight
+Phobia
+Mania
+Star-spawn of Cthulhu
+Shantak
+Zoog
+Cats of Ulthar
+Nyogtha
+Yidhra
+Bloated Woman
+Black Man
+Exham Priory
+Ponape
+Lomar
+Hyperborea
+Mu
+Commoriom
+Uzuldaroum
+K'n-yan
+N'kai
+Yoth
+Ib
+Unknown Kadath
+The Call of Cthulhu
+The Shadow over Innsmouth
+Schatten über Innsmouth
+At the Mountains of Madness
+The Dunwich Horror
+Das Grauen von Dunwich
+The Whisperer in Darkness
+Der Flüsterer im Dunkeln
+The Dreams in the Witch House
+Herbert West Reanimator
+Clark Ashton Smith
+August Derleth
+Robert W. Chambers
+Ramsey Campbell
+Brian Lumley
+Majestic-12
+Breaking Point
+Handler
+Pulp Talents
+Zanthu Tablets
+G'harne Fragments
+Ponape Scripture
+People of the Monolith
+Thaumaturgical Prodigies in the New-English Canaan
+Contact Ghoul
+Cloud Memory
+Wither Limb
+Mindblast
+Space Mead
+Weltraummet
+Liao
+Plutonian Drug
+# Verhörer
+Kutulu => Cthulhu
+Ktulu => Cthulhu
+Nyarlatotep => Nyarlathotep
+Shub Nigurath => Shub-Niggurath
+Yog Sototh => Yog-Sothoth
+Miskatonik => Miskatonic
+Nekronomikon => Necronomicon
