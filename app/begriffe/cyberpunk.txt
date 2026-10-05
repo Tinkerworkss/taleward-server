@@ -1,0 +1,359 @@
+# Cyberpunk RED / 2020 – Begriffe für die Transkription
+# Erkennungsnamen: cyberpunk, cyberpunk red, cyberpunk 2020, cyberpunk 2077, cp2020, cpred, night city
+# Stufe A (höchstens 40, häufigste zuerst)
+Night City
+Choom
+Preem
+Nova
+Gonk
+Delta
+Eddies
+Eurodollar
+Netrunner
+Solo
+Fixer
+Rockerboy
+Techie
+Medtech
+Nomad
+Edgerunner
+Ripperdoc
+Arasaka
+Militech
+Trauma Team
+NetWatch
+Cyberdeck
+Cyberware
+Chrome
+Cyberpsycho
+Cyberpsychose
+Humanity
+Empathy
+Black ICE
+Braindance
+Combat Zone
+Maelstrom
+Tyger Claws
+Valentinos
+Johnny Silverhand
+Corpo
+Sandevistan
+Kerenzikov
+Mantis Blades
+Flatline
+# Stufe B
+Chooms
+Eurobucks
+Eb
+Edgerunners
+Exec
+Lawman
+Media
+Corpos
+Flatlined
+Chromed
+Borg
+Full Borg
+Wetware
+Meatspace
+Zeroed
+Gato
+Scav
+Scavs
+Boostergang
+Booster
+Max-Tac
+Psycho Squad
+Cyberpsychosis
+Humanity Loss
+Time of the Red
+Fourth Corporate War
+Vierter Konzernkrieg
+4th Corporate War
+DataKrash
+Old Net
+Blackwall
+Hot Zone
+Reclaimers
+Night Market
+Badlands
+Watson
+Heywood
+Pacifica
+Westbrook
+City Center
+Corporate Center
+Little Europe
+Upper Marina
+Old Japantown
+Japantown
+Rancho Coronado
+Santo Domingo
+South Night City
+Northside
+Charter Hill
+Kabuki
+Afterlife
+Animals
+Voodoo Boys
+6th Street
+Mox
+Bozos
+Iron Sights
+Philharmonic Vampyres
+Aldecaldos
+Raffen Shiv
+Wraiths
+Biotechnica
+Petrochem
+SovOil
+Zetatech
+Kang Tao
+Continental Brands
+Danger Gal
+Network 54
+WorldSat
+Ziggurat
+Raven Microcybernetics
+Dynalar
+Rocklin Augmentics
+Kiroshi
+Merrill, Asukaga & Finch
+Orbital Air
+Tsunami Defense Systems
+Malorian Arms
+Budget Arms
+Federated Arms
+Constitutional Arms
+Militech Avenger
+Malorian Arms 3516
+Combat Awareness
+Charismatic Impact
+Interface
+Maker
+Credibility
+Teamwork
+Backup
+Operator
+Moto
+Reflexes
+Cool
+Luck Points
+Hit Points
+Death Save
+Critical Injury
+Stopping Power
+Armor SP
+Lifepath
+Friday Night Firefight
+Autofire
+Suppressive Fire
+Aimed Shot
+Very Heavy Pistol
+NET Architecture
+Daemon
+Hellhound
+Kraken
+Wisp
+Raven
+Asp
+Scorpion
+Liche
+Sabertooth
+Skunk
+Giant
+Jack In
+Jack Out
+Slide
+Zap
+Eye-Dee
+Backdoor
+Cloak
+Pathfinder
+Rache Bartmoss
+R.A.B.I.D.S.
+Alt Cunningham
+Saburo Arasaka
+Yorinobu Arasaka
+Hanako Arasaka
+Rogue Amendiares
+Rogue
+Morgan Blackhand
+Spider Murphy
+Santiago
+Kerry Eurodyne
+Adam Smasher
+Lucius Rhyne
+Donald Lundee
+Panam Palmer
+Jackie Welles
+Viktor Vektor
+Takemura
+Dexter DeShawn
+Evelyn Parker
+Judy Alvarez
+Samurai
+Neural Processor
+Neuralware
+Cyberoptics
+Cyberaudio
+Cyberarm
+Cyberlegs
+Interface Plugs
+Biomonitor
+Skinweave
+Subdermal Armor
+Wolvers
+Big Knucks
+Rippers
+Scratchers
+Slice 'n Dice
+Monowire
+Gorilla Arms
+Projectile Launch System
+Popup Gun
+Smartgun
+Smartgun Link
+Chipware
+Skill Chip
+Datapool
+Cyberpunk RED
+Cyberpunk 2020
+Cyberpunk 2077
+R. Talsorian Games
+Mike Pondsmith
+Pondsmith
+Netrunning
+Netrun
+Gig
+Fixers
+Solos
+Nomads
+Netrunners
+Medtechs
+Techies
+Rockerboys
+Execs
+Eurodollars
+Kiroshi Optics
+Arasaka Tower
+Combat Cab
+Delamain
+Nekomata
+Sandy
+NCPD
+Night City Police Department
+C-SWAT
+CHOOH2
+Kibble
+Synthcoffee
+Sixth Street
+Pacifica Combat Zone
+Nomad Families
+Arasaka Security
+Militech International Armaments
+Infocomp
+Euro Business Machines
+EBM
+Microtech
+International Electric Corporation
+IEC
+Kendachi
+Sternmeyer
+Towa Manufacturing
+Militech Ronin
+Armalite 44
+Sternmeyer Type 35
+Arasaka Rapid Assault 12
+Kendachi Monoknife
+Kendachi Mono-Three
+Federated Arms X-22
+Dai Lung
+Speedware
+Boosterware
+Reflex Boost
+Cyberoptic
+Times Square Marquee
+Teleoptics
+Low Light
+Image Enhancement
+Anti-Dazzle
+Targeting Scope
+Chipware Socket
+Toxin Binders
+Nasal Filters
+Grafted Muscle
+Bone Lace
+Pain Editor
+Tactile Boost
+Olfactory Boost
+Voice Stress Analyzer
+Kill Display
+Cyberfinger
+Hidden Holster
+Techhair
+Light Tattoo
+Shift Tacts
+Linear Frame
+Full Body Conversion
+Alpha Class
+Dragoon
+Executive Zone
+The Glen
+Free State of Northern California
+NorCal
+SoCal
+Free States
+New United States
+NUSA
+EuroTheater
+Crystal Palace
+Highrider
+Highriders
+Night City Holocaust
+Unification War
+Metal Wars
+Ripperjack
+Bes Isis
+Inquisitors
+Red Chrome Legion
+Piranhas
+NightCorp
+Soulkiller
+Relic
+Mikoshi
+Engram
+Dogtown
+Phantom Liberty
+Kurt Hansen
+Mr. Hands
+Regina Jones
+Wakako Okada
+Dino Dinovic
+Padre
+Claire Russell
+River Ward
+Goro Takemura
+Misty
+Brigitte
+Placide
+Lizzie's Bar
+Lizzie Wizzy
+Us Cracks
+Clouds
+Totentanz
+Konpeki Plaza
+Embers
+Jig-Jig Street
+Arroyo
+Vista del Rey
+Little China
+Coastview
+Wellsprings
+Arasaka Waterfront
+Biotechnica Flats
+# Verhörer
+Tschum => Choom
+Chum => Choom
+Priem => Preem
+Edgerunna => Edgerunner
