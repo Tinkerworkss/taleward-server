@@ -178,9 +178,11 @@ def test_namens_echo_wird_entfernt():
     seg = [
         {"start": 85, "text": " Namen, Jemma Reed, Litha Flamel, Tubo, Lilio, saroman, Phybe zeitiger."},
         {"start": 90, "text": " Jemma und Litha gehen zu Tubo an den Tisch."},
+        {"start": 92, "text": " Jemma, Litha und Tubo waren gestern bei Phybe."},
         {"start": 95, "text": " Tubo!"},
     ]
     behalten, entfernt = pl.namens_echo_entfernen(seg, namen)
     assert [s["start"] for s in entfernt] == [85]
-    assert [s["start"] for s in behalten] == [90, 95]
+    # Echte Lore-Sätze mit mehreren Namen dürfen nicht als Hotword-Echo verschwinden.
+    assert [s["start"] for s in behalten] == [90, 92, 95]
     assert pl.namens_echo_entfernen(seg, [])[1] == []
