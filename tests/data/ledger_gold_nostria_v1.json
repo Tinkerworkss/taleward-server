@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "name": "Nostria Ledger Gold v1 – high-risk relations",
+  "scope": "selective",
+  "facts": [
+    {
+      "id": "kano_dead",
+      "description": "Kano ist nach dem Galgenchaos tot.",
+      "importance": "critical",
+      "match": {
+        "assertions": [
+          {
+            "subject": ["Kano", "Kano Tommeldom"],
+            "property": "life_status",
+            "value": ["dead", "tot", "verstorben"]
+          }
+        ]
+      },
+      "expected": {"epistemic": ["observed"], "relevance": {"recap": true, "bible": true}}
+    },
+    {
+      "id": "orasilas_rescues_arlekin",
+      "description": "Orasilas rettet Arlekin im Wasser/Tommel.",
+      "importance": "critical",
+      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Arlekin", "Arlekin Dehsch"]]},
+      "expected": {"relevance": {"recap": true}}
+    },
+    {
+      "id": "pipo_severely_injured",
+      "description": "Pipo ist schwer verletzt.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Pipo", "Wache Pipo"], "property": "physical_condition", "value": ["schwer verletzt", "schwere Verletzung", "verwundet", "blutet", "Blut"]}]},
+      "expected": {"relevance": {"recap": true}}
+    },
+    {
+      "id": "orasilas_treats_pipo",
+      "description": "Orasilas behandelt Pipos Verletzungen.",
+      "importance": "important",
+      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Pipo", "Wache Pipo"]]},
+      "expected": {"relevance": {"recap": true}}
+    },
+    {
+      "id": "pipo_transfers_lostriana",
+      "description": "Pipo überlässt der Gruppe Lostriana.",
+      "importance": "critical",
+      "match": {
+        "actors": [["Pipo", "Wache Pipo"]],
+        "targets": [["Gruppe", "Helden", "Flüchtige", "Gefährten"]],
+        "objects": [["Lostriana", "Schwert"]],
+        "assertions": [{"subject": ["Lostriana", "Schwert"], "property": "possession", "value": ["Gruppe", "Helden", "Flüchtige", "Gefährten", "bei der Gruppe"]}]
+      },
+      "expected": {"epistemic": ["observed"], "relevance": {"recap": true, "bible": true}}
+    },
+    {
+      "id": "orasilas_goal_true_murderer",
+      "description": "Orasilas will den wahren Mörder finden/bestrafen.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Orasilas", "Orasilas Albio"], "property": "goal", "value": ["wahren Mörder", "Mörder finden", "Mörder bestrafen", "Prinzessin", "Täter finden"]}]},
+      "expected": {"relevance": {"recap": true, "openThread": true}}
+    },
+    {
+      "id": "arborn_at_holzbein",
+      "description": "Arborn wird beim Gasthof Beim Holzbein verortet.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Arborn", "Arbon"], "property": "location", "value": ["Holzbein", "Beim Holzbein", "Gasthof"]}]},
+      "expected": {"relevance": {"recap": true, "openThread": true, "bible": true}}
+    },
+    {
+      "id": "gruenkappen_favor_obligation",
+      "description": "Hilfe der Grünkappen ist an einen Gefallen gebunden.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Grünkappen", "Grünkappenbund"], "property": "obligation", "value": ["Gefallen", "Gegenleistung", "schulden", "Hilfe gegen"]}]},
+      "expected": {"relevance": {"openThread": true, "bible": true}}
+    },
+    {
+      "id": "satuna_distinct_named_person",
+      "description": "Satuna ist als Satuna die Schlange eine eigene Figur.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Satuna", "Satuna die Schlange"], "property": "identity", "value": ["Satuna", "Satuna die Schlange"]}]},
+      "expected": {"relevance": {"bible": true}}
+    },
+    {
+      "id": "altvater_role",
+      "description": "Der Altvater stellt sich als Altvater vor / trägt diese Rolle.",
+      "importance": "important",
+      "match": {"assertions": [{"subject": ["Altvater", "der Altvater"], "property": "role_status", "value": ["Altvater", "Leiter", "Chef"]}]},
+      "expected": {"relevance": {"bible": true}}
+    }
+  ],
+  "expectedNonClaims": [
+    {
+      "id": "satuna_not_altvater",
+      "description": "Satuna darf nicht mit dem Altvater verschmolzen werden.",
+      "importance": "critical",
+      "match": {"assertions": [{"subject": ["Satuna", "Satuna die Schlange"], "property": "identity", "value": ["Altvater", "der Altvater"]}]}
+    },
+    {
+      "id": "altvater_not_satuna",
+      "description": "Der Altvater darf nicht als Satuna identifiziert werden.",
+      "importance": "critical",
+      "match": {"assertions": [{"subject": ["Altvater", "der Altvater"], "property": "identity", "value": ["Satuna", "Satuna die Schlange"]}]}
+    },
+    {
+      "id": "altvater_not_arlekin",
+      "description": "Der Altvater darf nicht als Arlekin identifiziert werden.",
+      "importance": "critical",
+      "match": {"assertions": [{"subject": ["Altvater", "der Altvater"], "property": "identity", "value": ["Arlekin", "Arlekin Dehsch"]}]}
+    },
+    {
+      "id": "lostriana_not_transferred_to_pipo",
+      "description": "Die Übergaberichtung darf nicht als Gruppe -> Pipo invertiert werden.",
+      "importance": "critical",
+      "match": {"actors": [["Gruppe", "Helden", "Flüchtige", "Gefährten"]], "targets": [["Pipo", "Wache Pipo"]], "objects": [["Lostriana", "Schwert"]]}
+    },
+    {
+      "id": "kano_not_alive_after_scene",
+      "description": "Kano darf nach der bestätigten Todesantwort nicht als lebend gespeichert werden.",
+      "importance": "critical",
+      "match": {"assertions": [{"subject": ["Kano", "Kano Tommeldom"], "property": "life_status", "value": ["alive", "lebendig", "lebt"]}]}
+    }
+  ]
+}
