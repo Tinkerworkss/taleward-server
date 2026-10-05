@@ -1,0 +1,362 @@
+# Der Eine Ring / Herr der Ringe – Begriffe für die Transkription
+# Erkennungsnamen: der eine ring, the one ring, herr der ringe, lord of the rings, mittelerde, middle-earth, tor, tor2e, lotr
+# Stufe A (höchstens 40, häufigste zuerst)
+Mittelerde
+Auenland
+Bruchtal
+Bree
+Eriador
+Gandalf
+Hobbits
+Dúnedain
+Elben
+Moria
+Gondor
+Rohan
+Mordor
+Sauron
+Saruman
+Isengard
+Düsterwald
+Lothlórien
+Nebelgebirge
+Arnor
+Angmar
+Wetterspitze
+Hügelgräberhöhen
+Nazgûl
+Ringgeister
+Schattenpunkte
+Gandalf-Rune
+Auge Saurons
+Feat Die
+Gemeinschaftsphase
+Aragorn
+Streicher
+Elrond
+Galadriel
+Frodo
+Bilbo
+Rivendell
+Shire
+Mirkwood
+Wilderland
+# Stufe B
+Middle-earth
+Der Eine Ring
+The One Ring
+Herr der Ringe
+Ringgeist
+Success Dice
+Erfolgswürfel
+Eye of Sauron
+Gandalf Rune
+Fellowship Phase
+Adventuring Phase
+Eye Awareness
+Hope
+Hoffnungspunkte
+Shadow Points
+Weary
+Miserable
+Endurance
+Valour
+Wisdom
+Patron
+Safe Haven
+Calling
+Shadow Path
+Journey
+Council
+Free Peoples
+Freie Völker
+Free League
+Cubicle 7
+Frodo Beutlin
+Bilbo Beutlin
+Legolas
+Gimli
+Boromir
+Faramir
+Samweis Gamdschie
+Samwise Gamgee
+Meriadoc Brandybock
+Merry
+Peregrin Tuk
+Pippin
+Celeborn
+Gollum
+Sméagol
+Thorin Eichenschild
+Thorin Oakenshield
+Balin
+Dáin
+Dáin Eisenfuß
+Beorn
+Radagast
+Tom Bombadil
+Goldbeere
+Goldberry
+Théoden
+Éowyn
+Éomer
+Denethor
+Glorfindel
+Arwen
+Thranduil
+Bard
+Smaug
+Hexenkönig
+Witch-king
+Ringwraiths
+Balrog
+Kankra
+Shelob
+Uruk-hai
+Warge
+Wargs
+Huorns
+Ents
+Baumbart
+Treebeard
+Gríma Schlangenzunge
+Gríma
+Butterblume
+Gerstenmann Butterblume
+Barliman Butterbur
+Tänzelndes Pony
+Prancing Pony
+Hobbingen
+Hobbiton
+Beutelsend
+Bag End
+Bockland
+Buckland
+Weathertop
+Barrow-downs
+Alter Wald
+Old Forest
+Misty Mountains
+Graue Anfurten
+Grey Havens
+Mithlond
+Fornost
+Annúminas
+Tharbad
+Bruinen
+Lautwasser
+Brandywein
+Brandywine
+Fangorn
+Helms Klamm
+Helm's Deep
+Edoras
+Osgiliath
+Minas Tirith
+Minas Morgul
+Cirith Ungol
+Barad-dûr
+Schicksalsberg
+Mount Doom
+Orodruin
+Dol Guldur
+Carrock
+Langer See
+Long Lake
+Seestadt
+Esgaroth
+Lake-town
+Erebor
+Einsamer Berg
+Lonely Mountain
+Thal
+Dale
+Eisenberge
+Iron Hills
+Graue Berge
+Grey Mountains
+Rhûn
+Harad
+Umbar
+Dunland
+Lindon
+Ered Luin
+Blaue Berge
+Blue Mountains
+Trollhöhen
+Trollshaws
+Ettenöden
+Ettenmoors
+Eregion
+Hollin
+Anduin
+Großer Strom
+Schwertelfelder
+Gladden Fields
+Rhovanion
+Tal des Anduin
+Vales of Anduin
+Breeland
+Chetwald
+Archet
+Staddel
+Combe
+Nordhöhen
+North Downs
+Südhöhen
+South Downs
+Wetterberge
+Weather Hills
+Lone-lands
+Rhudaur
+Cardolan
+Arthedain
+Carn Dûm
+Khazad-dûm
+Zwergenbinge
+Dunharg
+Isen
+Gondolin
+Valinor
+Beleriand
+Númenor
+Westernis
+Noldor
+Sindar
+Silvan Elves
+Waldelben
+Durins Volk
+Durin's Folk
+Beorninger
+Beornings
+Waldmenschen
+Woodmen
+Bardinger
+Bardings
+Rohirrim
+Dunländer
+Dunlendings
+Ostlinge
+Easterlings
+Haradrim
+Breeländer
+Bree-folk
+Waldläufer des Nordens
+Rangers of the North
+Westron
+Sindarin
+Quenya
+Khuzdul
+Schwarze Sprache
+Black Speech
+Drittes Zeitalter
+Third Age
+Auenland-Zeitrechnung
+Shire Reckoning
+Mithril
+Palantír
+Palantíri
+Lembas
+Athelas
+Königskraut
+Pfeifenkraut
+Pipe-weed
+Morgulklinge
+Morgul-blade
+Anduril
+Andúril
+Narsil
+Stich
+Sting
+Glamdring
+Orcrist
+Ringe der Macht
+Rings of Power
+Weißer Rat
+White Council
+Istari
+Maiar
+Valar
+Elbereth
+Gilthoniel
+Varda
+Eru Ilúvatar
+Ilúvatar
+Morgoth
+Melkor
+Thingol
+Celebrimbor
+Isildur
+Elendil
+Gil-galad
+Círdan
+Halbarad
+Gilraen
+Erkenbrand
+Gamling
+Háma
+Imrahil
+Beregond
+Bergil
+Fatty Bolger
+Fredegar Bolger
+Lobelia Sackheim-Beutlin
+Sackheim-Beutlin
+Farmer Maggot
+Bauer Maggot
+Bill Ferny
+Bombadil
+Old Man Willow
+Alter Weidenmann
+Grabunhold
+Barrow-wight
+Grabunholde
+Azog
+Bolg
+Gundabad
+Nekromant
+Necromancer
+Dol Amroth
+Belfalas
+Lebennin
+Pelargir
+Ithilien
+Henneth Annûn
+Morannon
+Schwarzes Tor
+Black Gate
+Gorgoroth
+Udûn
+Nurn
+Mithrandir
+Olórin
+Tharkûn
+Elessar
+Estel
+Undómiel
+Evenstar
+Abendstern
+Elbenstein
+Caras Galadhon
+Nimrodel
+Silberlauf
+Celebrant
+Kheled-zâram
+Spiegelsee
+Mirrormere
+Caradhras
+Rothorn
+Redhorn
+Bundushathûr
+Zirakzigil
+Celebdil
+Dimrill Dale
+Schattenbachtal
+Azanulbizar
+# Verhörer
+Mittel Erde => Mittelerde
+Nasgul => Nazgûl
+Lothlorien => Lothlórien
+Dunedain => Dúnedain
+Galadrjel => Galadriel
+Saurons Auge => Auge Saurons
