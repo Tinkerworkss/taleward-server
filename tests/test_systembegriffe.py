@@ -1,4 +1,6 @@
 """Strukturierte A/B-Systemwortlisten für Whisper und die Korrekturhilfe."""
+import pytest
+
 from app import systembegriffe
 
 
@@ -103,6 +105,36 @@ Lofwyr
     assert dynamisch.begriffe[:2] == ("Kampagnenname", "Lofwyr")
     assert "Chummer" in dynamisch.begriffe and "Rüstungsklasse" in dynamisch.begriffe
     assert dynamisch.fingerprint != system.fingerprint
+
+
+def test_benchmark_hotword_limit_kappt_nur_serverlose_auswahl(tmp_path, monkeypatch):
+    from app import namenshilfe
+
+    monkeypatch.setattr(systembegriffe, "_ORDNER", tmp_path)
+    _liste(tmp_path, "hybrid", """# Erkennungsnamen: hybrid
+# Stufe A
+Eins
+Zwei
+Drei
+Vier
+# Stufe B
+Lore
+""")
+
+    system2 = namenshilfe.statische_auswahl("hybrid", None, "de", modus="system", hotword_limit=2)
+    dynamisch3 = namenshilfe.statische_auswahl(
+        "hybrid", None, "de", extra=["Kampagne"], kontext=["Lore ist wichtig."],
+        modus="dynamic", hotword_limit=3,
+    )
+
+    assert system2.begriffe == ("Eins", "Zwei")
+    assert dict(system2.quellen) == {"system_shared": 2}
+    assert dynamisch3.begriffe == ("Kampagne", "Lore", "Eins")
+    assert dict(dynamisch3.quellen) == {"manual": 1, "context_b": 1, "system_shared": 1}
+    with pytest.raises(ValueError):
+        namenshilfe.statische_auswahl("hybrid", None, "de", modus="system", hotword_limit=0)
+    with pytest.raises(ValueError):
+        namenshilfe.statische_auswahl("hybrid", None, "de", modus="system", hotword_limit=81)
 
 
 def test_fantasy_warhammer_wird_nicht_aus_40k_abgeleitet(tmp_path, monkeypatch):
