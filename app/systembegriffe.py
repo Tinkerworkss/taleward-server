@@ -26,6 +26,7 @@ from pathlib import Path
 
 _ORDNER = Path(__file__).resolve().parent / "begriffe"
 _MAX_SYSTEM_DATEIEN = 100
+_MEHRDEUTIGE_ALIASE = {"genesys", "imperium"}  # ohne weiteren Kontext keinem Spezialwörterbuch zuordnen
 
 _HEADER_ALIASE = re.compile(r"^#\s*Erkennungsnamen\s*:\s*(.+)$", re.IGNORECASE)
 _HEADER_A = re.compile(r"^#\s*Stufe\s+A\b", re.IGNORECASE)
@@ -160,7 +161,7 @@ def erkennen(system: str | None, system_name: str | None = None) -> Begriffslist
     for liste in _alle(str(_ORDNER)):
         for alias in liste.aliases:
             n = _normal(alias)
-            if not n:
+            if not n or n in _MEHRDEUTIGE_ALIASE:
                 continue
             if name == n:
                 score = 1000 + len(n)
