@@ -506,6 +506,7 @@ def ausfuehren(
     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
     from app import modelle
+    from app.transkription import sprecher_turns_aus_woertern
 
     try:  # gleiche feste Fassungen wie der Worker
         whisper_pfad = str(modelle.bereitstellen(modelle.whisper_repo(modell), hf_token).pfad)
@@ -590,7 +591,13 @@ def ausfuehren(
                         kw["max_speakers"] = max_sprecher
                 diar = pipe(audio, **kw)
                 ergebnis = assign_word_speakers(diar, ergebnis)
-                segmente = ergebnis["segments"]
+                roh_segmente = ergebnis["segments"]
+                segmente = sprecher_turns_aus_woertern(roh_segmente)
+                geteilt = len(segmente) - len(roh_segmente)
+                hinweise.append(
+                    f"Wortebenen-Sprecherrekonstruktion: {len(roh_segmente)} WhisperX-Segmente → "
+                    f"{len(segmente)} Sprecher-Turns ({max(0, geteilt)} zusätzliche Turns)."
+                )
                 del pipe
                 gpu_freigeben()
 
@@ -625,6 +632,7 @@ def ausfuehren(
             "Tisch-Simulation": "ja" if tisch else "nein",
             "Sprecher": (str(sprecher) if sprecher else f"automatisch (min {min_sprecher or '–'}, max {max_sprecher or '–'})")
             if not ohne_sprecher else "keine Sprechertrennung",
+            "Sprecher-Turns": "Wortebene, konservativ geglättet" if not ohne_sprecher else "–",
             "Namenshilfe": namen or "–",
         }
         bericht_schreiben(

@@ -111,6 +111,70 @@ def test_kleiner_cluster_bleibt_ohne_stimme(tmp_path):
     assert [s["speaker"] for s in aus] == ["A", None, None]
 
 
+def _wort(wort, start, end, speaker):
+    return {"word": wort, "start": start, "end": end, "score": 0.9, "speaker": speaker}
+
+
+def test_wortebene_zerlegt_kano_antwort_in_eigenen_sprecherturn():
+    from app.transkription import sprecher_turns_aus_woertern
+
+    seg = {
+        "start": 10.0, "end": 13.2, "speaker": "SPIELER",
+        "text": "Was macht Kano? Kann der sich befreien? Der ist tot.",
+        "words": [
+            _wort("Was", 10.0, 10.2, "SPIELER"), _wort("macht", 10.2, 10.4, "SPIELER"),
+            _wort("Kano?", 10.4, 10.8, "SPIELER"), _wort("Kann", 10.9, 11.1, "SPIELER"),
+            _wort("der", 11.1, 11.25, "SPIELER"), _wort("sich", 11.25, 11.4, "SPIELER"),
+            _wort("befreien?", 11.4, 11.9, "SPIELER"),
+            _wort("Der", 12.4, 12.6, "SL"), _wort("ist", 12.6, 12.75, "SL"),
+            _wort("tot.", 12.75, 13.2, "SL"),
+        ],
+    }
+    turns = sprecher_turns_aus_woertern([seg])
+
+    assert [(x["speaker"], x["text"]) for x in turns] == [
+        ("SPIELER", "Was macht Kano? Kann der sich befreien?"),
+        ("SL", "Der ist tot."),
+    ]
+    assert turns[0]["end"] == 11.9 and turns[1]["start"] == 12.4
+
+
+def test_wortebene_glaettet_nur_echten_mikroausreisser():
+    from app.transkription import sprecher_turns_aus_woertern
+
+    seg = {
+        "start": 0.0, "end": 1.3, "speaker": "A", "text": "Ich gehe jetzt weiter. Nein.",
+        "words": [
+            _wort("Ich", 0.0, 0.15, "A"), _wort("gehe", 0.15, 0.35, "A"),
+            _wort("jetzt", 0.35, 0.5, "B"),  # isolierter 150-ms-Ausreißer A-B-A
+            _wort("weiter.", 0.5, 0.8, "A"),
+            _wort("Nein.", 0.9, 1.3, "B"),  # echte kurze Antwort am Rand bleibt
+        ],
+    }
+    turns = sprecher_turns_aus_woertern([seg])
+
+    assert [(x["speaker"], x["text"]) for x in turns] == [
+        ("A", "Ich gehe jetzt weiter."),
+        ("B", "Nein."),
+    ]
+
+
+def test_wortebene_riskiert_bei_unvollstaendigem_alignment_keinen_textverlust():
+    from app.transkription import sprecher_turns_aus_woertern
+
+    seg = {
+        "start": 0.0, "end": 2.0, "speaker": "A", "text": "Das darf auf keinen Fall verschwinden.",
+        "words": [
+            _wort("Das", 0.0, 0.2, "A"), _wort("darf", 0.2, 0.4, "A"),
+            _wort("auf", 0.4, 0.55, "B"), _wort("Fall", 0.8, 1.0, "B"),
+            _wort("verschwinden.", 1.0, 1.5, "B"),
+        ],
+    }
+    turns = sprecher_turns_aus_woertern([seg])
+
+    assert turns == [seg]  # „keinen“ fehlt im Alignment → Originalsegment unverändert lassen
+
+
 def test_discord_echt(client, world, dbs, tmp_path):
     w = world
     s = neue_session(client, w)

@@ -88,6 +88,117 @@ def _bereinigen(segmente: list[dict], hotwords: list[str]) -> list[dict]:
     return [s for s in segmente if (s.get("text") or "").strip() and s.get("end", 0) > s.get("start", 0)]
 
 
+SPRECHER_AUSREISSER_MAX_S = 0.35
+
+
+def _wortlaut(woerter: list[dict]) -> str:
+    teile = [str(w.get("word") or "") for w in woerter]
+    if any(x[:1].isspace() for x in teile):
+        return "".join(teile).strip()
+    text = " ".join(x.strip() for x in teile if x.strip())
+    text = re.sub(r"\s+([,.;:!?%…\)\]\}])", r"\1", text)
+    text = re.sub(r"([\(\[\{„])\s+", r"\1", text)
+    return text.strip()
+
+
+def _sprecher_laeufe(labels: list[str | None]) -> list[tuple[int, int, str | None]]:
+    if not labels:
+        return []
+    aus: list[tuple[int, int, str | None]] = []
+    start, aktuell = 0, labels[0]
+    for i, label in enumerate(labels[1:], 1):
+        if label != aktuell:
+            aus.append((start, i, aktuell))
+            start, aktuell = i, label
+    aus.append((start, len(labels), aktuell))
+    return aus
+
+
+def _kurzer_sprecher_ausreisser(woerter: list[dict], start: int, ende: int) -> bool:
+    if ende - start != 1:
+        return False
+    wort = str(woerter[start].get("word") or "").strip()
+    if wort.endswith((".", "!", "?", "…")):
+        return False  # kurze echte Antwort am Satzende nicht wegglätten
+    w = woerter[start]
+    a, b = w.get("start"), w.get("end")
+    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and 0 <= b - a <= SPRECHER_AUSREISSER_MAX_S
+
+
+def sprecher_turns_aus_woertern(segmente: list[dict]) -> list[dict]:
+    """WhisperX-Segmente anhand der bereits berechneten Wort-Sprecher in echte Turns zerlegen.
+
+    Sicherheit vor Aggressivität:
+    - nur teilen, wenn die Wortliste den Segmenttext lexikalisch vollständig abdeckt;
+    - fehlende Wortlabels werden nur aus direkten Nachbarn/Fallback ergänzt;
+    - ein einzelner sehr kurzer A-B-A-Ausreißer wird geglättet, echte kurze Satzantworten bleiben;
+    - Segmentgrenzen/Text bleiben unverändert, wenn die Wortebene nicht belastbar genug ist.
+    """
+    aus: list[dict] = []
+    for seg in segmente:
+        woerter = [dict(w) for w in (seg.get("words") or []) if str(w.get("word") or "").strip()]
+        if not woerter:
+            aus.append(seg)
+            continue
+
+        original_tokens = re.findall(r"\w+", str(seg.get("text") or "").casefold())
+        wort_tokens = re.findall(r"\w+", _wortlaut(woerter).casefold())
+        if original_tokens != wort_tokens:
+            aus.append(seg)  # Alignment hat Textteile verloren/umgebaut: niemals Inhalt riskieren
+            continue
+
+        fallback = seg.get("speaker")
+        labels = [w.get("speaker") or None for w in woerter]
+        if not any(labels):
+            aus.append(seg)
+            continue
+
+        # Unbeschriftete Wörter möglichst lokal auffüllen statt blind mit dem dominanten Segmentsprecher.
+        for i, label in enumerate(labels):
+            if label:
+                continue
+            links = next((labels[j] for j in range(i - 1, -1, -1) if labels[j]), None)
+            rechts = next((labels[j] for j in range(i + 1, len(labels)) if labels[j]), None)
+            labels[i] = links if links and links == rechts else (links or rechts or fallback)
+        labels = [x or fallback for x in labels]
+
+        # Nur isolierte Mikro-Ausreißer A-B-A glätten. So bleibt z. B. „Der ist tot.“ als eigener Turn erhalten.
+        while True:
+            laeufe = _sprecher_laeufe(labels)
+            geaendert = False
+            for nr in range(1, len(laeufe) - 1):
+                a0, _a1, links = laeufe[nr - 1]
+                b0, b1, mitte = laeufe[nr]
+                _c0, c1, rechts = laeufe[nr + 1]
+                if links and links == rechts and mitte != links and _kurzer_sprecher_ausreisser(woerter, b0, b1):
+                    labels[b0:b1] = [links] * (b1 - b0)
+                    geaendert = True
+                    break
+            if not geaendert:
+                break
+
+        laeufe = _sprecher_laeufe(labels)
+        if len(laeufe) == 1:
+            neu = dict(seg)
+            neu["speaker"] = laeufe[0][2]
+            neu["words"] = woerter
+            aus.append(neu)
+            continue
+
+        for start, ende, speaker in laeufe:
+            teil = woerter[start:ende]
+            starts = [w.get("start") for w in teil if isinstance(w.get("start"), (int, float))]
+            ends = [w.get("end") for w in teil if isinstance(w.get("end"), (int, float))]
+            neu = dict(seg)
+            neu["start"] = float(starts[0]) if starts else float(seg["start"])
+            neu["end"] = float(ends[-1]) if ends else float(seg["end"])
+            neu["speaker"] = speaker
+            neu["words"] = teil
+            neu["text"] = _wortlaut(teil)
+            aus.append(neu)
+    return aus
+
+
 def _probe_segment(segs: list[dict]) -> dict:
     """Ein gut hörbarer Abschnitt: möglichst nahe an 6 s, mindestens 2 s, sonst der längste."""
     brauchbar = [s for s in segs if s["end"] - s["start"] >= 2.0]
@@ -97,8 +208,11 @@ def _probe_segment(segs: list[dict]) -> dict:
 
 
 def unsichere_woerter(seg: dict) -> list[dict]:
-    """Wörter mit schwacher Ausrichtung (whisperx.align: score 0–1). Eine schlecht getroffene Ausrichtung deutet auf
-    ein falsch erkanntes Wort – bei Eigennamen der häufigste Fehler. Nur Wort, Zeit und Wert; kein Audio."""
+    """Wörter mit schwacher Ausrichtung (whisperx.align: score 0–1) als Prüfhinweis melden.
+
+    Der Wert stammt vom Alignment-Modell und ist keine Whisper-ASR-Wahrscheinlichkeit. Gerade Eigennamen,
+    Zahlen und fremdsprachige Begriffe können korrekt transkribiert und trotzdem schwach ausgerichtet sein.
+    """
     aus, satzende = [], True
     for w in seg.get("words") or []:
         wort = str(w.get("word") or "").strip()
@@ -459,7 +573,8 @@ class WhisperXMotor:
         try:
             diar, embeddings = pipe(daten, min_speakers=min_n, max_speakers=max_n, return_embeddings=True,
                                     progress_callback=fortschritt)
-            return assign_word_speakers(diar, {"segments": segmente})["segments"], embeddings
+            zugeordnet = assign_word_speakers(diar, {"segments": segmente})["segments"]
+            return sprecher_turns_aus_woertern(zugeordnet), embeddings
         finally:
             del pipe
             gpu_freigeben()
