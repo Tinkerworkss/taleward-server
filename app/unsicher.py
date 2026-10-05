@@ -106,7 +106,7 @@ def begriffe(db: Session, s: GameSession) -> list[dict]:
     bekannt = woerterbuch.kampagne(db, c, ausser_session_id=s.id)
     namen = _namen(db, c, bekannt)
     weg = namenshilfe.ignoriert(c)
-    verhoerer = begriffslisten.verhoerer_map(c.system, c.system_name)
+    verhoerer = begriffslisten.verhoerer_map(c.system, c.system_name, sprache=c.language)
     gruppen: dict[str, dict] = {}
     for seg in db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id,
                                                           TranscriptSegment.unsicher.is_not(None))
