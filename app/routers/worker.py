@@ -22,7 +22,6 @@ from app.db import get_db, utcnow
 from app.models import (
     Attendee, Campaign, GameSession, Job, Speaker, TranscriptSegment, Upload, UsageLog, Worker,
 )
-from app.namenshilfe import hotwords_fuer_session
 from app.queue import claim, create_summarize_job, extend_lease, fail_job, holds_lease, stimmen_vergessen
 from app.schemas import ApiModel
 from app.services import set_state
@@ -186,7 +185,9 @@ def _auftrag(db: Session, job: Job) -> dict:
         "session": {
             "language": c.language, "system": c.system, "systemName": c.system_name, "source": up.source,
             "expectedSpeakers": len(anwesend) if up.source == "table" else len(up.files),
-            "hotwords": hotwords_fuer_session(db, c, s),
+            # Vollständigkeit vor Terminologie: Whisper bekommt produktiv keine Prompt-Hotwords.
+            # Korrekturen laufen nach der ASR zentral und verändern keine Segmentgrenzen.
+            "hotwords": [],
             # 0.4.6: erneute Transkription – nur der Text, Stimmen sind schon zugeordnet
             "nurText": bool(s.nachtranskription),
         },
