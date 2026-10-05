@@ -49,7 +49,7 @@ def _orthografie_varianten(kanonisch: str) -> set[str]:
     return {" ".join(x.split()) for x in aus if x.strip() and x.casefold() != kanonisch.casefold()}
 
 
-def regeln(campaign) -> list[Regel]:
+def regeln(campaign, kanonische_begriffe=()) -> list[Regel]:
     liste = begriffslisten.erkennen(campaign.system, campaign.system_name)
     mapping: dict[str, Regel] = {}
 
@@ -64,6 +64,9 @@ def regeln(campaign) -> list[Regel]:
         for kanonisch in liste.alle_fuer(campaign.language):
             for v in _orthografie_varianten(kanonisch):
                 varianten.setdefault(v.casefold(), set()).add(kanonisch)
+    for kanonisch in kanonische_begriffe:
+        for v in _orthografie_varianten(str(kanonisch)):
+            varianten.setdefault(v.casefold(), set()).add(str(kanonisch))
     for kanonisch in namenshilfe.korrekturen(campaign).values():
         for v in _orthografie_varianten(kanonisch):
             varianten.setdefault(v.casefold(), set()).add(kanonisch)
@@ -79,13 +82,15 @@ def regeln(campaign) -> list[Regel]:
     return sorted(mapping.values(), key=lambda r: len(r.gehoert), reverse=True)
 
 
-def korrigieren(text: str | None, campaign, vorbereitete_regeln: list[Regel] | None = None) -> tuple[str | None, Counter]:
+def korrigieren(
+    text: str | None, campaign, vorbereitete_regeln: list[Regel] | None = None, kanonische_begriffe=()
+) -> tuple[str | None, Counter]:
     """Text korrigieren und Zähler nach Quelle zurückgeben."""
     if not text:
         return text, Counter()
     zaehler: Counter[str] = Counter()
     aus = text
-    for regel in vorbereitete_regeln if vorbereitete_regeln is not None else regeln(campaign):
+    for regel in vorbereitete_regeln if vorbereitete_regeln is not None else regeln(campaign, kanonische_begriffe):
         muster = _muster(regel.gehoert)
         aus, n = muster.subn(regel.korrekt, aus)
         if n:
