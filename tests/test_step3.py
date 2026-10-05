@@ -94,6 +94,7 @@ def test_tischaufnahme_echt(client, world, dbs, tmp_path):
     assert snap["resolverVersion"] == "3" and snap["mode"] == "dynamic"
     assert "Jemma Reed" in snap["terms"] and len(snap["fingerprint"]) == 64
     assert snap["asrHotwords"] == [] and snap["terminologyVersion"] == "1"
+    assert isinstance(snap["terminologyRules"], list) and len(snap["terminologyRuleFingerprint"]) == 64
 
 
 def test_kleiner_cluster_bleibt_ohne_stimme(tmp_path):
