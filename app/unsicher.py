@@ -100,12 +100,13 @@ def _bekannt(wort: str, bekannt, namen) -> bool:
 
 
 def begriffe(db: Session, s: GameSession) -> list[dict]:
-    from app import woerterbuch
+    from app import systembegriffe as begriffslisten, woerterbuch
 
     c = db.get(Campaign, s.campaign_id)
     bekannt = woerterbuch.kampagne(db, c, ausser_session_id=s.id)
     namen = _namen(db, c, bekannt)
     weg = namenshilfe.ignoriert(c)
+    verhoerer = begriffslisten.verhoerer_map(c.system, c.system_name)
     gruppen: dict[str, dict] = {}
     for seg in db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id,
                                                           TranscriptSegment.unsicher.is_not(None))
@@ -131,7 +132,10 @@ def begriffe(db: Session, s: GameSession) -> list[dict]:
         vorschlaege = sorted(((aehnlich(heard, n), n, eid, mid) for n, eid, mid in namen), reverse=True)
         passend = [v for v in vorschlaege if v[0] >= AEHNLICH]
         andere = [k for k in sorted(g["schreibweisen"], key=lambda k: -g["schreibweisen"][k]) if k != heard]
-        alternativen = list(dict.fromkeys([v[1] for v in passend[:2]] + andere))[:4]
+        # Systembezogene bekannte Verhörer nur als Vorschlag, nie blind automatisch ersetzen.
+        # Existiert die Schreibweise bereits als Kampagnenname, wurde sie oben als bekannt ausgesiebt.
+        direkt = verhoerer.get(heard.casefold())
+        alternativen = list(dict.fromkeys(([direkt] if direkt else []) + [v[1] for v in passend[:2]] + andere))[:4]
         vorkommen = sum(g["schreibweisen"].values())
         sicherheit = round(sum(g["werte"]) / len(g["werte"]), 3)
         bester = passend[0] if passend else None
