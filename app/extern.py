@@ -149,7 +149,6 @@ def _segmente(antwort: dict, versatz: float, label) -> list[dict]:
 def verarbeiten(db: Session, job: Job, klient: MistralKlient | None = None) -> None:
     """Einen reservierten Auftrag extern transkribieren und wie ein Worker-Ergebnis übernehmen."""
     from app import queue
-    from app.namenshilfe import hotwords_fuer_session
     from app.routers.worker import ResultIn, ergebnis_uebernehmen
     from app.transkription import _bereinigen, halluzinationen_entfernen, sprecher_auswerten
 
@@ -157,7 +156,8 @@ def verarbeiten(db: Session, job: Job, klient: MistralKlient | None = None) -> N
     klient = klient or MistralKlient(k)
     sitzung = db.get(GameSession, job.session_id)
     up = db.get(Upload, job.upload_id)
-    hotwords = hotwords_fuer_session(db, db.get(Campaign, sitzung.campaign_id), sitzung)
+    # Gleiche Baseline wie lokal: keine ASR-Kontextliste. Terminologie folgt serverseitig.
+    hotwords: list[str] = []
     arbeit = Path(tempfile.mkdtemp(prefix="extern-", dir=str(storage.uploads_root().parent)))
     t0 = time.monotonic()
     try:
