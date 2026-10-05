@@ -173,7 +173,10 @@ def eingabe_aus_schnittstelle(server: Server, session_id: str) -> tuple[dict, di
 class Ergebnis:
     modell: str
     kontext: int
-    lauf: int = 1  # bei mehreren Läufen je Modell (--laeufe)
+    lauf: int = 1
+    hardware_label: str = ""
+    model_digest: str = ""
+    ollama_version: str = ""  # bei mehreren Läufen je Modell (--laeufe)
     ok: bool = False
     fehler: str | None = None
     laden_s: float = 0.0
@@ -256,6 +259,7 @@ class Einstellungen:
     pruefliste: list[dict] = field(default_factory=list)
     notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
     ledger_gold: dict = field(default_factory=dict)  # 0.4.56 selektives atomisches Ledger-Gold
+    hardware_label: str = ""  # frei: GPU/Backend/Host für reproduzierbare Hardwarevergleiche
     nur_ledger: bool = False  # 0.4.52 Diagnose: nur Schatten-Ledger, keine Notizen/Recap/Review/Vorschläge
 
 
@@ -266,11 +270,13 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
     from app.sprachmodell import SprachmodellFehler
 
     einst = einst or Einstellungen()
-    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf, nur_ledger=einst.nur_ledger)
+    erg = Ergebnis(modell=modell, kontext=kontext, lauf=lauf, hardware_label=einst.hardware_label,
+                   nur_ledger=einst.nur_ledger)
     k = klient(url, modell, kontext, client)
     t0 = time.monotonic()
     try:
-        k.bereitstellen(melden)
+        erg.model_digest = k.bereitstellen(melden)
+        erg.ollama_version = k.version() or ""
     except SprachmodellFehler as e:
         erg.fehler = f"Laden fehlgeschlagen: {e}"
         return erg, None
@@ -507,7 +513,8 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
 
 
 def _name(e: Ergebnis) -> str:
-    return f"{e.modell} (ctx {e.kontext})" + (f" Lauf {e.lauf}" if e.lauf > 1 else "")
+    basis = f"{e.modell} (ctx {e.kontext})" + (f" Lauf {e.lauf}" if e.lauf > 1 else "")
+    return basis + (f" · {e.hardware_label}" if e.hardware_label else "")
 
 
 _FARBE = {"supported": "#5b7f5a", "partial": "#a07a2c", "unsupported": "#9b3b32", "contradicted": "#9b3b32",
@@ -670,6 +677,8 @@ def ledger_paarvergleich(ergebnisse: list[Ergebnis]) -> list[dict]:
             gemeinsame = sorted(set(fa) & set(fb))
             aus.append({
                 "a": _name(a), "b": _name(b),
+                "modelDigestA": a.model_digest, "modelDigestB": b.model_digest,
+                "hardwareA": a.hardware_label, "hardwareB": b.hardware_label,
                 "sameSourceFingerprint": a.ledger.get("sourceFingerprint") == b.ledger.get("sourceFingerprint"),
                 "semanticEventJaccard": (round(len(sa & sb) / len(union), 4) if union else 1.0),
                 "semanticEventsA": len(sa), "semanticEventsB": len(sb), "semanticEventsShared": len(sa & sb),
