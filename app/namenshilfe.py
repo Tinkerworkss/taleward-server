@@ -81,6 +81,8 @@ def _gespeichert(campaign: Campaign) -> dict:
         roh = json.loads(campaign.namenshilfe or "{}")
     except ValueError:
         roh = {}
+    if not isinstance(roh, dict):
+        roh = {}
     d = {k: [str(x) for x in roh.get(k) or [] if str(x).strip()]
          for k in ("extra", "entfernt", "ignoriert")}
     kor = roh.get("korrekturen") if isinstance(roh, dict) else {}
