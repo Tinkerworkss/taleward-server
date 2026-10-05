@@ -1,0 +1,376 @@
+# Star Wars – Begriffe für die Transkription
+# Erkennungsnamen: star wars, starwars, edge of the empire, age of rebellion, force and destiny, am rande des imperiums, zeitalter der rebellion, macht und schicksal, krieg der sterne, genesys, swrpg
+# Stufe A (höchstens 40, häufigste zuerst)
+Jedi
+Sith
+Macht
+Lichtschwert
+Lightsaber
+Imperium
+Rebellen
+Sturmtruppen
+Credits
+Blaster
+Hyperraum
+Droide
+Wookiee
+Hutten
+Twi'lek
+Coruscant
+Tatooine
+Mos Eisley
+Outer Rim
+Äußerer Rand
+Corellia
+Nar Shaddaa
+Mandalorianer
+Beskar
+Advantage
+Threat
+Despair
+Vorteil
+Bedrohung
+Verzweiflung
+Destiny Points
+Schicksalspunkte
+Obligation
+Verpflichtung
+Strain
+Boost Die
+Setback Die
+Sternzerstörer
+X-Wing
+Darth Vader
+# Stufe B
+Triumph
+Ability Die
+Proficiency Die
+Difficulty Die
+Challenge Die
+Force Die
+Fähigkeitswürfel
+Leistungswürfel
+Schwierigkeitswürfel
+Herausforderungswürfel
+Verstärkungswürfel
+Komplikationswürfel
+Machtwürfel
+Duty
+Morality
+Wound Threshold
+Strain Threshold
+Soak
+Critical Injury
+Talent Tree
+Specialization
+Spezialisierung
+Force Rating
+Force Power
+Edge of the Empire
+Age of Rebellion
+Force and Destiny
+Am Rande des Imperiums
+Zeitalter der Rebellion
+Macht und Schicksal
+Genesys
+Narrative Dice
+Die Macht
+Dunkle Seite
+Helle Seite
+Dark Side
+Light Side
+Machtsinn
+Battle Meditation
+Misdirect
+Darth Sidious
+Palpatine
+Imperator Palpatine
+Luke Skywalker
+Leia Organa
+Han Solo
+Chewbacca
+Obi-Wan Kenobi
+Yoda
+Boba Fett
+Jango Fett
+Jabba
+Jabba der Hutte
+Lando Calrissian
+R2-D2
+C-3PO
+Anakin Skywalker
+Grand Moff Tarkin
+Tarkin
+Thrawn
+Ahsoka Tano
+Din Djarin
+Grogu
+Mace Windu
+Qui-Gon Jinn
+Padmé Amidala
+Count Dooku
+Graf Dooku
+General Grievous
+Darth Maul
+Kylo Ren
+Poe Dameron
+Snoke
+Cassian Andor
+Jyn Erso
+Saw Gerrera
+Mon Mothma
+Bail Organa
+Hera Syndulla
+Ezra Bridger
+Kanan Jarrus
+Sabine Wren
+Bo-Katan Kryze
+Cad Bane
+Bossk
+IG-88
+Dengar
+Greedo
+Wedge Antilles
+Admiral Ackbar
+Jar Jar Binks
+Rodianer
+Rodian
+Trandoshaner
+Trandoshan
+Bothaner
+Bothan
+Mon Calamari
+Zabrak
+Togruta
+Duros
+Sullustaner
+Ithorianer
+Gamorreaner
+Jawa
+Jawas
+Tusken
+Sandleute
+Ewoks
+Gungan
+Chiss
+Gand
+Kel Dor
+Nautolaner
+Weequay
+Hutte
+Toydarianer
+Mirialan
+Cerean
+Aqualish
+Ugnaught
+Geonosianer
+Kaminoaner
+Neimoidianer
+Wookiees
+Droiden
+Astromech
+Astromechdroide
+Protokolldroide
+Kampfdroide
+Droideka
+Sondendroide
+Y-Wing
+A-Wing
+B-Wing
+X-Flügler
+TIE Fighter
+TIE-Jäger
+TIE Interceptor
+TIE-Abfangjäger
+TIE Bomber
+Star Destroyer
+Supersternzerstörer
+Millennium Falcon
+Millennium Falke
+YT-1300
+Slave I
+Razor Crest
+Corellianische Korvette
+Blockadebrecher
+Lambda-Fähre
+AT-AT
+AT-ST
+Speeder Bike
+Landspeeder
+Podracer
+Todesstern
+Death Star
+Yavin
+Yavin 4
+Dantooine
+Jakku
+Lothal
+Ryloth
+Mustafar
+Kamino
+Geonosis
+Utapau
+Scarif
+Jedha
+Ord Mantell
+Bespin
+Wolkenstadt
+Cloud City
+Dathomir
+Felucia
+Mygeeto
+Kessel
+Kessel Run
+Kessel-Flug
+Hoth
+Endor
+Naboo
+Alderaan
+Dagobah
+Kashyyyk
+Mandalore
+Inner Rim
+Core Worlds
+Kernwelten
+Mid Rim
+Mittlerer Rand
+Wild Space
+Unknown Regions
+Unbekannte Regionen
+Hutt Space
+Hutten-Raum
+Corporate Sector
+Corellian Run
+Hydian Way
+Perlemian Trade Route
+Galaktisches Imperium
+Galactic Empire
+Rebellen-Allianz
+Rebel Alliance
+Galaktische Republik
+Separatisten
+Handelsföderation
+Trade Federation
+Jedi-Orden
+Jedi-Rat
+Inquisitoren
+Imperial Security Bureau
+ISB
+Stormtroopers
+Klontruppen
+Klonkriege
+Clone Wars
+Black Sun
+Schwarze Sonne
+Crimson Dawn
+Pyke Syndicate
+Hutt Cartel
+Bounty Hunters' Guild
+Kopfgeldjägergilde
+Erste Ordnung
+First Order
+Widerstand
+Neue Republik
+New Republic
+Death Watch
+Kyberkristall
+Kyber Crystal
+DL-44
+E-11
+Thermaldetonator
+Bacta
+Carbonit
+Holonetz
+HoloNet
+Holocron
+Hyperantrieb
+Midichlorianer
+Imperial Credits
+Wupiupi
+Peggat
+Truguts
+Glitzerstim
+Sabacc
+Pazaak
+Huttisch
+Huttese
+Shyriiwook
+Mando'a
+Binär
+Padawan
+Jedi-Meister
+Jedi-Ritter
+Darth
+Sith-Lord
+Moff
+Großmoff
+Grand Moff
+ISD
+Sternenjäger
+Fantasy Flight Games
+FFG
+Ulisses Spiele
+Darth Bane
+Darth Plagueis
+Darth Revan
+Revan
+Darth Malak
+Exar Kun
+Darth Nihilus
+Kit Fisto
+Plo Koon
+Ki-Adi-Mundi
+Aayla Secura
+Luminara Unduli
+Barriss Offee
+Quinlan Vos
+Cal Kestis
+Cere Junda
+Kreia
+Chopper
+Zeb Orrelios
+Agent Kallus
+Grand Inquisitor
+Großinquisitor
+Moff Gideon
+Orson Krennic
+Captain Phasma
+General Hux
+Fennec Shand
+Cobb Vanth
+Greef Karga
+Cara Dune
+IG-11
+Kuiil
+Maz Kanata
+Taris
+Dromund Kaas
+Korriban
+Moraband
+Tython
+Ilum
+Ahch-To
+Exegol
+Crait
+Canto Bight
+Batuu
+Black Spire Outpost
+Ferrix
+Nevarro
+Kuat
+Fondor
+Sullust
+Rodia
+Executor
+Tantive IV
+Ebon Hawk
+Outrider
+Home One
+Galaktischer Senat
+Oberster Kanzler
+# Verhörer
+Tatuin => Tatooine
+Wooki => Wookiee
+Corusant => Coruscant
+Twilek => Twi'lek
+Nar Schadda => Nar Shaddaa
