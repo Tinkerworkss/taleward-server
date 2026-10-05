@@ -68,3 +68,13 @@ def test_regeln_lassen_sich_reproduzierbar_einfrieren():
     assert wieder == regeln
     assert terminologie.fingerprint(wieder) == terminologie.fingerprint(regeln)
     assert terminologie.aus_snapshot([{"heard": "", "correct": "x", "source": "learned"}]) is None
+
+
+def test_neuer_kampagnenname_schlaegt_auch_alte_lernregel():
+    c = kampagne()
+    namenshilfe.korrektur_lernen(c, "Tharvok", "Darvok")
+    neu, zaehler = terminologie.korrigieren(
+        "Tharvok bleibt Tharvok.", c, kanonische_begriffe=["Tharvok"]
+    )
+    assert neu == "Tharvok bleibt Tharvok."
+    assert dict(zaehler) == {}
