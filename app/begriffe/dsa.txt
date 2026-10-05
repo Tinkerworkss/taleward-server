@@ -29,7 +29,7 @@ Lebenspunkte
 Schicksalspunkte
 Salzarelen
 Grünkappen
-Fringlasshof
+Borbarad
 Gareth
 Mittelreich
 Thorwal
@@ -42,6 +42,7 @@ Balsam Salabunde
 Ignifaxius
 Steineichenwald
 # Stufe B
+Fringlasshof
 Salzarele
 Grünkappe
 Zornbold
@@ -260,7 +261,6 @@ Irrhalk
 Ulchuchu
 Yo'Nahoh
 Dämonenkrone
-Borbarad
 Borbaradianer
 Rohal
 Galotta
