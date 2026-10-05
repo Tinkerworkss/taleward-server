@@ -1,5 +1,6 @@
 # Starfinder – Begriffe für die Transkription
-# Erkennungsnamen: starfinder, starfinder 2e, sf2e, sfrpg, paktwelten, pact worlds
+# Fassung: Starfinder 1e; Starfinder 2e ist noch nicht gesondert validiert.
+# Erkennungsnamen: starfinder, sfrpg, paktwelten, pact worlds
 # Stufe A (höchstens 40, häufigste zuerst)
 Starfinder
 Pact Worlds
