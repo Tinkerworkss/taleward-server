@@ -2329,7 +2329,17 @@ class Ablauf:
         for start in range(0, len(out), LEDGER_RELEVANCE_BATCH):
             batch = out[start:start + LEDGER_RELEVANCE_BATCH]
             refs = {f"R{i + 1:04d}": e for i, e in enumerate(batch)}
-            text = "\n".join(f"{rid} | {self._ledger_candidate_text(e)}" for rid, e in refs.items())
+            def relevance_text(e: dict) -> str:
+                d = {
+                    "sourceIds": e.get("sourceIds") or [], "summary": e.get("summary") or "",
+                    "kinds": e.get("kinds") or [], "actors": e.get("actors") or [],
+                    "targets": e.get("targets") or [], "objects": e.get("objects") or [],
+                    "locations": e.get("locations") or [], "factions": e.get("factions") or [],
+                    "assertions": e.get("assertions") or [], "epistemic": e.get("epistemic"),
+                    "modality": e.get("modality"), "importance": e.get("importance"),
+                }
+                return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
+            text = "\n".join(f"{rid} | {relevance_text(e)}" for rid, e in refs.items())
             self._schritt(f"ledger.relevance {start // LEDGER_RELEVANCE_BATCH + 1}/"
                           f"{(len(out) + LEDGER_RELEVANCE_BATCH - 1) // LEDGER_RELEVANCE_BATCH}")
             diag["calls"] += 1
@@ -2974,8 +2984,9 @@ class Ablauf:
                 self.letztes_ledger = self.ledger(recap_ein)
             except SprachmodellFehler as e:
                 log.warning("Schatten-Ledger übersprungen: %s", e)
-                self.letztes_ledger = {"version": 4, "state": "failed", "error": str(e), "events": [], "states": [],
+                self.letztes_ledger = {"version": 5, "state": "failed", "error": str(e), "events": [], "states": [],
                                        "encounters": [], "relevance": {"recap": 0, "openThread": 0, "bible": 0},
+                                       "critical": {"state": "failed"}, "relevanceReview": {"state": "failed"},
                                        "historySources": [], "historyLinks": [],
                                        "review": {"state": "failed"}, "integrity": {"state": "failed"}}
         fortschritt(1.0)
