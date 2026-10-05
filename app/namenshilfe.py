@@ -1,4 +1,4 @@
-"""Dynamischer Hotword-Resolver für die Transkription.
+"""Dynamischer Terminologie-Resolver für Transkription und Nachkorrektur.
 
 Die globale Systemliste wird nicht pro Kampagne kopiert. Für jeden
 Transkriptionsauftrag wird eine kleine, reproduzierbare Auswahl gebaut aus:
@@ -12,8 +12,8 @@ Shared bleibt immer aktiv. Das ist wichtig, weil deutsche Runden z. B. Chummer,
 Nat 20, Critical oder Saving Throw aus englischen Regelwerken benutzen können.
 
 Der beim Auftrag verwendete Stand wird als Snapshot an der Session gespeichert.
-Damit lässt sich später nachvollziehen, welche Hotwords ein Transkript wirklich
-gesehen hat, auch wenn die globale Liste inzwischen geändert wurde.
+Seit Resolver 3 dient diese Auswahl nicht mehr als Whisper-Prompt, sondern als
+reproduzierbarer Terminologiestand für Nachkorrektur und Diagnose.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ MAX_ZEICHEN = 700
 MAX_PROMOVIERT = 24
 MAX_ANZEIGE = 200
 MAX_LAENGE = 40
-RESOLVER_VERSION = "2"
+RESOLVER_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -78,10 +78,18 @@ def systembegriffe(system: str | None, system_name: str | None = None, sprache: 
 
 def _gespeichert(campaign: Campaign) -> dict:
     try:
-        d = json.loads(campaign.namenshilfe or "{}")
+        roh = json.loads(campaign.namenshilfe or "{}")
     except ValueError:
-        d = {}
-    return {k: [str(x) for x in d.get(k) or [] if str(x).strip()] for k in ("extra", "entfernt", "ignoriert")}
+        roh = {}
+    d = {k: [str(x) for x in roh.get(k) or [] if str(x).strip()]
+         for k in ("extra", "entfernt", "ignoriert")}
+    kor = roh.get("korrekturen") if isinstance(roh, dict) else {}
+    d["korrekturen"] = {
+        str(k).casefold(): " ".join(str(v).split())[:100]
+        for k, v in (kor.items() if isinstance(kor, dict) else [])
+        if str(k).strip() and str(v).strip()
+    }
+    return d
 
 
 def _speichern(campaign: Campaign, d: dict) -> None:
@@ -170,9 +178,29 @@ def hinzufuegen(db: Session, campaign: Campaign, wort: str) -> None:
     _speichern(campaign, d)
 
 
+def korrektur_lernen(campaign: Campaign, gehoert: str, korrekt: str) -> None:
+    """Von der SL bestätigte Schreibweise für künftige Nachkorrekturen merken."""
+    gehoert = " ".join((gehoert or "").split())[:100]
+    korrekt = " ".join((korrekt or "").split())[:100]
+    if not gehoert or not korrekt or gehoert.casefold() == korrekt.casefold():
+        return
+    d = _gespeichert(campaign)
+    d["korrekturen"][gehoert.casefold()] = korrekt
+    # Begrenze alte Lernpaare; JSON-Reihenfolge entspricht Einfügereihenfolge.
+    if len(d["korrekturen"]) > 500:
+        d["korrekturen"] = dict(list(d["korrekturen"].items())[-500:])
+    d["ignoriert"] = [x for x in d["ignoriert"] if x.casefold() != gehoert.casefold()]
+    _speichern(campaign, d)
+
+
+def korrekturen(campaign: Campaign) -> dict[str, str]:
+    return dict(_gespeichert(campaign)["korrekturen"])
+
+
 def ignorieren(campaign: Campaign, wort: str) -> None:
     d = _gespeichert(campaign)
     d["ignoriert"] = _eindeutig(d["ignoriert"] + [wort])[-500:]
+    d["korrekturen"].pop(" ".join((wort or "").split()).casefold(), None)
     _speichern(campaign, d)
 
 
@@ -313,12 +341,12 @@ def aufloesen(
 
 
 def fuer_kampagne(db: Session, campaign: Campaign, session: GameSession | None = None) -> list[str]:
-    """Kompatibilitätshelfer: dynamisch aufgelöste Begriffe als Liste."""
+    """Kompatibilitätshelfer: dynamisch aufgelöste Terminologie als Liste."""
     return list(aufloesen(db, campaign, session).begriffe)
 
 
 def snapshot_lesen(roh: str | None) -> list[str] | None:
-    """Hotwords aus einem bereits gespeicherten Transkriptions-Snapshot."""
+    """Terminologie aus einem bereits gespeicherten Resolver-Snapshot."""
     if not roh:
         return None
     try:
@@ -331,6 +359,6 @@ def snapshot_lesen(roh: str | None) -> list[str] | None:
 
 
 def hotwords_fuer_session(db: Session, campaign: Campaign, session: GameSession) -> list[str]:
-    """Ein einmal erzeugter Auftrag behält seine Auswahl auch bei Lease-Retrys."""
+    """Legacy-/Benchmark-Helfer. Produktions-ASR sendet seit Resolver 3 keine Hotwords mehr."""
     alt = snapshot_lesen(session.hotword_snapshot)
     return alt if alt is not None else fuer_kampagne(db, campaign, session)
