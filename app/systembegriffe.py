@@ -27,10 +27,10 @@ from pathlib import Path
 _ORDNER = Path(__file__).resolve().parent / "begriffe"
 _MAX_SYSTEM_DATEIEN = 100
 
-_HEADER_ALIASE = re.compile(r"^#\\s*Erkennungsnamen\\s*:\\s*(.+)$", re.IGNORECASE)
-_HEADER_A = re.compile(r"^#\\s*Stufe\\s+A\\b", re.IGNORECASE)
-_HEADER_B = re.compile(r"^#\\s*Stufe\\s+B\\b", re.IGNORECASE)
-_HEADER_VERHOERER = re.compile(r"^#\\s*Verhörer\\b", re.IGNORECASE)
+_HEADER_ALIASE = re.compile(r"^#\s*Erkennungsnamen\s*:\s*(.+)$", re.IGNORECASE)
+_HEADER_A = re.compile(r"^#\s*Stufe\s+A\b", re.IGNORECASE)
+_HEADER_B = re.compile(r"^#\s*Stufe\s+B\b", re.IGNORECASE)
+_HEADER_VERHOERER = re.compile(r"^#\s*Verhörer\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ def _alle(ordner: str) -> tuple[Begriffsliste, ...]:
 
 def _normal(text: str | None) -> str:
     # Apostrophe/Bindestriche/&, Punkte etc. als Wortgrenzen behandeln.
-    return " ".join(re.findall(r"[^\\W_]+", (text or "").casefold(), flags=re.UNICODE))
+    return " ".join(re.findall(r"[^\W_]+", (text or "").casefold(), flags=re.UNICODE))
 
 
 def _phrase_enthalten(haystack: str, needle: str) -> bool:
