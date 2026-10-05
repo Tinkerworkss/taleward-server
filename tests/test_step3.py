@@ -139,23 +139,58 @@ def test_wortebene_zerlegt_kano_antwort_in_eigenen_sprecherturn():
     assert turns[0]["end"] == 11.9 and turns[1]["start"] == 12.4
 
 
-def test_wortebene_glaettet_nur_echten_mikroausreisser():
+def test_wortebene_glaettet_einwort_lauf_auch_am_segmentrand():
     from app.transkription import sprecher_turns_aus_woertern
 
     seg = {
-        "start": 0.0, "end": 1.3, "speaker": "A", "text": "Ich gehe jetzt weiter. Nein.",
+        "start": 0.0, "end": 1.0, "speaker": "A", "text": "Ich muss währenddessen schauen.",
         "words": [
-            _wort("Ich", 0.0, 0.15, "A"), _wort("gehe", 0.15, 0.35, "A"),
-            _wort("jetzt", 0.35, 0.5, "B"),  # isolierter 150-ms-Ausreißer A-B-A
-            _wort("weiter.", 0.5, 0.8, "A"),
-            _wort("Nein.", 0.9, 1.3, "B"),  # echte kurze Antwort am Rand bleibt
+            _wort("Ich", 0.0, 0.15, "B"),  # wie im echten Lauf: falscher Ein-Wort-Turn am Rand
+            _wort("muss", 0.17, 0.35, "A"), _wort("währenddessen", 0.35, 0.72, "A"),
+            _wort("schauen.", 0.72, 1.0, "A"),
         ],
     }
     turns = sprecher_turns_aus_woertern([seg])
 
+    assert [(x["speaker"], x["text"]) for x in turns] == [("A", "Ich muss währenddessen schauen.")]
+
+
+def test_wortebene_glaettet_zweiwort_fragment_ohne_satzgrenze():
+    from app.transkription import sprecher_turns_aus_woertern
+
+    seg = {
+        "start": 0.0, "end": 1.5, "speaker": "B", "text": "Nein, es war die Unterschicht.",
+        "words": [
+            _wort("Nein,", 0.0, 0.25, "A"), _wort("es", 0.25, 0.42, "A"),
+            _wort("war", 0.44, 0.62, "B"), _wort("die", 0.62, 0.78, "B"),
+            _wort("Unterschicht.", 0.78, 1.5, "B"),
+        ],
+    }
+    turns = sprecher_turns_aus_woertern([seg])
+
+    assert [(x["speaker"], x["text"]) for x in turns] == [("B", "Nein, es war die Unterschicht.")]
+
+
+def test_einwort_antwort_als_eigenes_asr_segment_bleibt_erhalten():
+    from app.transkription import sprecher_turns_aus_woertern
+
+    segmente = [
+        {
+            "start": 0.0, "end": 1.0, "speaker": "A", "text": "Kann man das so sagen?",
+            "words": [_wort("Kann", 0.0, 0.2, "A"), _wort("man", 0.2, 0.35, "A"),
+                      _wort("das", 0.35, 0.5, "A"), _wort("so", 0.5, 0.65, "A"),
+                      _wort("sagen?", 0.65, 1.0, "A")],
+        },
+        {
+            "start": 1.1, "end": 1.7, "speaker": "B", "text": "Bisschen.",
+            "words": [_wort("Bisschen.", 1.1, 1.7, "B")],
+        },
+    ]
+    turns = sprecher_turns_aus_woertern(segmente)
+
     assert [(x["speaker"], x["text"]) for x in turns] == [
-        ("A", "Ich gehe jetzt weiter."),
-        ("B", "Nein."),
+        ("A", "Kann man das so sagen?"),
+        ("B", "Bisschen."),
     ]
 
 

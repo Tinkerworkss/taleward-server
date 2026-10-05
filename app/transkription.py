@@ -88,9 +88,6 @@ def _bereinigen(segmente: list[dict], hotwords: list[str]) -> list[dict]:
     return [s for s in segmente if (s.get("text") or "").strip() and s.get("end", 0) > s.get("start", 0)]
 
 
-SPRECHER_AUSREISSER_MAX_S = 0.35
-
-
 def _wortlaut(woerter: list[dict]) -> str:
     teile = [str(w.get("word") or "") for w in woerter]
     if any(x[:1].isspace() for x in teile):
@@ -114,15 +111,51 @@ def _sprecher_laeufe(labels: list[str | None]) -> list[tuple[int, int, str | Non
     return aus
 
 
-def _kurzer_sprecher_ausreisser(woerter: list[dict], start: int, ende: int) -> bool:
-    if ende - start != 1:
+def _sprechergrenze_plausibel(woerter: list[dict], links_ende: int, rechts_start: int) -> bool:
+    """Konservative Evidenz für einen echten Sprecherwechsel innerhalb eines Whisper-Segments."""
+    if links_ende <= 0 or rechts_start >= len(woerter):
+        return True
+    links = woerter[links_ende - 1]
+    rechts = woerter[rechts_start]
+    wort = str(links.get("word") or "").strip()
+    if wort.endswith((".", "!", "?", "…", ":")):
+        return True
+    a, b = links.get("end"), rechts.get("start")
+    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and b - a >= 0.30
+
+
+def _kurzen_lauf_anhaengen(
+    labels: list[str | None], laeufe: list[tuple[int, int, str | None]], nr: int, fallback: str | None
+) -> bool:
+    """1-Wort-Läufe immer, 2-Wort-Fragmente ohne plausible Grenze an den Nachbarturn hängen."""
+    start, ende, mitte = laeufe[nr]
+    laenge = ende - start
+    if laenge > 2 or len(laeufe) <= 1:
         return False
-    wort = str(woerter[start].get("word") or "").strip()
-    if wort.endswith((".", "!", "?", "…")):
-        return False  # kurze echte Antwort am Satzende nicht wegglätten
-    w = woerter[start]
-    a, b = w.get("start"), w.get("end")
-    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and 0 <= b - a <= SPRECHER_AUSREISSER_MAX_S
+
+    links = laeufe[nr - 1] if nr > 0 else None
+    rechts = laeufe[nr + 1] if nr + 1 < len(laeufe) else None
+
+    # Ob ein 2-Wort-Lauf genügend Grenz-Evidenz hat, entscheidet der Aufrufer mit den Wortzeiten.
+
+    kandidaten: list[tuple[int, str | None]] = []
+    if links:
+        kandidaten.append((links[1] - links[0], links[2]))
+    if rechts:
+        kandidaten.append((rechts[1] - rechts[0], rechts[2]))
+    if not kandidaten:
+        return False
+
+    # Segmentsprecher bevorzugen, sofern er direkt angrenzt; sonst den größeren Nachbarturn.
+    ziel = None
+    if fallback and any(label == fallback for _, label in kandidaten):
+        ziel = fallback
+    else:
+        ziel = max(kandidaten, key=lambda x: x[0])[1]
+    if ziel is None or ziel == mitte:
+        return False
+    labels[start:ende] = [ziel] * laenge
+    return True
 
 
 def sprecher_turns_aus_woertern(segmente: list[dict]) -> list[dict]:
@@ -131,7 +164,7 @@ def sprecher_turns_aus_woertern(segmente: list[dict]) -> list[dict]:
     Sicherheit vor Aggressivität:
     - nur teilen, wenn die Wortliste den Segmenttext lexikalisch vollständig abdeckt;
     - fehlende Wortlabels werden nur aus direkten Nachbarn/Fallback ergänzt;
-    - ein einzelner sehr kurzer A-B-A-Ausreißer wird geglättet, echte kurze Satzantworten bleiben;
+    - interne 1-Wort-Läufe werden geglättet; 2-Wort-Fragmente brauchen Satzende oder eine klare Pause;
     - Segmentgrenzen/Text bleiben unverändert, wenn die Wortebene nicht belastbar genug ist.
     """
     aus: list[dict] = []
@@ -162,18 +195,25 @@ def sprecher_turns_aus_woertern(segmente: list[dict]) -> list[dict]:
             labels[i] = links if links and links == rechts else (links or rechts or fallback)
         labels = [x or fallback for x in labels]
 
-        # Nur isolierte Mikro-Ausreißer A-B-A glätten. So bleibt z. B. „Der ist tot.“ als eigener Turn erhalten.
+        # Neue interne Sprecher-Turns brauchen mindestens zwei Wörter. Ein-Wort-Läufe werden immer
+        # geglättet. Zwei-Wort-Fragmente bleiben nur, wenn die Grenze durch Satzende oder >=300 ms Pause gestützt wird.
         while True:
             laeufe = _sprecher_laeufe(labels)
+            if len(laeufe) <= 1:
+                break
             geaendert = False
-            for nr in range(1, len(laeufe) - 1):
-                a0, _a1, links = laeufe[nr - 1]
-                b0, b1, mitte = laeufe[nr]
-                _c0, c1, rechts = laeufe[nr + 1]
-                if links and links == rechts and mitte != links and _kurzer_sprecher_ausreisser(woerter, b0, b1):
-                    labels[b0:b1] = [links] * (b1 - b0)
-                    geaendert = True
-                    break
+            for nr, (start, ende, _speaker) in enumerate(laeufe):
+                laenge = ende - start
+                if laenge == 1:
+                    if _kurzen_lauf_anhaengen(labels, laeufe, nr, fallback):
+                        geaendert = True
+                        break
+                elif laenge == 2:
+                    links_ok = nr > 0 and _sprechergrenze_plausibel(woerter, start, start)
+                    rechts_ok = nr + 1 < len(laeufe) and _sprechergrenze_plausibel(woerter, ende, ende)
+                    if not links_ok and not rechts_ok and _kurzen_lauf_anhaengen(labels, laeufe, nr, fallback):
+                        geaendert = True
+                        break
             if not geaendert:
                 break
 
