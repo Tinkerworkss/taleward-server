@@ -290,7 +290,7 @@ def ledger_bewerten(ledger: dict, gold: dict, valid_source_ids: set[str] | None 
         if any(_meta_entitaet(x) for x in vals):
             table_roles += 1
 
-    fps = [str(e.get("semanticFingerprint") or "") for e in events if e.get("semanticFingerprint")]
+    fps = [str(e.get("eventFingerprint") or "") for e in events if e.get("eventFingerprint")]
     duplicate_fps = len(fps) - len(set(fps))
     matched = sum(1 for x in fact_results if x["matched"])
     violations = sum(1 for x in non_results if x["violated"])
@@ -309,13 +309,13 @@ def ledger_bewerten(ledger: dict, gold: dict, valid_source_ids: set[str] | None 
         "expectedNonClaimsTotal": len(non_results),
         "provenanceCompleteness": _ratio(prov_ok, len(events)),
         "tableRoleWorldEntityCount": table_roles,
-        "duplicateSemanticFingerprints": duplicate_fps,
+        "duplicateEventFingerprints": duplicate_fps,
     }
     gates = {
         "provenance100": (metrics["provenanceCompleteness"] == 1.0 if events else True),
         "noExpectedNonClaims": violations == 0,
         "noTableRolesAsWorldEntities": table_roles == 0,
-        "noSemanticDuplicates": duplicate_fps == 0,
+        "noExactEventDuplicates": duplicate_fps == 0,
     }
     return {
         "version": 1,
@@ -346,7 +346,7 @@ def harness_md(result: dict) -> str:
         f"- Expected-non-claim violations: **{m.get('expectedNonClaimViolations', 0)}**",
         f"- Provenance completeness: **{pct(m.get('provenanceCompleteness'))}**",
         f"- Tischrollen als Weltentität: **{m.get('tableRoleWorldEntityCount', 0)}**",
-        f"- Doppelte semantische Fingerprints: **{m.get('duplicateSemanticFingerprints', 0)}**",
+        f"- Doppelte Event-Fingerprints: **{m.get('duplicateEventFingerprints', 0)}**",
         "", "## Gates",
     ]
     lines += [f"- {'PASS' if ok else 'FAIL'} – {name}" for name, ok in g.items()]
