@@ -124,11 +124,12 @@ def lesen(schluessel: str | None) -> Begriffsliste | None:
     return _lesen_pfad(str(p)) if p.is_file() else None
 
 
-@lru_cache(maxsize=1)
-def _alle() -> tuple[Begriffsliste, ...]:
-    if not _ORDNER.is_dir():
+@lru_cache(maxsize=8)
+def _alle(ordner: str) -> tuple[Begriffsliste, ...]:
+    p = Path(ordner)
+    if not p.is_dir():
         return ()
-    return tuple(_lesen_pfad(str(p)) for p in sorted(_ORDNER.glob("*.txt"))[:_MAX_SYSTEM_DATEIEN])
+    return tuple(_lesen_pfad(str(datei)) for datei in sorted(p.glob("*.txt"))[:_MAX_SYSTEM_DATEIEN])
 
 
 def _normal(text: str | None) -> str:
@@ -156,7 +157,7 @@ def erkennen(system: str | None, system_name: str | None = None) -> Begriffslist
         return None
 
     treffer: list[tuple[int, int, Begriffsliste]] = []
-    for liste in _alle():
+    for liste in _alle(str(_ORDNER)):
         for alias in liste.aliases:
             n = _normal(alias)
             if not n:
