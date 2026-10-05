@@ -692,6 +692,35 @@ encounters beschreibt nur RECAP-RELEVANTE, SUBSTANTIELLE zusammenhängende Konfl
 Für coverage, anchors und encounters dürfen sourceIds nur aus diesem Abschnitt stammen und müssen die jeweilige Aussage direkt tragen. Behauptet/geglaubt/Vision ist nicht beobachtete Weltwahrheit.
 Antworte nur mit JSON {"reviews": [...], "coverage": [...], "anchors": [...], "encounters": [...]} nach dem vorgegebenen Schema. Sprache: {sprache}."""
 
+SYSTEM_LEDGER_CRITICAL = """Du sicherst wenige HOCHRISIKO-FAKTEN eines Pen-&-Paper-Ledgers direkt gegen EINEN Abschnitt des ORIGINALTRANSKRIPTS ab. Du bekommst zusätzlich bereits geprüfte Events mit temporären IDs Txxxx.
+Suche ausschließlich critical/important Fakten dieser Klassen:
+- life_status: Tod, Überleben, Wiederkehr.
+- physical_condition: schwere/anhaltende Verletzung oder deutliche Heilung.
+- rescue_aid: Rettung, medizinische Behandlung, Befreiung aus akuter Gefahr.
+- possession_transfer: benannter oder plotrelevanter Gegenstand wechselt Besitzer/Kontrolle.
+- identity_role: Identität, Verwechslung, dauerhafte Rolle.
+- plot_location: plotrelevanter Aufenthaltsort einer benannten Person/eines benannten Gegenstands.
+- goal_obligation: wichtiges Ziel, Schwur, Deal, Schuld oder Verpflichtung.
+
+WICHTIG für lokale Gesprächsauflösung:
+- Kurze Antworten und Pronomen beziehen sich häufig auf die unmittelbar zuvor erfragte/besprochene Figur. Nutze den lokalen Turn-Kontext, aber rate nicht über unklare Referenten.
+- Sprecherlabels sind automatisch erkannt und können falsch sein. Fragt ein Spieler unmittelbar nach Zustand/Handlung eines NPCs oder der Welt und folgt genau eine unbestrittene autoritative Weltantwort, darf das Sprecherlabel als fehlerhaft gelten; markiere dann tag "speaker_conflict".
+- Bei rescue_aid gilt: actor = rettende/behandelnde Figur, target = gerettete/behandelte Figur.
+- Bei possession_transfer gilt zwingend: actor = Geber/Verlierer, target = Empfänger, object = Gegenstand UND assertion: subject=Gegenstand, property=possession oder control, value=Empfänger/neuer Besitzer.
+- Summary, actors/targets/objects und assertions müssen dieselbe Relation ausdrücken.
+
+replaceRefs enthält NUR T-IDs bereits vorhandener Events, die denselben source-belegten Hochrisiko-Fakt falsch abbilden (z. B. falscher Referent oder invertierte Übergabe). Verwandte, aber eigenständige Events nicht ersetzen.
+Gib maximal 6 Fakten pro Abschnitt aus. sourceIds nur aus dem Abschnitt. Keine Routine, keine Spielmechanik, keine bloße Atmosphäre.
+Antworte nur mit JSON {"facts":[{"factClass":"…","replaceRefs":["T0001"],"event":{...}}]}. Sprache: {sprache}."""
+
+SYSTEM_LEDGER_RELEVANCE = """Du klassifizierst bereits geprüfte Ledger-Fakten ausschließlich nach ihrer späteren Verwendung. Ändere KEINEN Fakt, keine Relation und keine Epistemik.
+Für jedes Event:
+- recap=true, wenn es für den verständlichen Sitzungsverlauf, Wendepunkt, Ergebnis, wichtige Entscheidung/Entdeckung oder eine folgenreiche Zustandsänderung gebraucht wird.
+- openThread=true, wenn es später gebraucht wird, um einen offenen Faden zu erkennen ODER als gelöst zu markieren: Ziel, Verpflichtung, Gefahr, ungelöste Frage, gesuchte Person/Gegenstand oder fortwirkende Folge.
+- bible=true, wenn es dauerhaftes Wissen über eine benannte Person, Ort, Fraktion, Gegenstand, Identität, Rolle, Beziehung, Zugehörigkeit oder bedeutenden Besitz darstellt.
+Routine, reine Regelmechanik und folgenlose Kleindetails dürfen alle drei false sein. Mehrere true sind ausdrücklich erlaubt.
+Antworte für jede bereitgestellte R-ID genau einmal. Nur JSON {"classifications":[{"ref":"R0001","recap":true,"openThread":false,"bible":true,"reason":"…"}]}. Sprache: {sprache}."""
+
 SYSTEM_LEDGER_ANCHOR_RESOLVE = """Du löst NUR wenige strittige oder fehlende Hochrisiko-Fakten eines Pen-&-Paper-Ledgers gegen kurze Ausschnitte des ORIGINALTRANSKRIPTS auf. Ein HINWEIS ist ausdrücklich KEINE Wahrheit, sondern nur ein Prüfauftrag.
 Für jeden Hinweis:
 - verdict = confirmed nur wenn der Quellausschnitt die atomare Relation bzw. den Zustand belastbar trägt.
@@ -929,6 +958,21 @@ S_LEDGER_ANCHOR = _obj({
     "certainty": {"type": "string", "enum": ["high", "medium", "low"]},
     "importance": {"type": "string", "enum": ["critical", "important"]},
 }, ["originIds", "sourceIds", "subject", "property", "value", "epistemic", "certainty", "importance"])
+S_LEDGER_CRITICAL_FACT = _obj({
+    "factClass": {"type": "string", "enum": ["life_status", "physical_condition", "rescue_aid",
+                                                  "possession_transfer", "identity_role", "plot_location",
+                                                  "goal_obligation"]},
+    "replaceRefs": {"type": "array", "items": {"type": "string", "pattern": "^T[0-9]{4,6}$"}},
+    "event": S_LEDGER_EVENT,
+}, ["factClass", "replaceRefs", "event"])
+S_LEDGER_CRITICAL = _obj({"facts": {"type": "array", "maxItems": 6, "items": S_LEDGER_CRITICAL_FACT}}, ["facts"])
+S_LEDGER_RELEVANCE_CLASS = _obj({
+    "ref": {"type": "string", "pattern": "^R[0-9]{4,6}$"},
+    "recap": S_BOOL, "openThread": S_BOOL, "bible": S_BOOL, "reason": S_STR,
+}, ["ref", "recap", "openThread", "bible", "reason"])
+S_LEDGER_RELEVANCE_RESULT = _obj({
+    "classifications": {"type": "array", "items": S_LEDGER_RELEVANCE_CLASS}
+}, ["classifications"])
 S_LEDGER_ANCHOR_RESOLUTION = _obj({
     "resolutions": {"type": "array", "items": _obj({
         "anchorId": {"type": "string", "pattern": "^A[0-9]{4,6}$"},
@@ -995,6 +1039,8 @@ S_SCHEMAS = {
         "anchors": {"type": "array", "maxItems": 4, "items": S_LEDGER_ANCHOR},
         "encounters": {"type": "array", "maxItems": 1, "items": S_LEDGER_ENCOUNTER_FRAGMENT},
     }, ["reviews", "coverage", "anchors", "encounters"]),
+    "ledger_critical": S_LEDGER_CRITICAL,
+    "ledger_relevance": S_LEDGER_RELEVANCE_RESULT,
     "ledger_anchor_resolution": S_LEDGER_ANCHOR_RESOLUTION,
     "ledger_history": _obj({"links": {"type": "array", "items": _obj({
         "eventId": S_STR,
@@ -1024,6 +1070,10 @@ def _schema_fuer(system: str) -> dict | None:
         return S_SCHEMAS["proposals"]
     if system.startswith("Du vergleichst den Recap"):
         return S_SCHEMAS["missing"]
+    if system.startswith("Du sicherst wenige HOCHRISIKO-FAKTEN"):
+        return S_SCHEMAS["ledger_critical"]
+    if system.startswith("Du klassifizierst bereits geprüfte Ledger-Fakten"):
+        return S_SCHEMAS["ledger_relevance"]
     if system.startswith("Du extrahierst") or system.startswith("Du suchst im ORIGINALTRANSKRIPT"):
         return S_SCHEMAS["ledger"]
     if system.startswith("Du prüfst Ledger-Kandidaten"):
