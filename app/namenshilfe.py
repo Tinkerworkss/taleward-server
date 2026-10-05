@@ -12,8 +12,6 @@ SL-Notizen und gmNotes werden dabei nur zur Relevanzerkennung benutzt und nie
 selbst als Hotword-Text an Whisper übergeben.
 """
 import json
-from functools import lru_cache
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -25,7 +23,6 @@ MAX_ZEICHEN = 700  # grob 200 Token – mehr schneidet Whisper ohnehin ab
 MAX_PROMOVIERT = 24
 
 
-@lru_cache(maxsize=64)
 def systembegriffe(system: str | None, system_name: str | None = None) -> tuple[str, ...]:
     """Nur Stufe A – die lange Stufe B wird niemals pauschal zu Whisper-Hotwords."""
     liste = begriffslisten.erkennen(system, system_name)
