@@ -90,9 +90,18 @@ def korrigieren(
         return text, Counter()
     zaehler: Counter[str] = Counter()
     aus = text
-    for regel in vorbereitete_regeln if vorbereitete_regeln is not None else regeln(campaign, kanonische_begriffe):
+    platzhalter: list[tuple[str, str]] = []
+    # Treffer zunächst maskieren, damit eine Korrektur nicht versehentlich eine
+    # zweite Regel auslöst. Längere Regeln stehen in regeln() bereits zuerst.
+    for nr, regel in enumerate(
+        vorbereitete_regeln if vorbereitete_regeln is not None else regeln(campaign, kanonische_begriffe)
+    ):
+        token = f"\uf000TWTERM{nr}\uf001"
         muster = _muster(regel.gehoert)
-        aus, n = muster.subn(regel.korrekt, aus)
+        aus, n = muster.subn(token, aus)
         if n:
             zaehler[regel.quelle] += n
+            platzhalter.append((token, regel.korrekt))
+    for token, korrekt in platzhalter:
+        aus = aus.replace(token, korrekt)
     return aus, zaehler
