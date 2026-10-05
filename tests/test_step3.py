@@ -36,7 +36,7 @@ class ProbeMotor:
             segs.append({"start": t, "end": t + 8, "text": f" Satz {k} über den Grauen Fürsten."})
             t, k = t + 10, k + 1
         segs.append({"start": dauer - 4.0, "end": dauer - 2.5, "text": " Ähm."})  # kurzer Einwurf
-        # Whisper plappert bei Stille die Namenshilfe nach → muss herausgefiltert werden
+        # Leerer Text wird bereinigt; produktiv kommen seit Resolver 3 keine Hotwords mehr an Whisper.
         segs.append({"start": dauer - 1.5, "end": dauer - 0.2, "text": ", ".join(hotwords[:4])})
         fortschritt(100)
         return segs
@@ -74,7 +74,7 @@ def test_tischaufnahme_echt(client, world, dbs, tmp_path):
     assert knecht(client, dbs, tmp_path, motor).einen_auftrag()
 
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_speakers"
-    assert motor.aufrufe["sprache"] == "de" and "Jemma Reed" in motor.aufrufe["hotwords"]
+    assert motor.aufrufe["sprache"] == "de" and motor.aufrufe["hotwords"] == []
     assert motor.aufrufe["sprecher"] == (1, 3)  # 2 Anwesende ± 1
     sprecher = client.get(f"{API}/sessions/{s['id']}/speakers", headers=w["gm"]).json()
     assert len(sprecher) == 2  # der winzige Cluster wird keine eigene Stimme
@@ -84,15 +84,16 @@ def test_tischaufnahme_echt(client, world, dbs, tmp_path):
     dbs.expire_all()
     assert all(json.loads(sp.embedding) for sp in dbs.query(Speaker).filter_by(session_id=s["id"]))
     zeilen = client.get(f"{API}/sessions/{s['id']}/transcript", headers=w["gm"]).json()
-    assert not any("Jemma Reed" in z["text"] for z in zeilen)  # Namens-Echo entfernt
+    assert not any("Jemma Reed" in z["text"] for z in zeilen)  # kein Prompt-Echo möglich
     assert zeilen[-1]["text"] == "Ähm." and zeilen[-1]["speakerId"] == ""  # ohne Stimme
     assert all(z["speakerId"] for z in zeilen[:-1])
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="transcription").one()
     assert log.model == "whisperx/test" and 54 <= log.audio_seconds <= 56
-    # Die tatsächlich benutzte Kurzliste bleibt reproduzierbar an der Session hängen.
+    # Terminologiestand bleibt reproduzierbar, aber ASR-Hotwords sind bewusst leer.
     snap = json.loads(dbs.get(__import__("app.models", fromlist=["GameSession"]).GameSession, s["id"]).hotword_snapshot)
-    assert snap["resolverVersion"] == "2" and snap["mode"] == "dynamic"
+    assert snap["resolverVersion"] == "3" and snap["mode"] == "dynamic"
     assert "Jemma Reed" in snap["terms"] and len(snap["fingerprint"]) == 64
+    assert snap["asrHotwords"] == [] and snap["terminologyVersion"] == "1"
 
 
 def test_kleiner_cluster_bleibt_ohne_stimme(tmp_path):
