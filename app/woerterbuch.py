@@ -205,11 +205,21 @@ class Bekannt:
 
 
 def kampagne(db: Session, campaign, ausser_session_id: str | None = None) -> Bekannt:
-    from app import namenshilfe, unterlagen
+    from app import namenshilfe, systembegriffe as begriffslisten, unterlagen
     from app.models import CampaignDocument, Entry, GameSession, GmNote, Member
 
     sprache = campaign.language if campaign.language in QUELLEN else "de"
     b = Bekannt(sprache=sprache, allgemein=liste(sprache))
+    systemliste = begriffslisten.erkennen(campaign.system, campaign.system_name)
+    if systemliste is not None:
+        # Stufe B gehört ins Nachschlagewörterbuch, nicht pauschal in den Whisper-Prompt.
+        # So werden korrekte Systembegriffe nicht als unbekannte Namen gemeldet und
+        # ähnlich erkannte Schreibweisen können als Vorschlag auftauchen.
+        for term in systemliste.alle:
+            for w in woerter(term):
+                b.kampagne.add(w.casefold())
+            if len(term) >= 3 and term.casefold() not in b.allgemein:
+                b.namen.setdefault(term.casefold(), term)
     texte: list[str] = [campaign.world_info or "", campaign.title or "", campaign.description or "",
                         campaign.system_name or ""]
     texte += namenshilfe.anzeige(db, campaign)
