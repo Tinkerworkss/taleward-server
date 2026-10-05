@@ -22,7 +22,7 @@
       "id": "orasilas_rescues_arlekin",
       "description": "Orasilas rettet Arlekin im Wasser/Tommel.",
       "importance": "critical",
-      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Arlekin", "Arlekin Dehsch"]]},
+      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Arlekin", "Arlekin Dehsch"]], "timeRange": [3200, 3350]},
       "expected": {"relevance": {"recap": true}}
     },
     {
@@ -36,7 +36,7 @@
       "id": "orasilas_treats_pipo",
       "description": "Orasilas behandelt Pipos Verletzungen.",
       "importance": "important",
-      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Pipo", "Wache Pipo"]]},
+      "match": {"actors": [["Orasilas", "Orasilas Albio"]], "targets": [["Pipo", "Wache Pipo"]], "timeRange": [4140, 4260]},
       "expected": {"relevance": {"recap": true}}
     },
     {
@@ -47,7 +47,8 @@
         "actors": [["Pipo", "Wache Pipo"]],
         "targets": [["Gruppe", "Helden", "Flüchtige", "Gefährten"]],
         "objects": [["Lostriana", "Schwert"]],
-        "assertions": [{"subject": ["Lostriana", "Schwert"], "property": "possession", "value": ["Gruppe", "Helden", "Flüchtige", "Gefährten", "bei der Gruppe"]}]
+        "assertions": [{"subject": ["Lostriana", "Schwert"], "property": "possession", "value": ["Gruppe", "Helden", "Flüchtige", "Gefährten", "bei der Gruppe"]}],
+        "timeRange": [4260, 4340]
       },
       "expected": {"epistemic": ["observed"], "relevance": {"recap": true, "bible": true}}
     },
@@ -76,14 +77,14 @@
       "id": "satuna_distinct_named_person",
       "description": "Satuna ist als Satuna die Schlange eine eigene Figur.",
       "importance": "important",
-      "match": {"assertions": [{"subject": ["Satuna", "Satuna die Schlange"], "property": "identity", "value": ["Satuna", "Satuna die Schlange"]}]},
+      "match": {"assertions": [{"subject": ["Satuna", "Satuna die Schlange"], "property": ["identity", "role_status"], "value": ["Satuna", "Satuna die Schlange"]}], "timeRange": [9180, 9250]},
       "expected": {"relevance": {"bible": true}}
     },
     {
       "id": "altvater_role",
       "description": "Der Altvater stellt sich als Altvater vor / trägt diese Rolle.",
       "importance": "important",
-      "match": {"assertions": [{"subject": ["Altvater", "der Altvater"], "property": "role_status", "value": ["Altvater", "Leiter", "Chef"]}]},
+      "match": {"assertions": [{"subject": ["Altvater", "der Altvater"], "property": ["role_status", "identity"], "value": ["Altvater", "Leiter", "Chef"]}], "timeRange": [8520, 8620]},
       "expected": {"relevance": {"bible": true}}
     }
   ],
