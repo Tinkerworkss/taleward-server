@@ -42,6 +42,69 @@ Beta
     assert liste.verhoerer == ()
 
 
+def test_shared_bleibt_in_jeder_sprache_und_overlays_ergaenzen(tmp_path, monkeypatch):
+    monkeypatch.setattr(systembegriffe, "_ORDNER", tmp_path)
+    _liste(tmp_path, "hybrid", """# Erkennungsnamen: hybrid
+# Stufe A
+Chummer
+Nat 20
+# Stufe A [de]
+Rüstungsklasse
+# Stufe A [en]
+Armor Class
+# Stufe B
+Shared Lore
+# Stufe B [de]
+Rettungswurf
+# Stufe B [en]
+Saving Throw
+# Verhörer
+Tschummer => Chummer
+# Verhörer [de]
+Ruestungsklasse => Rüstungsklasse
+# Verhörer [en]
+Saver Throw => Saving Throw
+""")
+    liste = systembegriffe.lesen("hybrid")
+    assert liste.a_fuer("de") == ("Chummer", "Nat 20", "Rüstungsklasse")
+    assert liste.a_fuer("en") == ("Chummer", "Nat 20", "Armor Class")
+    assert liste.b_fuer("de") == ("Shared Lore", "Rettungswurf")
+    assert liste.b_fuer("en") == ("Shared Lore", "Saving Throw")
+    assert systembegriffe.verhoerer_map("hybrid", sprache="de") == {
+        "tschummer": "Chummer", "ruestungsklasse": "Rüstungsklasse"
+    }
+    assert systembegriffe.verhoerer_map("hybrid", sprache="en") == {
+        "tschummer": "Chummer", "saver throw": "Saving Throw"
+    }
+    assert liste.fingerprint("de") != liste.fingerprint("en")
+
+
+def test_serverloser_resolver_hat_null_system_und_dynamik(tmp_path, monkeypatch):
+    from app import namenshilfe
+
+    monkeypatch.setattr(systembegriffe, "_ORDNER", tmp_path)
+    _liste(tmp_path, "hybrid", """# Erkennungsnamen: hybrid
+# Stufe A
+Chummer
+# Stufe A [de]
+Rüstungsklasse
+# Stufe B
+Lofwyr
+""")
+
+    null = namenshilfe.statische_auswahl("hybrid", None, "de", modus="none")
+    system = namenshilfe.statische_auswahl("hybrid", None, "de", modus="system")
+    dynamisch = namenshilfe.statische_auswahl(
+        "hybrid", None, "de", extra=["Kampagnenname"], kontext=["Lofwyr taucht wieder auf."], modus="dynamic"
+    )
+
+    assert null.begriffe == ()
+    assert system.begriffe == ("Chummer", "Rüstungsklasse")
+    assert dynamisch.begriffe[:2] == ("Kampagnenname", "Lofwyr")
+    assert "Chummer" in dynamisch.begriffe and "Rüstungsklasse" in dynamisch.begriffe
+    assert dynamisch.fingerprint != system.fingerprint
+
+
 def test_fantasy_warhammer_wird_nicht_aus_40k_abgeleitet(tmp_path, monkeypatch):
     monkeypatch.setattr(systembegriffe, "_ORDNER", tmp_path)
     _liste(tmp_path, "warhammer", """# Erkennungsnamen: warhammer, wfrp, warhammer fantasy
