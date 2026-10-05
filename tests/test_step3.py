@@ -89,6 +89,10 @@ def test_tischaufnahme_echt(client, world, dbs, tmp_path):
     assert all(z["speakerId"] for z in zeilen[:-1])
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="transcription").one()
     assert log.model == "whisperx/test" and 54 <= log.audio_seconds <= 56
+    # Die tatsächlich benutzte Kurzliste bleibt reproduzierbar an der Session hängen.
+    snap = json.loads(dbs.get(__import__("app.models", fromlist=["GameSession"]).GameSession, s["id"]).hotword_snapshot)
+    assert snap["resolverVersion"] == "2" and snap["mode"] == "dynamic"
+    assert "Jemma Reed" in snap["terms"] and len(snap["fingerprint"]) == 64
 
 
 def test_kleiner_cluster_bleibt_ohne_stimme(tmp_path):
