@@ -1,50 +1,385 @@
-# Pathfinder – häufige Eigennamen und Begriffe (Schreibhilfe für die Transkription)
+# Pathfinder – Begriffe für die Transkription
+# Erkennungsnamen: pathfinder, pathfinder 2e, pathfinder 1e, pf2, pf2e, pf1, golarion, lost omens
+# Stufe A (höchstens 40, häufigste zuerst)
 Golarion
 Absalom
 Varisia
 Sandpoint
+Sandspitze
 Magnimar
 Korvosa
-Riddleport
 Cheliax
 Andoran
-Taldor
-Osirion
-Irrisen
-Numeria
-Ustalav
-Sarkoris
-Thassilon
-Runenherrscher
+Inner Sea
+Iomedae
 Desna
 Sarenrae
-Iomedae
-Asmodeus
 Pharasma
-Gorum
 Cayden Cailean
+Abadar
+Asmodeus
 Lamashtu
 Rovagug
 Aroden
-Abadar
-Erastil
-Torag
-Calistria
-Zon-Kuthon
-Norgorber
-Urgathoa
-Goblin
-Hobgoblin
-Aasimar
-Tiefling
-Kineticist
+Pathfinder Society
+Hero Points
+Heldenpunkte
+Multiple Attack Penalty
+Strike
+Stride
+Flat-footed
+Off-Guard
+Focus Points
+Ancestry
+Heritage
+Critical Success
+Critical Failure
+Attack of Opportunity
+Saving Throw
+Fortitude
+Reflex
+Spell Slot
+Cantrip
+Thassilon
+# Stufe B
+Runelords
+Runenherrscher
+Hit Points
+Armor Class
+Will Save
+Raise a Shield
+Focus Spell
+Degree of Success
+Trained
+Expert
+Master
+Legendary
+Proficiency
+Frightened
+Dying
+Wounded
+Doomed
+Drained
+Clumsy
+Enfeebled
+Stupefied
+Sickened
+Persistent Damage
+Reaction
+Free Action
+Full-Round Action
+Swift Action
+Standard Action
+Move Action
+Five-Foot Step
+Base Attack Bonus
+Combat Maneuver Bonus
+Combat Maneuver Defense
+Touch AC
+Spell Resistance
+Damage Reduction
+Channel Energy
+Hit Dice
+Natural 20
+Nat 20
+Skill Feat
+Class Feat
+General Feat
+Ancestry Feat
+Archetype
+Dedication
+Treat Wounds
+Battle Medicine
+Recall Knowledge
+Demoralize
+Grapple
+Trip
+Shove
+Feint
+Bon Mot
+Exploration Mode
+Encounter Mode
+Downtime
+Bulk
+Shield Block
+Hardness
+Hunt Prey
+Sneak Attack
+Rage
+Panache
+Finisher
+Spellstrike
+Overflow
+Mutagen
+Bomb
 Alchemist
+Champion
+Investigator
 Inquisitor
 Magus
 Oracle
 Orakel
 Summoner
-Beschwörer
-Hexe
+Swashbuckler
+Thaumaturge
+Psychic
+Kineticist
+Gunslinger
+Inventor
+Witch
+Cavalier
+Barbarian
+Bard
+Cleric
+Druid
+Fighter
+Monk
+Ranger
+Rogue
+Sorcerer
+Wizard
+Kleriker
+Hexenmeister
 Waldläufer
-Heldenpunkte
+Schurke
+Kämpfer
+Leshy
+Ratfolk
+Ysoki
+Tengu
+Kitsune
+Catfolk
+Lizardfolk
+Iruxi
+Fetchling
+Gnoll
+Sprite
+Poppet
+Automaton
+Android
+Fleshwarp
+Nephilim
+Aasimar
+Tiefling
+Ifrit
+Oread
+Sylph
+Undine
+Changeling
+Dhampir
+Duskwalker
+Azarketi
+Strix
+Anadi
+Conrasu
+Halfling
+Halbling
+Half-Orc
+Halbork
+Half-Elf
+Halbelf
+Gnome
+Goblin
+Kobold
+Hobgoblin
+Boggard
+Grippli
+Xulgath
+Linnorm
+Vrock
+Hezrou
+Glabrezu
+Marilith
+Balor
+Nalfeshnee
+Succubus
+Avistan
+Garund
+Tian Xia
+Casmaron
+Arcadia
+Darklands
+Sekamina
+Nar-Voth
+Orv
+Starstone
+Sternenstein
+Earthfall
+Azlant
+Shory
+Riddleport
+Turtleback Ferry
+Kaer Maga
+Janderhoff
+Hook Mountain
+Storval Plateau
+Cinderlands
+Mushfens
+Thuvia
+Taldor
+Oppara
+Qadira
+Katheer
+Osirion
+Sothis
+Katapesh
+Geb
+Nex
+Alkenstar
+Rahadoum
+Sargava
+Mwangi Expanse
+Vidrian
+Irrisen
+Whitethrone
+Numeria
+Starfall
+Ustalav
+Caliphas
+Brevoy
+River Kingdoms
+Flusskönigreiche
+Stolen Lands
+Galt
+Worldwound
+Weltenwunde
+Mendev
+Sarkoris Scar
+Lands of the Linnorm Kings
+Linnorm Kingdoms
+Realm of the Mammoth Lords
+Hold of Belkzen
+Belkzen
+Nidal
+Molthune
+Nirmathas
+Isger
+Druma
+Lastwall
+Gravelands
+Ravounel
+Kyonin
+Iadara
+Five Kings Mountains
+Highhelm
+Westcrown
+Egorian
+Almas
+Kortos
+Jalmeray
+Vudra
+Minkai
+Goka
+Lost Omens
+Age of Lost Omens
+Absalom Reckoning
+Abadius
+Calistril
+Pharast
+Gozran
+Desnus
+Sarenith
+Erastus
+Arodus
+Rova
+Lamashan
+Neth
+Kuthona
+Moonday
+Toilday
+Wealday
+Oathday
+Fireday
+Starday
+Erastil
+Gorum
+Gozreh
+Irori
+Nethys
+Norgorber
+Shelyn
+Torag
+Urgathoa
+Zon-Kuthon
+Calistria
+Besmara
+Arazni
+Groetus
+Achaekek
+Razmir
+Milani
+Brigh
+Casandalee
+Ghlaunder
+Hanspur
+Kurgess
+Sivanah
+Dahak
+Apsu
+Tar-Baphon
+Whispering Tyrant
+Karzoug
+Alaznist
+Sorshen
+Xanderghul
+Krune
+Belimarius
+Zutha
+Ezren
+Amiri
+Seoni
+Valeros
+Kyra
+Merisiel
+Harsk
+Lem
+Seelah
+Lini
+Aspis Consortium
+Hellknights
+Höllenritter
+Red Mantis
+Rote Mantis
+Eagle Knights
+Bellflower Network
+Knights of Lastwall
+Gray Maidens
+Sczarni
+Varisians
+Shoanti
+Kellids
+Ulfen
+Chelaxians
+Taldans
+Garundi
+Keleshites
+Mwangi
+Tian
+Vudrani
+Azlanti
+Thassilonian
+Rise of the Runelords
+Curse of the Crimson Throne
+Kingmaker
+Abomination Vaults
+Age of Ashes
+Extinction Curse
+Agents of Edgewatch
+Strength of Thousands
+Wrath of the Righteous
+Skull & Shackles
+Carrion Crown
+Jade Regent
+Hell's Rebels
+Iron Gods
+Gold Pieces
+Silver Pieces
+Copper Pieces
+Platinum Pieces
+Pathfinder-Gesellschaft
+Venture-Captain
+# Verhörer
+Golarium => Golarion
+Pathfinder Societi => Pathfinder Society
+Iomedeh => Iomedae
+Sarenray => Sarenrae
