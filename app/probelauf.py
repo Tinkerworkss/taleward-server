@@ -283,23 +283,37 @@ def hoerprobe_speichern(wav: Path, ziel: Path, dauer_s: float) -> None:
 def namens_echo_entfernen(segmente: list[dict], namen: list[str]) -> tuple[list[dict], list[dict]]:
     """Sehr konservativ nur eindeutiges Nachplappern der Namenshilfe entfernen.
 
-    Eine echte RPG-Aussage kann mehrere Eigennamen direkt hintereinander enthalten. Deshalb reicht
-    „drei Hotwords in einem kurzen Satz“ ausdrücklich nicht mehr zum Löschen. Als Echo gilt nur ein
-    fast ausschließlich aus Hotword-Wörtern bestehender Abschnitt mit vielen verschiedenen Treffern;
-    bei vier Treffern zusätzlich nur mit dem typischen Präfix „Namen/Name“.
+    Echte RPG-Aussagen dürfen mehrere Eigennamen enthalten. Gelöscht wird daher nur, wenn
+    - Whisper die Hotword-Liste in ihrer tatsächlichen Reihenfolge nachplappert, oder
+    - ein nahezu reiner Hotword-Abschnitt mit dem typischen Präfix „Namen/Name“ entsteht.
     """
     if not namen:
         return segmente, []
+
     namenswoerter = {w.casefold() for n in namen for w in re.findall(r"\w+", n)}
+    hotword_folge = [w.casefold() for n in namen for w in re.findall(r"\w+", n)]
     behalten, entfernt = [], []
+
     for seg in segmente:
         woerter = [w.casefold() for w in re.findall(r"\w+", seg.get("text", ""))]
+        payload = woerter[1:] if woerter and woerter[0] in {"namen", "name"} else woerter
+
+        # Typisches Whisper-Echo: die ersten Hotwords werden exakt in Prompt-Reihenfolge wiederholt.
+        exakte_folge = (
+            len(payload) >= 4
+            and len(payload) <= len(hotword_folge)
+            and payload == hotword_folge[:len(payload)]
+        )
+
         treffer = sum(1 for w in woerter if w in namenswoerter)
         verschiedene = len({w for w in woerter if w in namenswoerter})
         anteil = treffer / len(woerter) if woerter else 0.0
         praefix = bool(woerter and woerter[0] in {"namen", "name"})
-        ist_echo = len(woerter) >= 5 and verschiedene >= 4 and anteil >= 0.8 and (praefix or verschiedene >= 5)
-        if ist_echo:
+        eindeutiges_praefix_echo = (
+            len(woerter) >= 5 and verschiedene >= 4 and anteil >= 0.8 and praefix
+        )
+
+        if exakte_folge or eindeutiges_praefix_echo:
             entfernt.append(seg)
         else:
             behalten.append(seg)
