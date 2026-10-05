@@ -1,7 +1,7 @@
 """Hotword-Resolver: reproduzierbarer Snapshot der tatsächlich verwendeten Kurzliste
 
 Revision ID: b4c1d7e9f2a6
-Revises: a3d9f1c7e5b2
+Revises: b7e2c4f9a1d3
 Create Date: 2026-10-05 16:20:00
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b4c1d7e9f2a6"
-down_revision: Union[str, Sequence[str], None] = "a3d9f1c7e5b2"
+down_revision: Union[str, Sequence[str], None] = "b7e2c4f9a1d3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
