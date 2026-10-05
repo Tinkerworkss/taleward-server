@@ -21,9 +21,9 @@ def status_message(key: str, **params) -> str:
 
 
 def create_transcribe_job(db: Session, s: GameSession, upload: Upload) -> Job:
-    # Beim Einreihen einfrieren, nicht erst beim Claim. Ein Lease-Retry bekommt damit exakt dieselbe
-    # Hotword-Auswahl; eine bewusste Nachtranskription erzeugt dagegen einen neuen Snapshot.
-    from app import namenshilfe
+    # Beim Einreihen einfrieren, nicht erst beim Claim. Ein Lease-Retry bekommt damit exakt denselben
+    # Terminologiestand; eine bewusste Nachtranskription erzeugt dagegen einen neuen Snapshot.
+    from app import namenshilfe, terminologie
 
     c = db.get(Campaign, s.campaign_id)
     if c is not None:
@@ -31,7 +31,7 @@ def create_transcribe_job(db: Session, s: GameSession, upload: Upload) -> Job:
         # Nach den 0/10/20/40-Benchmarks: Produktions-ASR bleibt ohne Prompt-Hotwords.
         # Der Resolver-Stand wird trotzdem eingefroren, damit Nachkorrektur/Diagnose reproduzierbar bleiben.
         snap["asrHotwords"] = []
-        snap["terminologyVersion"] = "1"
+        snap["terminologyVersion"] = terminologie.VERSION
         s.hotword_snapshot = json.dumps(snap, ensure_ascii=False)
     job = Job(type="transcribe", session_id=s.id, upload_id=upload.id, required_capability="asr", engine="local")
     db.add(job)
