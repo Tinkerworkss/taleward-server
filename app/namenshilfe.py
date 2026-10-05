@@ -1,32 +1,35 @@
-"""Namenshilfe für die Transkription: Eigennamen aus der Kampagne plus – nur bei großen Systemen – eine
-kleine Begriffsliste. Reihenfolge nach Wichtigkeit, weil Whisper nur einen begrenzten Vorspann nutzt.
+"""Namenshilfe für die Transkription.
 
-Nie enthalten: Charakter-Hintergründe, SL-Notizen, gmNotes, Kommentare (nur Namen, keine Inhalte).
+Whisper bekommt nur einen kleinen, priorisierten Hotword-Vorspann:
+- manuell korrigierte/ergänzte Kampagnenbegriffe,
+- wichtige Namen der Kampagne,
+- Stufe-B-Systembegriffe, die in der Kampagne tatsächlich vorkommen,
+- die kurze Stufe A des Spielsystems.
+
+Die große Stufe B wird nicht pauschal an Whisper geschickt. Sie dient dem
+Wörterbuch und wird nur kontextabhängig hochgestuft. Charakter-Hintergründe,
+SL-Notizen und gmNotes werden dabei nur zur Relevanzerkennung benutzt und nie
+selbst als Hotword-Text an Whisper übergeben.
 """
 import json
 from functools import lru_cache
-from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import systembegriffe as begriffslisten
 from app.models import Campaign, Entry, EntryMention, GameSession, Member, User
 
 MAX_BEGRIFFE = 80
 MAX_ZEICHEN = 700  # grob 200 Token – mehr schneidet Whisper ohnehin ab
+MAX_PROMOVIERT = 24
 
-_ORDNER = Path(__file__).resolve().parent / "begriffe"
 
-
-@lru_cache
-def systembegriffe(system: str | None) -> tuple[str, ...]:
-    if not system or system == "other":
-        return ()
-    datei = _ORDNER / f"{system}.txt"
-    if not datei.exists():
-        return ()
-    zeilen = datei.read_text(encoding="utf-8").splitlines()
-    return tuple(z.strip() for z in zeilen if z.strip() and not z.startswith("#"))
+@lru_cache(maxsize=64)
+def systembegriffe(system: str | None, system_name: str | None = None) -> tuple[str, ...]:
+    """Nur Stufe A – die lange Stufe B wird niemals pauschal zu Whisper-Hotwords."""
+    liste = begriffslisten.erkennen(system, system_name)
+    return liste.stufe_a if liste else ()
 
 
 MAX_ANZEIGE = 200   # Schnittstelle 0.4.6: höchstens 200 Einträge …
@@ -76,7 +79,7 @@ def abgeleitet(db: Session, campaign: Campaign) -> list[str]:
 
 def anzeige(db: Session, campaign: Campaign) -> list[str]:
     """Campaign.hotwords für die SL: Eigenes und Korrigiertes zuerst, dann die abgeleiteten Namen ohne die, die die
-    SL herausgenommen hat."""
+    SL herausgenommen hat. Systemlisten gehören bewusst nicht in diese editierbare Anzeige."""
     d = _gespeichert(campaign)
     raus = {x.casefold() for x in d["entfernt"]}
     return _eindeutig(d["extra"] + [n for n in abgeleitet(db, campaign) if n.casefold() not in raus])[:MAX_ANZEIGE]
@@ -117,14 +120,51 @@ def ignoriert(campaign: Campaign) -> set[str]:
     return {x.casefold() for x in _gespeichert(campaign)["ignoriert"]}
 
 
-def fuer_kampagne(db: Session, campaign: Campaign) -> list[str]:
-    """Was der Worker als hotwords bekommt: Namenshilfe der Kampagne, dann die Begriffsliste des Systems – begrenzt,
-    weil Whisper nur einen kurzen Vorspann nutzt."""
-    namen = _eindeutig(anzeige(db, campaign) + list(systembegriffe(campaign.system)))
-    ergebnis, laenge = [], 0
-    for n in namen[:MAX_BEGRIFFE]:
-        if laenge + len(n) + 2 > MAX_ZEICHEN:
-            break
-        ergebnis.append(n)
-        laenge += len(n) + 2
+def _kontexttexte(db: Session, campaign: Campaign) -> list[str]:
+    """Texte nur zur Auswahl relevanter Stufe-B-Begriffe; sie werden nie selbst an Whisper geschickt."""
+    texte = [campaign.title, campaign.description, campaign.world_info, campaign.system_name]
+    for e in db.scalars(select(Entry).where(Entry.campaign_id == campaign.id)):
+        texte += [e.name, e.summary, e.gm_notes]
+    for m in db.scalars(select(Member).where(Member.campaign_id == campaign.id)):
+        texte += [m.character_name, m.character_nickname, m.character_summary, m.character_backstory]
+    return [str(t) for t in texte if t]
+
+
+def _packen(gruppen: list[list[str]]) -> list[str]:
+    ergebnis: list[str] = []
+    gesehen: set[str] = set()
+    laenge = 0
+    for gruppe in gruppen:
+        for roh in gruppe:
+            n = " ".join(str(roh or "").split())[:MAX_LAENGE]
+            k = n.casefold()
+            if not n or k in gesehen:
+                continue
+            zusaetzlich = len(n) + (2 if ergebnis else 0)
+            if len(ergebnis) >= MAX_BEGRIFFE or laenge + zusaetzlich > MAX_ZEICHEN:
+                continue
+            ergebnis.append(n)
+            gesehen.add(k)
+            laenge += zusaetzlich
     return ergebnis
+
+
+def fuer_kampagne(db: Session, campaign: Campaign) -> list[str]:
+    """Priorisierte Whisper-Hotwords innerhalb des festen Budgets.
+
+    Reihenfolge:
+    1. manuell ergänzte/korrigierte Begriffe,
+    2. die wichtigsten aktuellen Kampagnennamen,
+    3. in Kampagnentexten gefundene Begriffe aus Stufe B,
+    4. Stufe A des Systems,
+    5. übrige Kampagnennamen.
+    """
+    d = _gespeichert(campaign)
+    raus = {x.casefold() for x in d["entfernt"]}
+    basis = [n for n in abgeleitet(db, campaign) if n.casefold() not in raus]
+    wichtig, rest = basis[:12], basis[12:]
+    promoviert = list(begriffslisten.promovierte_stufe_b(
+        campaign.system, campaign.system_name, _kontexttexte(db, campaign), limit=MAX_PROMOVIERT
+    ))
+    stufe_a = list(systembegriffe(campaign.system, campaign.system_name))
+    return _packen([d["extra"], wichtig, promoviert, stufe_a, rest])
