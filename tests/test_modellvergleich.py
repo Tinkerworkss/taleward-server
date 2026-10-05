@@ -76,6 +76,7 @@ def test_modellvergleich(client, world, dbs, tmp_path):
     assert "| a:1 (ctx 12288) | ok |" in bericht and "| b:2 (ctx 8192) | Fehler |" in bericht
     erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
     assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
+    assert erg["model_digest"] == "abc" and erg["ollama_version"] == "0.34.4"
     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
     transkript = (ordner / "transkript.txt").read_text(encoding="utf-8")
@@ -137,7 +138,8 @@ def test_modellvergleich_nur_ledger_mit_atomic_gold_exportiert_harness(client, w
         }]}}],
         "expectedNonClaims": [],
     }
-    einst = mv.Einstellungen(nur_ledger=True, laeufe=1, ledger_gold=gold)
+    einst = mv.Einstellungen(nur_ledger=True, laeufe=1, ledger_gold=gold,
+                            hardware_label="RTX Test / CUDA")
     ordner = mv.ausfuehren(server, s["id"], [("a:1", 12288)], "", 12288,
                            "http://ollama", tmp_path / "gold", lambda _x: None,
                            client=_ollama([]), einst=einst)
@@ -148,6 +150,8 @@ def test_modellvergleich_nur_ledger_mit_atomic_gold_exportiert_harness(client, w
     assert harness["metrics"]["factsTotal"] == 1
     assert (d / "ledger-harness.md").is_file()
     assert erg["ledgerHarnessMetrics"]["factsTotal"] == 1
+    assert erg["hardware_label"] == "RTX Test / CUDA"
+    assert erg["model_digest"] == "abc" and erg["ollama_version"] == "0.34.4"
     assert erg["ledger_harness"] is None
 
 
