@@ -356,8 +356,7 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
     sprecher = sorted(body.speakers, key=lambda x: -x.speaking_seconds)
     zuordnung: dict[str, str] = {}
     for pos, sp in enumerate(sprecher):
-        sample_text, zaehler = terminologie.korrigieren(sp.sample_text.strip(), campaign, terminologie_regeln)
-        auto_korrekturen.update(zaehler)
+        sample_text, _ = terminologie.korrigieren(sp.sample_text.strip(), campaign, terminologie_regeln)
         obj = Speaker(session_id=s.id, position=pos, label=f"Stimme {pos + 1}", raw_label=sp.label,
                       speaking_seconds=round(sp.speaking_seconds, 1), sample_text=sample_text or "",
                       embedding=json.dumps(sp.embedding) if sp.embedding else None,
