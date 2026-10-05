@@ -712,6 +712,7 @@ WICHTIG für lokale Gesprächsauflösung:
 
 replaceRefs enthält NUR T-IDs bereits vorhandener Events, die denselben source-belegten Hochrisiko-Fakt falsch abbilden (z. B. falscher Referent oder invertierte Übergabe). Verwandte, aber eigenständige Events nicht ersetzen.
 Gib maximal 6 Fakten pro Abschnitt aus. sourceIds nur aus dem Abschnitt. Keine Routine, keine Spielmechanik, keine bloße Atmosphäre.
+Bewerte hier NICHT recap/openThread/bible; die Relevanz wird erst in einem späteren, getrennten Schritt klassifiziert.
 Antworte nur mit JSON {"facts":[{"factClass":"…","replaceRefs":["T0001"],"event":{...}}]}. Sprache: {sprache}."""
 
 SYSTEM_LEDGER_RELEVANCE = """Du klassifizierst bereits geprüfte Ledger-Fakten ausschließlich nach ihrer späteren Verwendung. Ändere KEINEN Fakt, keine Relation und keine Epistemik.
@@ -1976,7 +1977,6 @@ class Ablauf:
             "objects": e.get("objects") or [], "locations": e.get("locations") or [], "factions": e.get("factions") or [],
             "assertions": e.get("assertions") or [], "epistemic": e.get("epistemic"),
             "modality": e.get("modality"), "importance": e.get("importance"),
-            "relevance": e.get("relevance") or {},
             "pass": e.get("extractionPass"),
         }
         return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
