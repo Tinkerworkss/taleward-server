@@ -6,8 +6,9 @@ Aufbau:
   und wird in den Tests mit einem Test-Motor geprüft.
 
 Erkenntnisse aus Probeläufen (Grafikkarte mit 8 GB):
-- Namenshilfe nur als `hotwords`, nie als `initial_prompt` (wurde sonst wörtlich ins Transkript übernommen).
-  Zusätzlich filtert `namens_echo_entfernen` Abschnitte, die nur die Namensliste nachplappern.
+- Produktions-ASR läuft ohne Prompt-Hotwords. Die 0/10/20/40-Shadowrun-Benchmarks zeigten zwar bessere
+  Fachbegriffe, aber reproduzierbare Textauslassungen. Terminologie wird daher erst nach der ASR korrigiert.
+  Hotwords bleiben nur für explizite Benchmarks; `namens_echo_entfernen` schützt diesen Testpfad weiterhin.
 - Modelle nacheinander laden und sofort wieder freigeben (Spitze ~6,6 GB inkl. Windows).
 - Stimmen mit sehr wenig Redezeit sind meist Fehlzuordnungen → unter MIN_REDEZEIT keine eigene Stimme.
 """
