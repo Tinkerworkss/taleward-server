@@ -8,8 +8,9 @@ Quelle: Der Worker meldet je Abschnitt die Wörter, die die zeitliche Ausrichtun
 - gebündelt nach Klang (Kölner Phonetik): „Tharvok“, „Tarvok“ und „Darvok“ sind ein Begriff,
 - ähnlich klingende Bibel- und Charakternamen und Namen aus den Texten der Kampagne kommen als Vorschlag mit.
 
-Korrektur: reine Textersetzung (ganze Wörter) in Transkript, Recap, Vorschlägen und Prüfteil – oder, solange das
-Audio da ist, eine erneute Transkription mit der korrigierten Namenshilfe (höchstens zweimal je Session).
+Korrektur: reine Textersetzung (ganze Wörter) in Transkript, Recap, Vorschlägen und Prüfteil. Bestätigte
+Korrekturpaare werden kampagnenspezifisch gelernt und bei künftigen ASR-Ergebnissen nachgelagert angewandt.
+Eine erneute Transkription bleibt als Alt-/Diagnoseweg erhalten, läuft aber ebenfalls ohne Prompt-Hotwords.
 """
 from __future__ import annotations
 
@@ -132,7 +133,7 @@ def begriffe(db: Session, s: GameSession) -> list[dict]:
         vorschlaege = sorted(((aehnlich(heard, n), n, eid, mid) for n, eid, mid in namen), reverse=True)
         passend = [v for v in vorschlaege if v[0] >= AEHNLICH]
         andere = [k for k in sorted(g["schreibweisen"], key=lambda k: -g["schreibweisen"][k]) if k != heard]
-        # Systembezogene bekannte Verhörer nur als Vorschlag, nie blind automatisch ersetzen.
+        # Fallback für Verhörer, die der Nachkorrektur nicht als exakte ganze Phrase begegnet sind.
         # Existiert die Schreibweise bereits als Kampagnenname, wurde sie oben als bekannt ausgesiebt.
         direkt = verhoerer.get(heard.casefold())
         alternativen = list(dict.fromkeys(([direkt] if direkt else []) + [v[1] for v in passend[:2]] + andere))[:4]
