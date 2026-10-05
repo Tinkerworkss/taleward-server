@@ -308,6 +308,32 @@ def result(jobId: str, body: ResultIn, worker: Worker = Depends(current_worker),
     return Response(status_code=204)
 
 
+def _terminologie_regeln(db: Session, s: GameSession):
+    """Korrekturregeln einmal pro Ergebnis bauen; fuzzy Ersetzungen sind absichtlich ausgeschlossen."""
+    from app import namenshilfe, terminologie
+
+    campaign = db.get(Campaign, s.campaign_id)
+    kanonisch = namenshilfe.anzeige(db, campaign) if campaign is not None else []
+    return campaign, terminologie.regeln(campaign, kanonisch) if campaign is not None else []
+
+
+def _terminologie_snapshot(s: GameSession, zaehler) -> None:
+    """Auditierbar festhalten, was nach der ASR automatisch normalisiert wurde."""
+    from app import terminologie
+
+    try:
+        snap = json.loads(s.hotword_snapshot or "{}")
+    except ValueError:
+        snap = {}
+    if not isinstance(snap, dict):
+        snap = {}
+    snap["asrHotwords"] = []
+    snap["terminologyVersion"] = terminologie.VERSION
+    snap["autoCorrections"] = dict(zaehler)
+    snap["autoCorrectionTotal"] = int(sum(zaehler.values()))
+    s.hotword_snapshot = json.dumps(snap, ensure_ascii=False)
+
+
 def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, worker_id: str | None,
                          kosten_cent: int = 0) -> None:
     """Transkript übernehmen – gleicher Weg für eigene Worker (local) und externe Anbieter (external):
@@ -315,6 +341,11 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
     s = db.get(GameSession, job.session_id)
     up = db.get(Upload, job.upload_id)
     discord = up.source == "discord"
+    campaign, terminologie_regeln = _terminologie_regeln(db, s)
+    from collections import Counter
+    from app import terminologie
+
+    auto_korrekturen = Counter()
     if s.nachtranskription:
         return _nachtranskription_uebernehmen(db, s, job, body, engine, worker_id, kosten_cent, discord)
     # Ergebnis eines früheren Versuchs verwerfen
@@ -325,8 +356,10 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
     sprecher = sorted(body.speakers, key=lambda x: -x.speaking_seconds)
     zuordnung: dict[str, str] = {}
     for pos, sp in enumerate(sprecher):
+        sample_text, zaehler = terminologie.korrigieren(sp.sample_text.strip(), campaign, terminologie_regeln)
+        auto_korrekturen.update(zaehler)
         obj = Speaker(session_id=s.id, position=pos, label=f"Stimme {pos + 1}", raw_label=sp.label,
-                      speaking_seconds=round(sp.speaking_seconds, 1), sample_text=sp.sample_text.strip(),
+                      speaking_seconds=round(sp.speaking_seconds, 1), sample_text=sample_text or "",
                       embedding=json.dumps(sp.embedding) if sp.embedding else None,
                       embedding_model=body.embedding_model if sp.embedding else None)
         if discord and sp.track_member_id:
@@ -341,9 +374,12 @@ def ergebnis_uebernehmen(db: Session, job: Job, body: ResultIn, engine: str, wor
                 storage.write_atomic(storage.sample_path(s.id, obj.id), daten)
                 obj.sample_path = str(storage.sample_path(s.id, obj.id))
     for pos, seg in enumerate(sorted(body.segments, key=lambda x: x.start)):
+        text, zaehler = terminologie.korrigieren(seg.text.strip(), campaign, terminologie_regeln)
+        auto_korrekturen.update(zaehler)
         db.add(TranscriptSegment(session_id=s.id, position=pos, start=round(seg.start, 2), end=round(seg.end, 2),
-                                 speaker_id=zuordnung.get(seg.speaker or ""), text=seg.text.strip(),
+                                 speaker_id=zuordnung.get(seg.speaker or ""), text=text or "",
                                  unsicher=_unsicher_json(seg)))
+    _terminologie_snapshot(s, auto_korrekturen)
     db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="transcription", engine=engine,
                     model=body.model, worker_id=worker_id, audio_seconds=body.audio_seconds,
                     compute_seconds=body.compute_seconds, cost_cents=kosten_cent))
@@ -391,6 +427,11 @@ def _nachtranskription_uebernehmen(db: Session, s: GameSession, job: Job, body: 
     alt = list(db.scalars(select(TranscriptSegment).where(TranscriptSegment.session_id == s.id)
                           .order_by(TranscriptSegment.start)))
     spur = {sp.raw_label: sp.id for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))} if discord else {}
+    campaign, terminologie_regeln = _terminologie_regeln(db, s)
+    from collections import Counter
+    from app import terminologie
+
+    auto_korrekturen = Counter()
 
     def stimme(start: float, ende: float, label: str | None) -> str | None:
         if discord and label and label in spur:
@@ -409,8 +450,11 @@ def _nachtranskription_uebernehmen(db: Session, s: GameSession, job: Job, body: 
     neu = [(seg, stimme(seg.start, seg.end, seg.speaker)) for seg in sorted(body.segments, key=lambda x: x.start)]
     db.execute(delete(TranscriptSegment).where(TranscriptSegment.session_id == s.id))
     for pos, (seg, sid) in enumerate(neu):
+        text, zaehler = terminologie.korrigieren(seg.text.strip(), campaign, terminologie_regeln)
+        auto_korrekturen.update(zaehler)
         db.add(TranscriptSegment(session_id=s.id, position=pos, start=round(seg.start, 2), end=round(seg.end, 2),
-                                 speaker_id=sid, text=seg.text.strip(), unsicher=_unsicher_json(seg)))
+                                 speaker_id=sid, text=text or "", unsicher=_unsicher_json(seg)))
+    _terminologie_snapshot(s, auto_korrekturen)
     db.add(UsageLog(campaign_id=s.campaign_id, session_id=s.id, kind="transcription", engine=engine,
                     model=body.model, worker_id=worker_id, audio_seconds=body.audio_seconds,
                     compute_seconds=body.compute_seconds, cost_cents=kosten_cent))
