@@ -215,7 +215,7 @@ def kampagne(db: Session, campaign, ausser_session_id: str | None = None) -> Bek
         # Stufe B gehört ins Nachschlagewörterbuch, nicht pauschal in den Whisper-Prompt.
         # So werden korrekte Systembegriffe nicht als unbekannte Namen gemeldet und
         # ähnlich erkannte Schreibweisen können als Vorschlag auftauchen.
-        for term in systemliste.alle:
+        for term in systemliste.alle_fuer(sprache):
             for w in woerter(term):
                 b.kampagne.add(w.casefold())
             if len(term) >= 3 and term.casefold() not in b.allgemein:
