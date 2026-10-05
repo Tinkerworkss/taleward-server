@@ -1,50 +1,359 @@
-# Shadowrun – häufige Eigennamen und Begriffe (Schreibhilfe für die Transkription)
-Seattle
-ADL
-Allianz Deutscher Länder
-Hamburg
-Berlin
-Frankfurt
-Megakon
-Renraku
-Ares
-Saeder-Krupp
-Aztechnology
-Mitsuhama
-Shiawase
-Evo
-Horizon
-Wuxing
-NeoNET
-Lofwyr
-Dunkelzahn
-Knight Errant
-Lone Star
-Matrix
-Decker
-Rigger
-Straßensamurai
-Schieber
-Nuyen
-Cyberdeck
-Kommlink
-Essenz
-Edge
+# Shadowrun – Begriffe für die Transkription
+# Erkennungsnamen: shadowrun, sr6, sr5, sr4, sechste welt, sixth world
+# Stufe A (höchstens 40, häufigste zuerst)
 Chummer
-Drek
-Ork
-Troll
-Adept
-Schamane
-Magier
-Astralraum
-Initiationsgrad
-Hexer
-Runner
+Nuyen
 Johnson
 Mr. Johnson
+Decker
+Rigger
+Street Samurai
+Straßensamurai
+Fixer
+Schieber
+Edge
+Drain
+Entzug
+Matrix
+Commlink
+Essenz
+Essence
+Cyberdeck
 Cyberware
+Shadowrunner
+Seattle
+Redmond Barrens
+Lone Star
+Knight Errant
+Renraku
+Ares
+Aztechnology
+Saeder-Krupp
+Lofwyr
+Technomancer
+Adept
+Overwatch
+Black IC
+Smartlink
+Wired Reflexes
+Drek
+Omae
+Glitch
+Würfelpool
+Astralraum
+# Stufe B
+Shadowrun
+Runner
+Karma
+Dice Pool
+Critical Glitch
+Kritischer Patzer
+Hits
+Threshold
+Edge Boost
+Edge Action
+Attack Rating
+Angriffswert
+Defense Rating
+Verteidigungswert
+Overwatch-Wert
+Initiative Score
+Major Action
+Minor Action
+Condition Monitor
+Zustandsmonitor
+Stun Damage
+Geistiger Schaden
+Physical Damage
+Körperlicher Schaden
+Street Cred
+Notoriety
+Public Awareness
+Lifestyle
+SIN
+Fake-SIN
+Lizenz
 Bioware
-Seele
-Geist
-Hauerwerk
+Cybereyes
+Cyberaugen
+Reflexbooster
+Muscle Replacement
+Dermal Plating
+Move-by-Wire
+Bone Lacing
+Cyberjack
+Datajack
+Datenbuchse
+Cyberarm
+Cyberlimb
+Spurs
+Talentsoft
+Skillwire
+Augmented Reality
+Virtual Reality
+Hot Sim
+Cold Sim
+Host
+Grid
+Persona
+Sprite
+Living Persona
+Resonance
+Resonanz
+Fading
+Schwund
+IC
+Patrol IC
+Killer IC
+Marks
+Marken
+Grid Overwatch Division
+GOD
+Data Spike
+Brute Force
+Spoof
+Cybercombat
+Dumpshock
+Biofeedback
+Rauschen
+PAN
+RCC
+Rigger Command Console
+Jumped In
+Rigging
+Spider
+Spinne
+Face
+Mage
+Shaman
+Mystic Adept
+Magieradept
+Physical Adept
+Hermetic
+Hermetiker
+Mentor Spirit
+Mentorgeist
+Totem
+Tradition
+Fokus
+Foci
+Power Focus
+Kraftfokus
+Initiation
+Metamagic
+Metamagie
+Astral Projection
+Astralprojektion
+Astral Perception
+Astrale Wahrnehmung
+Assensing
+Background Count
+Hintergrundstrahlung
+Mana
+Manaball
+Manablitz
+Stunbolt
+Stunball
+Powerbolt
+Flamethrower
+Lightning Bolt
+Invisibility
+Improved Invisibility
+Levitate
+Physical Barrier
+Mana Barrier
+Clairvoyance
+Hellsicht
+Mind Probe
+Control Thoughts
+Detect Life
+Combat Sense
+Increase Reflexes
+Physical Mask
+Killing Hands
+Improved Reflexes
+Critical Strike
+Mystic Armor
+Fire Spirit
+Air Spirit
+Water Spirit
+Earth Spirit
+Beast Spirit
+Spirit of Man
+Watcher
+Free Spirit
+Freier Geist
+Shedim
+Insect Spirits
+Insektengeister
+Toxic Shaman
+HMHVV
+Ghoul
+Hellhound
+Barghest
+Devil Rat
+Teufelsratte
+Paracritter
+Critter
+Sasquatch
+Piasma
+Wendigo
+Metamenschen
+Metahumans
+Ork
+Orks
+Troll
+Trolle
+Oni
+Hobgoblin
+Ogre
+Satyr
+Fomori
+Minotaur
+Cyclops
+Koborokuru
+Menehune
+Dryade
+Goblinisierung
+Goblinization
+Erwachen
+Awakening
+Sechste Welt
+Sixth World
+Jahr des Kometen
+Crash 2.0
+Matrix Crash
+VITAS
+Bug City
+Ares Macrotechnology
+Evo
+Horizon
+Mitsuhama
+Mitsuhama Computer Technologies
+NeoNET
+Renraku Computer Systems
+Shiawase
+Wuxing
+Spinrad Industries
+Telestrian Industries
+Proteus
+Yamatetsu
+Megakon
+Kon
+AAA-Kon
+Konzerngerichtshof
+Corporate Court
+Zurich-Orbital
+Draco Foundation
+Humanis Policlub
+Dunkelzahn
+Ghostwalker
+Alamais
+Celedyr
+Hestaby
+Feuerschwinge
+Lung
+Arleesh
+Masaru
+Redmond
+Puyallup
+Tacoma
+Everett
+Bellevue
+Renton
+Ork Underground
+Salish-Shidhe Council
+Tír Tairngire
+Tír na nÓg
+Tsimshian
+Pueblo Corporate Council
+UCAS
+CAS
+Confederated American States
+Native American Nations
+NAN
+Aztlan
+Amazonien
+ADL
+Allianz Deutscher Länder
+Rhein-Ruhr-Megaplex
+Ruhrplex
+Japanese Imperial State
+Hong Kong
+Neo-Tokyo
+Front Range Free Zone
+Bogotá
+Ancients
+Halloweeners
+Yakuza
+Triaden
+Vory
+Seoulpa-Ringe
+Tamanous
+Ares Predator
+Predator
+Ares Alpha
+Colt Manhunter
+Fichetti Security
+Remington Roomsweeper
+Ingram Smartgun
+HK-227
+Panther XXL
+Yamaha Raiden
+FN HAR
+AK-97
+GMC Bulldog
+Ford Americar
+Eurocar Westwind
+Roto-Drone
+Doberman
+Steel Lynx
+Fly-Spy
+Smartgun
+Frag
+Slot
+Wiz
+Chiphead
+BTL
+Better Than Life
+Squatter
+Wageslave
+Lohnsklave
+Sarariman
+Corp
+Exec
+Razorboy
+Razorgirl
+Ganger
+Go-Ganger
+Pegasus Spiele
+Catalyst Game Labs
+Shadowland
+Jackpoint
+Trideo
+Simsense
+Simrig
+Stuffer Shack
+Soykaf
+Arcology
+Renraku Arcology
+Tarislar
+Council Island
+Snohomish
+Auburn
+Fort Lewis
+Metroplex
+Seattle Metroplex
+Sprawl
+DocWagon
+Crimson Crush
+Ares Arms
+# Verhörer
+Tschummer => Chummer
+Chammer => Chummer
+Nujen => Nuyen
+Neujen => Nuyen
+Comlink => Commlink
+Lofwir => Lofwyr
+Saeder Krupp => Saeder-Krupp
+Aztek Technology => Aztechnology
