@@ -81,9 +81,11 @@ def regeln(campaign, kanonische_begriffe=()) -> list[Regel]:
             ziel = next(iter(ziele))
             mapping[v] = Regel(v, ziel, "orthography")
 
-    # Bestätigte Kampagnenkorrekturen haben Vorrang vor Systemregeln.
+    # Bestätigte Kampagnenkorrekturen haben Vorrang vor Systemregeln, solange die
+    # gehörte Form nicht inzwischen selbst ein geschützter Kampagnenbegriff ist.
     for gehoert, korrekt in namenshilfe.korrekturen(campaign).items():
-        mapping[gehoert.casefold()] = Regel(gehoert, korrekt, "learned")
+        if gehoert.casefold() not in geschuetzt:
+            mapping[gehoert.casefold()] = Regel(gehoert, korrekt, "learned")
 
     return sorted(mapping.values(), key=lambda r: len(r.gehoert), reverse=True)
 
