@@ -29,9 +29,12 @@ def create_transcribe_job(db: Session, s: GameSession, upload: Upload) -> Job:
     if c is not None:
         snap = namenshilfe.aufloesen(db, c, s).snapshot()
         # Nach den 0/10/20/40-Benchmarks: Produktions-ASR bleibt ohne Prompt-Hotwords.
-        # Der Resolver-Stand wird trotzdem eingefroren, damit Nachkorrektur/Diagnose reproduzierbar bleiben.
+        # Der Resolver- und Regelstand wird trotzdem eingefroren, damit Nachkorrektur/Diagnose reproduzierbar bleiben.
+        regeln = terminologie.regeln(c, namenshilfe.anzeige(db, c))
         snap["asrHotwords"] = []
         snap["terminologyVersion"] = terminologie.VERSION
+        snap["terminologyRules"] = terminologie.snapshot(regeln)
+        snap["terminologyRuleFingerprint"] = terminologie.fingerprint(regeln)
         s.hotword_snapshot = json.dumps(snap, ensure_ascii=False)
     job = Job(type="transcribe", session_id=s.id, upload_id=upload.id, required_capability="asr", engine="local")
     db.add(job)
