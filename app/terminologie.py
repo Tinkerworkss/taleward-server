@@ -16,6 +16,8 @@ ersetzt. Solche Fälle bleiben für die Unsicherheitsprüfung sichtbar.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -84,6 +86,34 @@ def regeln(campaign, kanonische_begriffe=()) -> list[Regel]:
         mapping[gehoert.casefold()] = Regel(gehoert, korrekt, "learned")
 
     return sorted(mapping.values(), key=lambda r: len(r.gehoert), reverse=True)
+
+
+
+
+
+def snapshot(regeln_liste: list[Regel]) -> list[dict[str, str]]:
+    return [{"heard": r.gehoert, "correct": r.korrekt, "source": r.quelle} for r in regeln_liste]
+
+
+def aus_snapshot(roh) -> list[Regel] | None:
+    if not isinstance(roh, list):
+        return None
+    aus: list[Regel] = []
+    for x in roh:
+        if not isinstance(x, dict):
+            return None
+        gehoert = " ".join(str(x.get("heard") or "").split())
+        korrekt = " ".join(str(x.get("correct") or "").split())
+        quelle = str(x.get("source") or "")
+        if not gehoert or not korrekt or quelle not in {"system", "orthography", "learned"}:
+            return None
+        aus.append(Regel(gehoert, korrekt, quelle))
+    return aus
+
+
+def fingerprint(regeln_liste: list[Regel]) -> str:
+    roh = json.dumps(snapshot(regeln_liste), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(roh).hexdigest()
 
 
 def korrigieren(
