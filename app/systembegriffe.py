@@ -100,11 +100,14 @@ def _lesen_pfad(pfad: str) -> Begriffsliste:
         else:
             a.append(zeile)
 
+    stufe_a = _eindeutig(a)
+    a_keys = {x.casefold() for x in stufe_a}
+    stufe_b = tuple(x for x in _eindeutig(b) if x.casefold() not in a_keys)
     return Begriffsliste(
         schluessel=p.stem,
         aliases=_eindeutig(aliases),
-        stufe_a=_eindeutig(a),
-        stufe_b=_eindeutig(b),
+        stufe_a=stufe_a,
+        stufe_b=stufe_b,
         verhoerer=tuple(verhoerer),
     )
 
