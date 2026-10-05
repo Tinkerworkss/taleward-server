@@ -201,12 +201,14 @@ def probelauf(
     sprecher: int = typer.Option(None, "--sprecher", help="Genaue Anzahl Sprecher, falls bekannt"),
     min_sprecher: int = typer.Option(None, "--min-sprecher"),
     max_sprecher: int = typer.Option(None, "--max-sprecher"),
-    namen: str = typer.Option(None, "--namen", help="Eigennamen als Schreibhilfe, kommagetrennt: \"Borbarad,Gareth\""),
+    namen: str = typer.Option(None, "--namen", help="Zusätzliche Eigennamen, kommagetrennt: \"Borbarad,Gareth\""),
+    system: str = typer.Option(None, "--system", help="Rollenspielsystem für Stufe-A-Hotwords, z. B. shadowrun, dsa oder \"Vampire V5\""),
     ohne_sprecher: bool = typer.Option(False, "--ohne-sprecher", help="Nur transkribieren, keine Sprechertrennung"),
     sprache: str = typer.Option("de", "--sprache"),
     modell: str = typer.Option("large-v3", "--modell", help="Whisper-Modell (large-v3, large-v3-turbo, medium …)"),
     genauigkeit: str = typer.Option("int8_float16", "--genauigkeit", help="int8_float16 (spart Speicher) oder float16"),
     batch: int = typer.Option(8, "--batch", help="Kleiner = weniger Grafikspeicher, größer = schneller"),
+    ziel: str = typer.Option(None, "--ziel", help="Ausgabeordner (Standard: DATA_DIR/probelauf)"),
 ):
     """Transkriptions-Probelauf mit WhisperX und pyannote (ohne App, ohne Datenbank)."""
     from pathlib import Path
@@ -215,12 +217,44 @@ def probelauf(
     from app.probelauf import ProbelaufFehler, ausfuehren
 
     s = get_settings()
+
+    # Serverloser Probelauf: optionale Systemliste direkt aus dem Git-Stand laden.
+    # Nur Stufe A geht an Whisper; Stufe B bleibt bewusst draußen.
+    system_hotwords: list[str] = []
+    if system:
+        from app import systembegriffe as begriffslisten
+
+        liste = begriffslisten.lesen(system) or begriffslisten.erkennen("other", system)
+        if liste is None:
+            typer.echo(f"Unbekanntes oder nicht validiertes System für Hotwords: {system}", err=True)
+            raise typer.Exit(2)
+        system_hotwords = list(liste.stufe_a)
+
+    manuell = [x.strip() for x in (namen or "").split(",") if x.strip()]
+    kombiniert: list[str] = []
+    gesehen: set[str] = set()
+    zeichen = 0
+    for wort in manuell + system_hotwords:
+        wort = " ".join(wort.split())
+        key = wort.casefold()
+        plus = len(wort) + (2 if kombiniert else 0)
+        if not wort or key in gesehen or len(kombiniert) >= 80 or zeichen + plus > 700:
+            continue
+        kombiniert.append(wort)
+        gesehen.add(key)
+        zeichen += plus
+    namen_effektiv = ",".join(kombiniert) if kombiniert else None
+    if system_hotwords:
+        typer.echo(f"System-Hotwords: {len(kombiniert)} aktiv ({system})")
+
+    ausgabe_basis = Path(ziel).expanduser() if ziel else s.data_dir / "probelauf"
+
     try:
         ordner = ausfuehren(
             Path(datei).expanduser(), sprache=sprache, modell=modell, genauigkeit=genauigkeit, batch=batch,
             ab_min=ab, dauer_min=dauer, tisch=tisch, sprecher=sprecher, min_sprecher=min_sprecher,
-            max_sprecher=max_sprecher, namen=namen, ohne_sprecher=ohne_sprecher, hf_token=s.hf_token,
-            ausgabe_basis=s.data_dir / "probelauf",
+            max_sprecher=max_sprecher, namen=namen_effektiv, ohne_sprecher=ohne_sprecher, hf_token=s.hf_token,
+            ausgabe_basis=ausgabe_basis,
         )
     except ProbelaufFehler as e:
         typer.echo(f"\n✗ {e}", err=True)
