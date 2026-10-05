@@ -77,7 +77,7 @@ def regeln(campaign, kanonische_begriffe=()) -> list[Regel]:
         for v in _orthografie_varianten(kanonisch):
             varianten.setdefault(v.casefold(), set()).add(kanonisch)
     for v, ziele in varianten.items():
-        if len(ziele) == 1 and v not in mapping:
+        if len(ziele) == 1 and v not in mapping and v not in geschuetzt:
             ziel = next(iter(ziele))
             mapping[v] = Regel(v, ziel, "orthography")
 
