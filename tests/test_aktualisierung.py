@@ -67,7 +67,7 @@ def gh():
     return github(
         [release("v1.2.0", "taleward-1.2.0.apk", APK, "Neu: Kapitel-Kommentare"), release("v1.1.0", "alt.apk", b"x")],
         [release("worker-v0.1.0", "TalewardWorker-Setup.exe", EXE, "Erste Fassung"), release("v0.4.1")],
-        ["v0.4.1", "v0.5.0", "worker-v0.1.0"],
+        ["v0.4.1", "v0.6.0", "worker-v0.1.0"],
         {"/v1.2.0/taleward-1.2.0.apk": APK, "/worker-v0.1.0/TalewardWorker-Setup.exe": EXE})
 
 
@@ -76,7 +76,7 @@ def test_pruefen_laden_und_anbieten(client, dbs, gh):
 
     ergebnis = aktualisierung.pruefen(dbs, gh)
     assert ergebnis == {"app": "1.2.0", "web": None, "worker-windows": "0.1.0", "worker-linux": "0.1.0",
-                        "server": "0.5.0"}
+                        "server": "0.6.0"}
     info = client.get("/api/v1/info").json()
     assert info["latestAppVersion"] == "1.2.0" and info["releaseNotes"] == "Neu: Kapitel-Kommentare"
     assert info["appDownloadUrl"] == "http://testserver/downloads/app/1.2.0/taleward-1.2.0.apk"  # eigener Server
@@ -153,7 +153,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch): 
     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
     aktualisierung.pruefen(dbs, gh)
     aktualisierung.pruefen(dbs, gh)
-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.47"})]  # nur einmal
+    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.6.0", "jetzt": "0.5.0"})]  # nur einmal
     seite = client.get("/verwaltung/updates").text
     assert "Update verfügbar" in seite and "git pull" in seite
     monkeypatch.setenv("TALEWARD_DOCKER", "1")

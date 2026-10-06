@@ -69,6 +69,66 @@ def _chat_klient(antworten):
     return k, koerper
 
 
+
+def test_strukturierter_aufruf_sendet_schema_und_niedrige_temperatur():
+    from app.sprachmodell import SYSTEM_RECAP_PLAN, Zaehler
+
+    k, koerper = _chat_klient([
+        (200, {"message": {"content": '{"critical":[],"important":[],"minor":[]}'},
+               "prompt_eval_count": 10, "eval_count": 5}),
+    ])
+    d = Zaehler().aufruf(k, SYSTEM_RECAP_PLAN.replace("{sprache}", "Deutsch"),
+                         "N001 | [0:00] Die Gruppe bricht auf.")
+    assert d == {"critical": [], "important": [], "minor": []}
+    assert isinstance(koerper[0]["format"], dict)
+    assert set(koerper[0]["format"]["required"]) == {"critical", "important", "minor"}
+    assert koerper[0]["options"]["temperature"] == 0.0
+
+
+def test_schemafehler_bekommt_gezielten_repair_retry():
+    from app.sprachmodell import Antwort, SYSTEM_RECAP, Zaehler
+
+    class K:
+        modell = "test"
+
+        def __init__(self):
+            self.nutzer = []
+
+        def chat(self, system, nutzer):
+            self.nutzer.append(nutzer)
+            if len(self.nutzer) == 1:
+                return Antwort('{"title":"Kapitel 1","openThreads":[]}')
+            return Antwort('{"title":"Kapitel 1","text":"Die Gruppe brach auf.","openThreads":[]}')
+
+    k = K()
+    d = Zaehler().aufruf(k, SYSTEM_RECAP.replace("{sprache}", "Deutsch")
+                         .replace("{nummer}", "1").replace("{woerter}", "250–600"), "Grundlage")
+    assert d["text"] == "Die Gruppe brach auf." and len(k.nutzer) == 2
+    assert "Harness abgelehnt" in k.nutzer[1] and "text" in k.nutzer[1] and "required" in k.nutzer[1]
+
+
+def test_abgeschnittene_strukturierte_antwort_wird_neu_angefordert():
+    from app.sprachmodell import Antwort, SYSTEM_RECAP, Zaehler
+
+    class K:
+        modell = "test"
+
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, system, nutzer):
+            self.n += 1
+            if self.n == 1:
+                return Antwort('{"title":"Kapitel 1","text":"abgeschnitten', done_reason="length")
+            assert "Ausgabelänge abgeschnitten" in nutzer
+            return Antwort('{"title":"Kapitel 1","text":"Vollständig.","openThreads":[]}')
+
+    k = K()
+    d = Zaehler().aufruf(k, SYSTEM_RECAP.replace("{sprache}", "Deutsch")
+                         .replace("{nummer}", "1").replace("{woerter}", "250–600"), "Grundlage")
+    assert d["text"] == "Vollständig." and k.n == 2
+
+
 def test_wiederholungsschleife_wird_einmal_neu_versucht():
     k, koerper = _chat_klient([
         (500, {"error": "prediction aborted, token repeat limit reached"}),
@@ -213,7 +273,9 @@ def test_fehlender_recap_nennt_nur_die_form():
     try:
         Ablauf(K()).recap(ein, "Transkript", "…")
     except SprachmodellFehler as e:
-        assert "title:str[9]" in str(e) and "summary_de:{a}" in str(e) and "Kapitel" not in str(e)
+        meldung = str(e)
+        assert "text" in meldung and "required" in meldung and "summary_de" in meldung
+        assert "Kapitel 3" not in meldung  # keine Modellinhalte in Fehlermeldungen
     else:
         raise AssertionError("kein Fehler")
 

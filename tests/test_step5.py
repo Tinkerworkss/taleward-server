@@ -24,6 +24,13 @@ class Modell:
         self.vorschlaege = vorschlaege or []
 
     def antwort(self, system: str, nutzer: str) -> dict:
+        if system.startswith("Du klassifizierst die Szenennotizen"):
+            ids = [z.split(" |", 1)[0] for z in nutzer.splitlines() if z.startswith("N") and " |" in z]
+            return {"critical": [], "important": ids, "minor": []}
+        if system.startswith("Du vergleichst den Recap"):
+            return {"fehlend": []}
+        if system.startswith("Du prüfst genau EINEN Absatz"):
+            return {"claims": []}
         if system.startswith("Du prüfst den Recap"):  # Gegenprüfung (0.4.6)
             if "Absatz 2:" in nutzer:
                 return {"absaetze": [
@@ -34,10 +41,12 @@ class Modell:
             return {"absaetze": [{"nr": 2, "text": ""}]}
         if "Schreibe Szenennotizen" in system:
             return {"notizen": ["[0:00] Die Gruppe reitet nach Rabenfels."]}
-        if "Recap" in system:
+        if system.startswith("Du pflegst die Kampagnen-Bibel"):
+            return {"proposals": self.vorschlaege}
+        if "Was bisher geschah" in system:
             return {"title": "Kapitel 1: Der Ritt", "text": "Die Gruppe ritt nach Rabenfels.\n\nDort wartete Regen.",
                     "openThreads": ["Wer hat den Brief geschrieben?", "  "]}
-        return {"proposals": self.vorschlaege}
+        raise AssertionError("unerwarteter Prompt im Modelltest")
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         pfad = request.url.path
@@ -143,7 +152,7 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     # zweite Prüfung, zweite Relationsprüfung, Vorschläge (0.4.6)
     assert len(api.aufrufe) == 8 and recap["body"]["response_format"] == {"type": "json_object"}
     assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
-    assert api.aufrufe[3]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
+    assert api.aufrufe[3]["system"].startswith("Du prüfst genau EINEN Absatz") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
     for a in api.aufrufe[1:7]:  # Vollständigkeit, Prüfungen und Nachbesserung sehen nur, was der Recap sah
         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
             assert verboten not in a["nutzer"] + a["system"], verboten
@@ -305,7 +314,9 @@ def test_ollama_im_worker_starten(client, world, dbs, tmp_path):
     assert knecht.einen_auftrag()
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
     recap = modell.recap_aufruf()
-    assert recap["body"]["options"]["num_ctx"] == 8192 and recap["body"]["format"] == "json"
+    assert recap["body"]["options"]["num_ctx"] == 8192
+    assert isinstance(recap["body"]["format"], dict)
+    assert recap["body"]["format"]["required"] == ["title", "text", "openThreads"]
     assert "MARKER" not in recap["nutzer"] and "Der Graue Fürst" not in recap["nutzer"]
     assert "MARKER-SL-NOTIZ" not in modell.vorschlags_aufruf()["nutzer"]
     vs = client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()
