@@ -1,0 +1,294 @@
+From cd7e659317eac37fe2a1ab8122c75cd079b69bf8 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 23:21:31 +0200
+Subject: [PATCH] Modellvergleich: Warnungen und Antwortanfang je Lauf,
+ Ollama-Fassung, Relationshinweise, --ohne-nachbesserung (Server 0.4.49)
+
+Nur Messwerkzeug, keine Aenderung am Ablauf im Betrieb. Aus den 0.4.48-Laeufen: Zweimal fiel die
+Gegenpruefung mit "kein gueltiges JSON" aus, ohne dass der Vergleich festhielt, was das Modell geliefert
+hatte. Jetzt sammelt der Ablauf uebersprungene Schritte mit Grund und Antwortanfang (ablauf.warnungen);
+der Modellvergleich schreibt sie in ergebnis.json und den Bericht und meldet sie in der Konsole.
+ergebnis.json und Bericht nennen Adresse und Fassung des Ollama, das gerechnet hat. Die Konsolenzeile
+zaehlt Relationshinweise (seit 0.4.48 keine Urteile mehr) auf der Endfassung. Neue Testoption
+--ohne-nachbesserung: Faktenpruefung laeuft, das Kapitel wird nicht umgeschrieben - fuer den A/B-Test,
+ob die Nachbesserung Punkte kostet.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/cli.py                    |  8 ++++++--
+ app/modellvergleich.py        | 34 +++++++++++++++++++++++++++++-----
+ app/sprachmodell.py           |  7 ++++++-
+ pyproject.toml                |  2 +-
+ tests/test_aktualisierung.py  |  2 +-
+ tests/test_assistent.py       |  2 +-
+ tests/test_modellablage.py    |  2 +-
+ tests/test_modellvergleich.py | 34 +++++++++++++++++++++++++++++++++-
+ tests/test_worker_app.py      |  2 +-
+ uv.lock                       |  2 +-
+ 10 files changed, 80 insertions(+), 15 deletions(-)
+
+diff --git a/app/cli.py b/app/cli.py
+index 60f9b2a..2aad5dd 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -747,4 +747,5 @@ def modellvergleich(
+     pruefliste: Path = typer.Option(None, "--pruefliste", help="Textdatei mit Prüfpunkten (Beschreibung :: Stichwort; Stichwort/Alias); der Bericht zeigt je Punkt, in welcher Stufe er vorkommt"),
+     notizen: Path = typer.Option(None, "--notizen", help="Fertige notizen.txt eines früheren Laufs statt neuer Szenennotizen – für Vergleiche auf identischer Grundlage"),
++    ohne_nachbesserung: bool = typer.Option(False, "--ohne-nachbesserung", help="Testoption: Faktenprüfung läuft, aber das Kapitel wird nicht umgeschrieben"),
+ ):
+     """Mehrere lokale Sprachmodelle schreiben Recap, Gegenprüfung und Vorschläge für dieselbe Session – zum
+@@ -761,5 +762,5 @@ def modellvergleich(
+             return
+         url = mv.ollama_finden(ollama)
+-        typer.echo(f"Ollama unter {url}")
++        typer.echo(f"Ollama unter {mv.ollama_fassung(url)}")
+         if grundlage not in ("auto", "direkt", "teile"):
+             raise mv.VergleichFehler("--grundlage: auto, direkt oder teile")
+@@ -770,5 +771,8 @@ def modellvergleich(
+         einst = mv.Einstellungen(laeufe=laeufe, gliederung=grundlage, temperatur=temperatur,
+                                  pruefliste=mv.pruefliste_lesen(pruefliste.read_text(encoding="utf-8")) if pruefliste else [],
+-                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "")
++                                 notizen=notizen.read_text(encoding="utf-8") if notizen else "",
++                                 nachbesserung=not ohne_nachbesserung)
++        if ohne_nachbesserung:
++            typer.echo("Ohne Nachbesserung: Prüfung läuft, Kapitel bleibt wie geschrieben")
+         if pruefliste:
+             typer.echo(f"Prüfliste: {len(einst.pruefliste)} Punkte aus {pruefliste}")
+diff --git a/app/modellvergleich.py b/app/modellvergleich.py
+index d0f1412..5149607 100644
+--- a/app/modellvergleich.py
++++ b/app/modellvergleich.py
+@@ -189,4 +189,6 @@ class Ergebnis:
+     richter_absaetze: list[dict] = field(default_factory=list)
+     pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
++    warnungen: list[dict] = field(default_factory=list)  # übersprungene Schritte: {schritt, fehler, antwort}
++    ollama: str = ""  # Adresse und Fassung des Ollama, das gerechnet hat
+ 
+     @property
+@@ -239,4 +241,5 @@ class Einstellungen:
+     pruefliste: list[dict] = field(default_factory=list)
+     notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
++    nachbesserung: bool = True  # False: Faktenprüfung ohne Umschreiben (--ohne-nachbesserung)
+ 
+ 
+@@ -260,5 +263,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+                               stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
+                               gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
++    ablauf.nachbesserung = einst.nachbesserung
+     ablauf.notizen_vorgabe = einst.notizen
++    erg.ollama = ollama_fassung(url, client)
+     t0 = time.monotonic()
+     try:
+@@ -287,4 +292,5 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
+         erg.pruefung_vorher = list(getattr(ablauf, "letzte_pruefung_vorher", []) or [])
+         erg.pruefung_nachher = list(getattr(ablauf, "letzte_pruefung_nachher", []) or [])
++        erg.warnungen = list(getattr(ablauf, "warnungen", []) or [])
+         if einst.pruefliste:
+             erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
+@@ -422,5 +428,6 @@ def _zeit(s: float) -> str:
+ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+     zeilen = [f"# Modellvergleich – {info['kampagne']}, Kapitel {info['kapitel']}", "",
+-              f"{info['zeilen']} Transkriptzeilen, Aufnahme {_zeit(info['dauer_s'])}. Richter: {richter or '–'}.", "",
++              f"{info['zeilen']} Transkriptzeilen, Aufnahme {_zeit(info['dauer_s'])}. Richter: {richter or '–'}."
++              + (f" Ollama: {ergebnisse[0].ollama}." if ergebnisse and ergebnisse[0].ollama else ""), "",
+               "| Modell | Ergebnis | Dauer | Token/s | belegt (selbst) | unbelegt/widersprochen (selbst) | "
+               "belegt (Richter) | unbelegt/widersprochen (Richter) | Vorschläge | nachgebessert | Grundlage |",
+@@ -437,4 +444,8 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
+             zeilen.append(f"Fehler: {e.fehler}")
+             continue
++        for w in e.warnungen:
++            zeilen.append(f"Warnung ({w.get('schritt')}): {w.get('fehler')} – Antwortanfang in ergebnis.json")
++        if e.warnungen:
++            zeilen.append("")
+         zeilen += [f"### {e.titel}", "", e.text, ""]
+         if e.offene_faeden:
+@@ -539,6 +550,7 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
+                                                      "fehlend": len(e.fehlend),
+                                                      "ergaenzt": sum(1 for f in e.fehlend if f.get("ergaenzt")),
+-                                                     "relationen_widersprochen": sum(
+-                                                         1 for x in e.relationen_vorher if x.get("urteil") == "widerspricht"),
++                                                     "relationen_hinweise": sum(
++                                                         1 for x in e.relationen_vorher + e.relationen_nachher
++                                                         if x.get("urteil") == "widerspricht"),
+                                                      "pruefung_vorher": None, "pruefung_nachher": None,
+                                                      "relationen_vorher": None, "relationen_nachher": None,
+@@ -582,4 +594,13 @@ def modelle_lesen(text: str, kontext: int) -> list[tuple[str, int]]:
+ 
+ 
++def ollama_fassung(url: str, client: httpx.Client | None = None) -> str:
++    """„http://127.0.0.1:11435 (Ollama 0.35.0)“ – damit im Ergebnis steht, welche Instanz gerechnet hat."""
++    try:
++        v = (client or httpx.Client(timeout=3.0)).get(f"{url.rstrip('/')}/api/version", timeout=3.0).json().get("version")
++    except (httpx.HTTPError, ValueError, AttributeError):
++        v = None
++    return f"{url.rstrip('/')} (Ollama {v})" if v else url.rstrip("/")
++
++
+ def ollama_finden(wunsch: str | None, client: httpx.Client | None = None) -> str:
+     c = client or httpx.Client(timeout=3.0)
+@@ -612,8 +633,11 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]],
+                 belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
+                 ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
+-                wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
++                rel = erg.relationen_nachher or erg.relationen_vorher
++                wider = sum(1 for x in rel if x.get("urteil") == "widerspricht")
+                 melden(f"  Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, {belegt} belegt, {ergaenzt} ergänzt; "
+-                       f"Relationen (Transkript): {wider} von {len(erg.relationen_vorher)} Absätzen widersprochen; "
++                       f"Relationshinweise (Transkript): {wider} von {len(rel)} Absätzen; "
+                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
++                for w in erg.warnungen:
++                    melden(f"  Warnung ({w.get('schritt')}): {w.get('fehler')} – Antwortanfang in ergebnis.json")
+             if erg.pruefliste:
+                 for name in STUFEN:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 4de82d3..8ed5f38 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -1003,4 +1003,6 @@ class Ablauf:
+     letzte_relationen_vorher: list = field(default_factory=list)  # Relationsprüfung gegen das Transkript
+     letzte_relationen_nachher: list = field(default_factory=list)
++    nachbesserung: bool = True  # Testoption (Modellvergleich): False = Faktenprüfung ohne Umschreiben
++    warnungen: list = field(default_factory=list)  # übersprungene Schritte mit Grund und Antwortanfang (Fehlersuche)
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1315,5 +1317,5 @@ class Ablauf:
+             self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
+             self.letzte_relationen_vorher, self.letzte_relationen_nachher = [], []
+-            if any(b["verdict"] in BEANSTANDET for b in befund):
++            if self.nachbesserung and any(b["verdict"] in BEANSTANDET for b in befund):
+                 self._schritt("revision")
+                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
+@@ -1328,4 +1330,7 @@ class Ablauf:
+         except SprachmodellFehler as e:
+             log.warning("Gegenprüfung übersprungen: %s", e)
++            # Für die Fehlersuche im Modellvergleich: Grund und Anfang der letzten Modellantwort (bleibt lokal)
++            self.warnungen.append({"schritt": "review", "fehler": str(e),
++                                   "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
+             pruefung["paragraphs"] = [{"index": i, "verdict": "unchecked", "note": None, "evidence": []}
+                                       for i in range(len(absaetze(r["text"])))]
+diff --git a/pyproject.toml b/pyproject.toml
+index 224e756..b8dbc6c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.48"
++version = "0.4.49"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 0c30a8d..e85d2c4 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.48"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.49"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index c9a6e76..6247f19 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.48"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.49"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index b940669..dc872e6 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.48"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.49"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_modellvergleich.py b/tests/test_modellvergleich.py
+index 04c9b50..ac64100 100644
+--- a/tests/test_modellvergleich.py
++++ b/tests/test_modellvergleich.py
+@@ -11,5 +11,5 @@ pytestmark = pytest.mark.usefixtures("_kleine_teile")
+ 
+ 
+-def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
++def _ollama(aufrufe: list, kaputt: set[str] = frozenset(), pruefung_kaputt: bool = False):
+     """Nachgebautes Ollama: antwortet je nach Systemanweisung mit passendem JSON."""
+     def antwort(request: httpx.Request) -> httpx.Response:
+@@ -30,4 +30,8 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
+             return httpx.Response(500, json={"error": "kaputt"})
+         system = body["messages"][0]["content"]
++        if pruefung_kaputt and system.startswith("Du prüfst den Recap"):
++            zeile = {"message": {"content": "Hier ist meine Einschätzung: alles prima ]}<tool_call|>"}, "done": True,
++                     "eval_count": 5, "eval_duration": 1_000_000_000, "prompt_eval_count": 300}
++            return httpx.Response(200, content=(json.dumps(zeile) + "\n").encode())
+         if system.startswith("Du prüfst"):
+             inhalt = {"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "00:00", "zitat": ""}]},
+@@ -72,4 +76,6 @@ def test_modellvergleich(client, world, dbs, tmp_path):
+     assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
+     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
++    assert erg["ollama"] == "http://ollama (Ollama 0.34.4)" and erg["warnungen"] == []
++    assert "Ollama: http://ollama (Ollama 0.34.4)." in bericht
+     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
+     transkript = (ordner / "transkript.txt").read_text(encoding="utf-8")
+@@ -122,2 +128,28 @@ Grünkappen
+     aus = mv.pruefliste_anwenden(punkte, ein, e)
+     assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False
++
++
++def test_modellvergleich_ohne_nachbesserung_und_warnungen(client, world, dbs, tmp_path):
++    """--ohne-nachbesserung lässt das Kapitel stehen; eine ausgefallene Gegenprüfung landet mit Antwortanfang im Ergebnis."""
++    from app import modellvergleich as mv
++
++    s = _zur_pruefung(client, world, dbs, tmp_path)
++    server = mv.Server("http://testserver", client=client)
++    server.anmelden("anna", "geheim123")
++    einst = mv.Einstellungen(nachbesserung=False)
++    meldungen = []
++    ordner = mv.ausfuehren(server, s["id"], mv.modelle_lesen("a:1", 12288), "", 12288, "http://ollama",
++                           tmp_path / "aus", meldungen.append, client=_ollama([]), einst=einst)
++    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
++    assert erg["nachgebessert"] is False and erg["text"].endswith("Ein Drache erschien.")
++    assert erg["selbst"]["unsupported"] == 1  # geprüft wurde trotzdem
++    # Gegenprüfung liefert Fließtext statt JSON → übersprungen, Grund und Antwortanfang bleiben erhalten
++    meldungen = []
++    ordner = mv.ausfuehren(server, s["id"], mv.modelle_lesen("a:1", 12288), "", 12288, "http://ollama",
++                           tmp_path / "aus2", meldungen.append, client=_ollama([], pruefung_kaputt=True))
++    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
++    assert erg["selbst"]["unchecked"] == 2 and len(erg["warnungen"]) == 1
++    assert erg["warnungen"][0]["schritt"] == "review" and "JSON" in erg["warnungen"][0]["fehler"]
++    assert erg["warnungen"][0]["antwort"].startswith("Hier ist meine Einschätzung")
++    assert any("Warnung (review)" in m for m in meldungen)
++    assert "Warnung (review)" in (ordner / "bericht.md").read_text(encoding="utf-8")
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index e4c2185..c2a105e 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.48"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.49"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 0fbe348..4feff21 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.48"
++version = "0.4.49"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
