@@ -1,0 +1,4918 @@
+{
+  "version": 2,
+  "name": "Ledger v2 mini: original Nostria plus generic variants",
+  "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+  "sourceFileSha256": "184f3f5548db849fa0e626a8981df5bf8cacf1e365ec4d4c23d7a293edfd19c2",
+  "sourceSegments": 2713,
+  "sourceBaselineCommit": "aae38c72c0e22f52dc814be2b99e9b4b1722f3ce",
+  "audit": "Gold v2 uses explicit predicates/roles, exact name/status aliases, quoted source groups and epistemic checks. Gold v1 retained verbatim for comparison; no claims of manual video verification beyond the provided handoff.",
+  "legacyGold": {
+    "version": 1,
+    "name": "Nostria Ledger Gold v1 – high-risk relations",
+    "scope": "selective",
+    "facts": [
+      {
+        "id": "kano_dead",
+        "description": "Kano ist nach dem Galgenchaos tot.",
+        "importance": "critical",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Kano",
+                "Kano Tommeldom"
+              ],
+              "property": "life_status",
+              "value": [
+                "dead",
+                "tot",
+                "verstorben"
+              ]
+            }
+          ]
+        },
+        "expected": {
+          "epistemic": [
+            "observed"
+          ],
+          "relevance": {
+            "recap": true,
+            "bible": true
+          }
+        }
+      },
+      {
+        "id": "orasilas_rescues_arlekin",
+        "description": "Orasilas rettet Arlekin im Wasser/Tommel.",
+        "importance": "critical",
+        "match": {
+          "actors": [
+            [
+              "Orasilas",
+              "Orasilas Albio"
+            ]
+          ],
+          "targets": [
+            [
+              "Arlekin",
+              "Arlekin Dehsch"
+            ]
+          ],
+          "timeRange": [
+            3200,
+            3350
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "recap": true
+          }
+        }
+      },
+      {
+        "id": "pipo_severely_injured",
+        "description": "Pipo ist schwer verletzt.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Pipo",
+                "Wache Pipo"
+              ],
+              "property": "physical_condition",
+              "value": [
+                "schwer verletzt",
+                "schwere Verletzung",
+                "verwundet",
+                "blutet",
+                "Blut"
+              ]
+            }
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "recap": true
+          }
+        }
+      },
+      {
+        "id": "orasilas_treats_pipo",
+        "description": "Orasilas behandelt Pipos Verletzungen.",
+        "importance": "important",
+        "match": {
+          "actors": [
+            [
+              "Orasilas",
+              "Orasilas Albio"
+            ]
+          ],
+          "targets": [
+            [
+              "Pipo",
+              "Wache Pipo"
+            ]
+          ],
+          "timeRange": [
+            4140,
+            4260
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "recap": true
+          }
+        }
+      },
+      {
+        "id": "pipo_transfers_lostriana",
+        "description": "Pipo überlässt der Gruppe Lostriana.",
+        "importance": "critical",
+        "match": {
+          "actors": [
+            [
+              "Pipo",
+              "Wache Pipo"
+            ]
+          ],
+          "targets": [
+            [
+              "Gruppe",
+              "Helden",
+              "Flüchtige",
+              "Gefährten"
+            ]
+          ],
+          "objects": [
+            [
+              "Lostriana",
+              "Schwert"
+            ]
+          ],
+          "assertions": [
+            {
+              "subject": [
+                "Lostriana",
+                "Schwert"
+              ],
+              "property": "possession",
+              "value": [
+                "Gruppe",
+                "Helden",
+                "Flüchtige",
+                "Gefährten",
+                "bei der Gruppe"
+              ]
+            }
+          ],
+          "timeRange": [
+            4260,
+            4340
+          ]
+        },
+        "expected": {
+          "epistemic": [
+            "observed"
+          ],
+          "relevance": {
+            "recap": true,
+            "bible": true
+          }
+        }
+      },
+      {
+        "id": "orasilas_goal_true_murderer",
+        "description": "Orasilas will den wahren Mörder finden/bestrafen.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Orasilas",
+                "Orasilas Albio"
+              ],
+              "property": "goal",
+              "value": [
+                "wahren Mörder",
+                "Mörder finden",
+                "Mörder bestrafen",
+                "Prinzessin",
+                "Täter finden"
+              ]
+            }
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "recap": true,
+            "openThread": true
+          }
+        }
+      },
+      {
+        "id": "arborn_at_holzbein",
+        "description": "Arborn wird beim Gasthof Beim Holzbein verortet.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Arborn",
+                "Arbon"
+              ],
+              "property": "location",
+              "value": [
+                "Holzbein",
+                "Beim Holzbein",
+                "Gasthof"
+              ]
+            }
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "recap": true,
+            "openThread": true,
+            "bible": true
+          }
+        }
+      },
+      {
+        "id": "gruenkappen_favor_obligation",
+        "description": "Hilfe der Grünkappen ist an einen Gefallen gebunden.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Grünkappen",
+                "Grünkappenbund"
+              ],
+              "property": "obligation",
+              "value": [
+                "Gefallen",
+                "Gegenleistung",
+                "schulden",
+                "Hilfe gegen"
+              ]
+            }
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "openThread": true,
+            "bible": true
+          }
+        }
+      },
+      {
+        "id": "satuna_distinct_named_person",
+        "description": "Satuna ist als Satuna die Schlange eine eigene Figur.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Satuna",
+                "Satuna die Schlange"
+              ],
+              "property": [
+                "identity",
+                "role_status"
+              ],
+              "value": [
+                "Satuna",
+                "Satuna die Schlange"
+              ]
+            }
+          ],
+          "timeRange": [
+            9180,
+            9250
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "bible": true
+          }
+        }
+      },
+      {
+        "id": "altvater_role",
+        "description": "Der Altvater stellt sich als Altvater vor / trägt diese Rolle.",
+        "importance": "important",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Altvater",
+                "der Altvater"
+              ],
+              "property": [
+                "role_status",
+                "identity"
+              ],
+              "value": [
+                "Altvater",
+                "Leiter",
+                "Chef"
+              ]
+            }
+          ],
+          "timeRange": [
+            8520,
+            8620
+          ]
+        },
+        "expected": {
+          "relevance": {
+            "bible": true
+          }
+        }
+      }
+    ],
+    "expectedNonClaims": [
+      {
+        "id": "satuna_not_altvater",
+        "description": "Satuna darf nicht mit dem Altvater verschmolzen werden.",
+        "importance": "critical",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Satuna",
+                "Satuna die Schlange"
+              ],
+              "property": [
+                "identity",
+                "role_status"
+              ],
+              "value": [
+                "Altvater",
+                "der Altvater"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "altvater_not_satuna",
+        "description": "Der Altvater darf nicht als Satuna identifiziert werden.",
+        "importance": "critical",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Altvater",
+                "der Altvater"
+              ],
+              "property": [
+                "identity",
+                "role_status"
+              ],
+              "value": [
+                "Satuna",
+                "Satuna die Schlange"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "altvater_not_arlekin",
+        "description": "Der Altvater darf nicht als Arlekin identifiziert werden.",
+        "importance": "critical",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Altvater",
+                "der Altvater"
+              ],
+              "property": [
+                "identity",
+                "role_status"
+              ],
+              "value": [
+                "Arlekin",
+                "Arlekin Dehsch"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "lostriana_not_transferred_to_pipo",
+        "description": "Die Übergaberichtung darf nicht als Gruppe -> Pipo invertiert werden.",
+        "importance": "critical",
+        "match": {
+          "actors": [
+            [
+              "Gruppe",
+              "Helden",
+              "Flüchtige",
+              "Gefährten"
+            ]
+          ],
+          "targets": [
+            [
+              "Pipo",
+              "Wache Pipo"
+            ]
+          ],
+          "objects": [
+            [
+              "Lostriana",
+              "Schwert"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "kano_not_alive_after_scene",
+        "description": "Kano darf nach der bestätigten Todesantwort nicht als lebend gespeichert werden.",
+        "importance": "critical",
+        "match": {
+          "assertions": [
+            {
+              "subject": [
+                "Kano",
+                "Kano Tommeldom"
+              ],
+              "property": "life_status",
+              "value": [
+                "alive",
+                "lebendig",
+                "lebt"
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "authority",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L0866",
+          "time": 2908,
+          "speaker": "Spielleitung",
+          "text": "Du bist quasi mit diesem Kano, der noch immer auf dem Boden liegt, auf der rechten Seite."
+        },
+        {
+          "sourceId": "L0867",
+          "time": 2912,
+          "speaker": "Spielleitung",
+          "text": "Auf der linken Seite seid ihr beide."
+        },
+        {
+          "sourceId": "L0868",
+          "time": 2914,
+          "speaker": "Lysander Federkiel",
+          "text": "Ich guck mal kurz, was der Kano so macht."
+        },
+        {
+          "sourceId": "L0869",
+          "time": 2915,
+          "speaker": "Lysander Federkiel",
+          "text": "Kann der sich auch befreien?"
+        },
+        {
+          "sourceId": "L0870",
+          "time": 2916,
+          "speaker": "Lysander Federkiel",
+          "text": "Was tut der?"
+        },
+        {
+          "sourceId": "L0871",
+          "time": 2917,
+          "speaker": "Orasilas Albio",
+          "text": "Der ist tot."
+        },
+        {
+          "sourceId": "L0872",
+          "time": 2921,
+          "speaker": "Orasilas Albio",
+          "text": "Was macht der Henker?"
+        }
+      ],
+      "windowFingerprint": "96246e20851c490fc1f08293b15deac2c75b503cd016a1543e68c2a207f2b3cf",
+      "facts": [
+        {
+          "id": "kano_dead",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Kano",
+                "Kano Tommeldom"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot",
+                  "verstorben"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L0866",
+              "L0868"
+            ],
+            [
+              "L0871"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Übergabe berichtet manuelle Videoprüfung: Todesantwort von SL trotz falschem Label. Hier keine erneute Videoprüfung; Label unverändert."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          2908,
+          2921
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "rescue",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L0951",
+          "time": 3223,
+          "speaker": "Orasilas Albio",
+          "text": "Lysander, ich versuche dahin zu schwimmen und... Arlekin, wo bist du?"
+        },
+        {
+          "sourceId": "L0952",
+          "time": 3226,
+          "speaker": "Orasilas Albio",
+          "text": "Ich komme nicht so gut ich kann."
+        },
+        {
+          "sourceId": "L0953",
+          "time": 3229,
+          "speaker": "Arlekin Dehsch",
+          "text": "Habe ich das gehört?"
+        },
+        {
+          "sourceId": "L0954",
+          "time": 3230,
+          "speaker": "Orasilas Albio",
+          "text": "Ja."
+        },
+        {
+          "sourceId": "L0955",
+          "time": 3231,
+          "speaker": "Arlekin Dehsch",
+          "text": "Hier drüben!"
+        },
+        {
+          "sourceId": "L0956",
+          "time": 3232,
+          "speaker": "Arlekin Dehsch",
+          "text": "Aber mir fällt es echt schwer, über Wasser zu bleiben."
+        },
+        {
+          "sourceId": "L0957",
+          "time": 3235,
+          "speaker": "Arlekin Dehsch",
+          "text": "Wir können nicht alle retten, komm weiter!"
+        },
+        {
+          "sourceId": "L0958",
+          "time": 3238,
+          "speaker": "Orasilas Albio",
+          "text": "Lysander, jetzt schaffst du es doch wohl allein, oder?"
+        },
+        {
+          "sourceId": "L0959",
+          "time": 3240,
+          "speaker": "Orasilas Albio",
+          "text": "Ja, nur fünf Meter oder so."
+        },
+        {
+          "sourceId": "L0960",
+          "time": 3241,
+          "speaker": "Arlekin Dehsch",
+          "text": "Also ich versuche mich irgendwo an den Land, also irgendwo zu einer festen Masse zu kriegen, wo ich mich quasi erstmal festhalten kann, damit ich über Wasser bleibe."
+        },
+        {
+          "sourceId": "L0961",
+          "time": 3251,
+          "speaker": "Spielleitung",
+          "text": "Die ist ja gar nicht weit von euch weg, eben wie gesagt diese 10 Meter am Rand und da befinden sich noch die beiden."
+        },
+        {
+          "sourceId": "L0962",
+          "time": 3257,
+          "speaker": "Arlekin Dehsch",
+          "text": "Okay, dann versuche ich erstmal in die Richtung weiter zu paddeln, so gut es halt geht."
+        },
+        {
+          "sourceId": "L0963",
+          "time": 3260,
+          "speaker": "Orasilas Albio",
+          "text": "Ich habe ihn da abgeliefert und springe wieder in die Fluten und rette Arlekin."
+        },
+        {
+          "sourceId": "L0964",
+          "time": 3264,
+          "speaker": "Arlekin Dehsch",
+          "text": "Das ist mein Held!"
+        },
+        {
+          "sourceId": "L0965",
+          "time": 3267,
+          "speaker": "Arlekin Dehsch",
+          "text": "Ich werde eine Ode über dich schreiben, ich meine noch eine!"
+        },
+        {
+          "sourceId": "L0966",
+          "time": 3272,
+          "speaker": "Spielleitung",
+          "text": "So, ihr befindet euch also nun an einem Art Kraterrand."
+        },
+        {
+          "sourceId": "L0967",
+          "time": 3278,
+          "speaker": "Spielleitung",
+          "text": "Es ist felsiger Untergrund und das Wasser dieses Flusses und des Meeres füllt immer mehr diesen Krater auf."
+        }
+      ],
+      "windowFingerprint": "ed0ace72dfb01c45051a1561cf37aae41c87727db27311e6dc4712d8fe42e4cc",
+      "facts": [
+        {
+          "id": "orasilas_rescues_arlekin",
+          "match": {
+            "predicate": [
+              "RESCUE"
+            ],
+            "participants": {
+              "rescuer": [
+                "Orasilas",
+                "Orasilas Albio"
+              ],
+              "rescued": [
+                "Arlekin",
+                "Arlekin Dehsch"
+              ]
+            },
+            "stateChanges": [],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L0963"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          3223,
+          3278
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "oath",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L1143",
+          "time": 3974,
+          "speaker": "Orasilas Albio",
+          "text": "Pipo, du kennst mich."
+        },
+        {
+          "sourceId": "L1144",
+          "time": 3976,
+          "speaker": "Orasilas Albio",
+          "text": "Du weißt, dass es ich jetzt nicht war."
+        },
+        {
+          "sourceId": "L1145",
+          "time": 3979,
+          "speaker": "Orasilas Albio",
+          "text": "Du weißt ganz genau, dass ich niemals ein Kind töten könnte."
+        },
+        {
+          "sourceId": "L1146",
+          "time": 3982,
+          "speaker": "Orasilas Albio",
+          "text": "Ihr wurdet verurteilt."
+        },
+        {
+          "sourceId": "L1147",
+          "time": 3984,
+          "speaker": "Orasilas Albio",
+          "text": "Verurteilt, weil ein Mob von Forken und Fackelträgern hinter uns her war."
+        },
+        {
+          "sourceId": "L1148",
+          "time": 3992,
+          "speaker": "Orasilas Albio",
+          "text": "Niemand wusste, wer das getan hat."
+        },
+        {
+          "sourceId": "L1149",
+          "time": 3994,
+          "speaker": "Orasilas Albio",
+          "text": "Wir sind auf der Suche nach den Mördern."
+        },
+        {
+          "sourceId": "L1150",
+          "time": 3996,
+          "speaker": "Orasilas Albio",
+          "text": "Hilf uns!"
+        },
+        {
+          "sourceId": "L1151",
+          "time": 3997,
+          "speaker": "Orasilas Albio",
+          "text": "Man hat die Leiche der Prinzessin neben euch gefunden."
+        },
+        {
+          "sourceId": "L1152",
+          "time": 4002,
+          "speaker": "Orasilas Albio",
+          "text": "Wir waren ohne Erinnerungen."
+        },
+        {
+          "sourceId": "L1153",
+          "time": 4004,
+          "speaker": "Orasilas Albio",
+          "text": "Wir waren auf der Suche nach den Mördern selbst."
+        },
+        {
+          "sourceId": "L1154",
+          "time": 4008,
+          "speaker": "Lysander Federkiel",
+          "text": "Übrigens bedeutet der Fund einer Leiche noch gar nichts."
+        },
+        {
+          "sourceId": "L1155",
+          "time": 4010,
+          "speaker": "Lysander Federkiel",
+          "text": "Nichts ist bewiesen."
+        },
+        {
+          "sourceId": "L1156",
+          "time": 4011,
+          "speaker": "Lysander Federkiel",
+          "text": "Erst einmal müssen wir ein anständiges Gericht haben und Beweise vorlegen können und uns verteidigen dürfen."
+        },
+        {
+          "sourceId": "L1157",
+          "time": 4016,
+          "speaker": "Orasilas Albio",
+          "text": "Und ich schwöre vor euch hier und vor Rondra bei meinem Leben werde ich versuchen, ich werde nicht versuchen, ich werde den wahren Mörder finden."
+        },
+        {
+          "sourceId": "L1158",
+          "time": 4025,
+          "speaker": "Spielleitung",
+          "text": "Das wäre überzeugend."
+        }
+      ],
+      "windowFingerprint": "530515fb41dd6b4be50395ab5fe2295e1eb2555460d0fe8c5cb7cbb98998ba5f",
+      "facts": [
+        {
+          "id": "orasilas_goal_true_murderer",
+          "match": {
+            "predicate": [
+              "GOAL",
+              "OBLIGATION"
+            ],
+            "participants": {
+              "subject": [
+                "Orasilas",
+                "Orasilas Albio"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Orasilas",
+                  "Orasilas Albio"
+                ],
+                "property": [
+                  "goal",
+                  "obligation"
+                ],
+                "toTokensAny": [
+                  "Mörder finden",
+                  "Mörder bestrafen",
+                  "murderer find"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated"
+            ],
+            "modality": [
+              "actual",
+              "planned"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L1157"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Schwur begründet Ziel/Verpflichtung, keinen bereits gefundenen Mörder. goal und obligation sind zulässige Zustandsfelder."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          3974,
+          4025
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "injury_and_aid",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L1177",
+          "time": 4084,
+          "speaker": "Orasilas Albio",
+          "text": "Ich gehe auf die Wache zu und versuche ihn zu besänftigen."
+        },
+        {
+          "sourceId": "L1178",
+          "time": 4086,
+          "speaker": "Orasilas Albio",
+          "text": "Mit erhobenen Händen."
+        },
+        {
+          "sourceId": "L1179",
+          "time": 4088,
+          "speaker": "Orasilas Albio",
+          "text": "Senke dein Schwert, Pipo."
+        },
+        {
+          "sourceId": "L1180",
+          "time": 4090,
+          "speaker": "Orasilas Albio",
+          "text": "Wir kennen uns, seit ich klein bin."
+        },
+        {
+          "sourceId": "L1181",
+          "time": 4093,
+          "speaker": "Orasilas Albio",
+          "text": "Du kennst mich."
+        },
+        {
+          "sourceId": "L1182",
+          "time": 4094,
+          "speaker": "Spielleitung",
+          "text": "Aber, ich meine..."
+        },
+        {
+          "sourceId": "L1183",
+          "time": 4097,
+          "speaker": "Spielleitung",
+          "text": "Es wurde Recht gesprochen."
+        },
+        {
+          "sourceId": "L1184",
+          "time": 4099,
+          "speaker": "Spielleitung",
+          "text": "Wie kann das sein?"
+        },
+        {
+          "sourceId": "L1185",
+          "time": 4101,
+          "speaker": "Orasilas Albio",
+          "text": "Es wurde kein Recht vor Rondra gesprochen."
+        },
+        {
+          "sourceId": "L1186",
+          "time": 4106,
+          "speaker": "Orasilas Albio",
+          "text": "Gutes Album, ey."
+        },
+        {
+          "sourceId": "L1187",
+          "time": 4108,
+          "speaker": "Orasilas Albio",
+          "text": "Ja, aber... Und sollte ich Lysander getötet haben, soll mich sofort von Rondra ein Blitz treffen."
+        },
+        {
+          "sourceId": "L1188",
+          "time": 4118,
+          "speaker": "Arlekin Dehsch",
+          "text": "Okay."
+        },
+        {
+          "sourceId": "L1189",
+          "time": 4121,
+          "speaker": "Arlekin Dehsch",
+          "text": "Das, ähm..."
+        },
+        {
+          "sourceId": "L1190",
+          "time": 4126,
+          "speaker": "Spielleitung",
+          "text": "Ich bin verwirrt."
+        },
+        {
+          "sourceId": "L1191",
+          "time": 4128,
+          "speaker": "Spielleitung",
+          "text": "Er lässt sich nieder und sackt sich in sich zusammen und ist so... Lass mich dir helfen, mein Freund."
+        },
+        {
+          "sourceId": "L1192",
+          "time": 4134,
+          "speaker": "Arlekin Dehsch",
+          "text": "Hilf doch erstmal uns, Arschloch!"
+        },
+        {
+          "sourceId": "L1193",
+          "time": 4136,
+          "speaker": "Arlekin Dehsch",
+          "text": "Aber ich verstehe das nicht."
+        },
+        {
+          "sourceId": "L1194",
+          "time": 4144,
+          "speaker": "Orasilas Albio",
+          "text": "Ich trete an ihn heran und gucke, ob er irgendwo schwere Wunden hat."
+        },
+        {
+          "sourceId": "L1195",
+          "time": 4147,
+          "speaker": "Spielleitung",
+          "text": "Er ist schwer verletzt."
+        },
+        {
+          "sourceId": "L1196",
+          "time": 4149,
+          "speaker": "Spielleitung",
+          "text": "Rippen gebrochen, die so in seine Lunge punktiert haben durch den Sturz."
+        },
+        {
+          "sourceId": "L1197",
+          "time": 4155,
+          "speaker": "Orasilas Albio",
+          "text": "Ich versuche mein Bestes."
+        },
+        {
+          "sourceId": "L1198",
+          "time": 4157,
+          "speaker": "Orasilas Albio",
+          "text": "Ich ziehe mein Shirt aus."
+        },
+        {
+          "sourceId": "L1199",
+          "time": 4159,
+          "speaker": "Orasilas Albio",
+          "text": "Ihr seht die Narben."
+        },
+        {
+          "sourceId": "L1200",
+          "time": 4166,
+          "speaker": "Orasilas Albio",
+          "text": "Überall in meinem astralen Körper."
+        },
+        {
+          "sourceId": "L1201",
+          "time": 4168,
+          "speaker": "Orasilas Albio",
+          "text": "Und versuche ihn damit zu verbinden."
+        },
+        {
+          "sourceId": "L1202",
+          "time": 4170,
+          "speaker": "Spielleitung",
+          "text": "Mit dem nassen Shirt?"
+        },
+        {
+          "sourceId": "L1203",
+          "time": 4171,
+          "speaker": "Spielleitung",
+          "text": "Ja."
+        },
+        {
+          "sourceId": "L1204",
+          "time": 4171,
+          "speaker": "Spielleitung",
+          "text": "Okay."
+        },
+        {
+          "sourceId": "L1205",
+          "time": 4172,
+          "speaker": "Spielleitung",
+          "text": "Mit dem Astralkörper."
+        },
+        {
+          "sourceId": "L1206",
+          "time": 4173,
+          "speaker": "Spielleitung",
+          "text": "Also ich bring jetzt nochmal alles."
+        },
+        {
+          "sourceId": "L1207",
+          "time": 4175,
+          "speaker": "Spielleitung",
+          "text": "Komm her, Pipo."
+        },
+        {
+          "sourceId": "L1208",
+          "time": 4179,
+          "speaker": "Spielleitung",
+          "text": "Okay."
+        },
+        {
+          "sourceId": "L1209",
+          "time": 4181,
+          "speaker": "Spielleitung",
+          "text": "Würfel mal bitte auf Heilkunde Wunden."
+        },
+        {
+          "sourceId": "L1210",
+          "time": 4184,
+          "speaker": "Spielleitung",
+          "text": "Erschwert um 1, denn es ist sehr improvisiert."
+        },
+        {
+          "sourceId": "L1211",
+          "time": 4189,
+          "speaker": "Spielleitung",
+          "text": "Ich hab da nichts."
+        },
+        {
+          "sourceId": "L1212",
+          "time": 4190,
+          "speaker": "Spielleitung",
+          "text": "Na gut."
+        },
+        {
+          "sourceId": "L1213",
+          "time": 4192,
+          "speaker": "Orasilas Albio",
+          "text": "Ja, ja, ja!"
+        },
+        {
+          "sourceId": "L1214",
+          "time": 4194,
+          "speaker": "Orasilas Albio",
+          "text": "Ja?"
+        },
+        {
+          "sourceId": "L1215",
+          "time": 4195,
+          "speaker": "Orasilas Albio",
+          "text": "Ja!"
+        },
+        {
+          "sourceId": "L1216",
+          "time": 4196,
+          "speaker": "Orasilas Albio",
+          "text": "Ja."
+        },
+        {
+          "sourceId": "L1217",
+          "time": 4196,
+          "speaker": "Spielleitung",
+          "text": "Wie viel?"
+        },
+        {
+          "sourceId": "L1218",
+          "time": 4197,
+          "speaker": "Orasilas Albio",
+          "text": "Qualitätsstufe 1, ich hab ja noch."
+        },
+        {
+          "sourceId": "L1219",
+          "time": 4198,
+          "speaker": "Orasilas Albio",
+          "text": "Okay."
+        },
+        {
+          "sourceId": "L1220",
+          "time": 4200,
+          "speaker": "Spielleitung",
+          "text": "Wow, also du schaffst es, deine Kleidung so fest zu zurnen, dass tatsächlich so ein leichter Druckverband entsteht und immerhin das Blut nicht mehr rausläuft aus seinem Körper."
+        },
+        {
+          "sourceId": "L1221",
+          "time": 4212,
+          "speaker": "Spielleitung",
+          "text": "Aber euch allen ist eigentlich klar, wenn der nicht bald Hilfe bekommt, dann sieht es sehr schlecht aus mit ihm."
+        }
+      ],
+      "windowFingerprint": "b1cabe57f426cb1f0c1f197cb59556a0f981bc9c64e6cb0a7efbb9ae95aa179c",
+      "facts": [
+        {
+          "id": "pipo_severely_injured",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Pipo",
+                  "Wache Pipo",
+                  "Pipo die Wache"
+                ],
+                "property": [
+                  "physical_condition"
+                ],
+                "to": [
+                  "severely_injured",
+                  "schwer verletzt",
+                  "schwer verwundet"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L1179",
+              "L1207"
+            ],
+            [
+              "L1195",
+              "L1196"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        },
+        {
+          "id": "orasilas_treats_pipo",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Orasilas",
+                "Orasilas Albio"
+              ],
+              "treated": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ]
+            },
+            "stateChanges": [],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L1179",
+              "L1207"
+            ],
+            [
+              "L1201",
+              "L1220"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          4084,
+          4212
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "transfer",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L1228",
+          "time": 4243,
+          "speaker": "Arlekin Dehsch",
+          "text": "Er liegt im Sterben."
+        },
+        {
+          "sourceId": "L1229",
+          "time": 4245,
+          "speaker": "Arlekin Dehsch",
+          "text": "Das ist Pipo."
+        },
+        {
+          "sourceId": "L1230",
+          "time": 4246,
+          "speaker": "Arlekin Dehsch",
+          "text": "Ich kenne Pipo nicht."
+        },
+        {
+          "sourceId": "L1231",
+          "time": 4249,
+          "speaker": "Orasilas Albio",
+          "text": "Der Name ist nicht, sorry, der Name ist nicht, das ist Pipo."
+        },
+        {
+          "sourceId": "L1232",
+          "time": 4253,
+          "speaker": "Orasilas Albio",
+          "text": "Ich habe mir männliche Vornamen für DSA, Nostria."
+        },
+        {
+          "sourceId": "L1233",
+          "time": 4257,
+          "speaker": "Arlekin Dehsch",
+          "text": "Pipo, mein Gott, warum nicht?"
+        },
+        {
+          "sourceId": "L1234",
+          "time": 4259,
+          "speaker": "Spielleitung",
+          "text": "Pipo die Wache."
+        },
+        {
+          "sourceId": "L1235",
+          "time": 4265,
+          "speaker": "Spielleitung",
+          "text": "Es tut mir leid, aber ich glaube, es wäre besser, wenn ich nicht mit euch sehen werde."
+        },
+        {
+          "sourceId": "L1236",
+          "time": 4271,
+          "speaker": "Spielleitung",
+          "text": "Auf der Straße."
+        },
+        {
+          "sourceId": "L1237",
+          "time": 4272,
+          "speaker": "Orasilas Albio",
+          "text": "Du bist ein nobler Mann."
+        },
+        {
+          "sourceId": "L1238",
+          "time": 4275,
+          "speaker": "Arlekin Dehsch",
+          "text": "Eine Frage noch."
+        },
+        {
+          "sourceId": "L1239",
+          "time": 4276,
+          "speaker": "Arlekin Dehsch",
+          "text": "Dürften wir vielleicht dein Schwert haben?"
+        },
+        {
+          "sourceId": "L1240",
+          "time": 4278,
+          "speaker": "Orasilas Albio",
+          "text": "Um uns eventuell gegen Angreifer wehren zu können."
+        },
+        {
+          "sourceId": "L1241",
+          "time": 4283,
+          "speaker": "Spielleitung",
+          "text": "Nun, ihr habt mir geholfen."
+        },
+        {
+          "sourceId": "L1242",
+          "time": 4286,
+          "speaker": "Spielleitung",
+          "text": "Meiner Verletzung."
+        },
+        {
+          "sourceId": "L1243",
+          "time": 4289,
+          "speaker": "Spielleitung",
+          "text": "Es teilt sich zu revanchieren."
+        },
+        {
+          "sourceId": "L1244",
+          "time": 4291,
+          "speaker": "Spielleitung",
+          "text": "Nehmt es."
+        },
+        {
+          "sourceId": "L1245",
+          "time": 4291,
+          "speaker": "Spielleitung",
+          "text": "Ich danke dir, Pipo."
+        },
+        {
+          "sourceId": "L1246",
+          "time": 4292,
+          "speaker": "Lysander Federkiel",
+          "text": "Und Pipo, dein Ruhm wird nicht unerhört bleiben."
+        },
+        {
+          "sourceId": "L1247",
+          "time": 4296,
+          "speaker": "Lysander Federkiel",
+          "text": "Ich werde dich in einer Ode erwähnen."
+        },
+        {
+          "sourceId": "L1248",
+          "time": 4299,
+          "speaker": "Spielleitung",
+          "text": "Das wäre"
+        },
+        {
+          "sourceId": "L1249",
+          "time": 4303,
+          "speaker": "Spielleitung",
+          "text": "Selbstverständlich."
+        },
+        {
+          "sourceId": "L1250",
+          "time": 4304,
+          "speaker": "Spielleitung",
+          "text": "Er spuckt so ein bisschen Blut."
+        },
+        {
+          "sourceId": "L1251",
+          "time": 4307,
+          "speaker": "Spielleitung",
+          "text": "Ich werde mit diesem Blut schreiben."
+        },
+        {
+          "sourceId": "L1252",
+          "time": 4308,
+          "speaker": "Spielleitung",
+          "text": "Du bekommst ein..."
+        },
+        {
+          "sourceId": "L1253",
+          "time": 4311,
+          "speaker": "Spielleitung",
+          "text": "Was ist es?"
+        },
+        {
+          "sourceId": "L1254",
+          "time": 4311,
+          "speaker": "Spielleitung",
+          "text": "Lies es vor, lies es vor."
+        },
+        {
+          "sourceId": "L1255",
+          "time": 4313,
+          "speaker": "Orasilas Albio",
+          "text": "Ein Lostriana."
+        },
+        {
+          "sourceId": "L1256",
+          "time": 4314,
+          "speaker": "Arlekin Dehsch",
+          "text": "Jawohl."
+        },
+        {
+          "sourceId": "L1257",
+          "time": 4317,
+          "speaker": "Arlekin Dehsch",
+          "text": "Hätten wir ihn sterben lassen, hätte es für jeden Lut gegeben."
+        },
+        {
+          "sourceId": "L1258",
+          "time": 4319,
+          "speaker": "Arlekin Dehsch",
+          "text": "So gibt es ein schönes Schwert."
+        },
+        {
+          "sourceId": "L1259",
+          "time": 4320,
+          "speaker": "Arlekin Dehsch",
+          "text": "Danke an Orasilas."
+        },
+        {
+          "sourceId": "L1260",
+          "time": 4323,
+          "speaker": "Arlekin Dehsch",
+          "text": "Ihr freundlichen Retter."
+        },
+        {
+          "sourceId": "L1261",
+          "time": 4326,
+          "speaker": "Arlekin Dehsch",
+          "text": "Eine sehr schöne Waffe."
+        }
+      ],
+      "windowFingerprint": "be9ff79b170082dff016751e8883bf4d589dc0f39e5951192c2982549b7042af",
+      "facts": [
+        {
+          "id": "pipo_transfers_lostriana",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "recipient": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Lostriana",
+                  "Schwert",
+                  "Pipos Schwert"
+                ],
+                "property": [
+                  "possession"
+                ],
+                "to": [
+                  "Gruppe",
+                  "Helden",
+                  "Gefährten",
+                  "Spielergruppe",
+                  "Flüchtige"
+                ],
+                "from": [
+                  "Pipo",
+                  "Wache Pipo",
+                  "Pipo die Wache"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L1229",
+              "L1230",
+              "L1231",
+              "L1233",
+              "L1234",
+              "L1245",
+              "L1246"
+            ],
+            [
+              "L1239",
+              "L1244"
+            ],
+            [
+              "L1255"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Besitzübergabe an die Gruppe; Schwert und Lostriana sind im Dialog dasselbe Objekt. Rollen plus from/to werden gemeinsam geprüft."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          4243,
+          4326
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "favor",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L2280",
+          "time": 7867,
+          "speaker": "Lysander Federkiel",
+          "text": "Habt ihr noch einen Burschen, den ihr ausschicken könnt, dem ihr vertrauen könnt?"
+        },
+        {
+          "sourceId": "L2281",
+          "time": 7871,
+          "speaker": "Spielleitung",
+          "text": "Ich könnte einen von den Küchenjungs vielleicht mal losschicken."
+        },
+        {
+          "sourceId": "L2282",
+          "time": 7876,
+          "speaker": "Lysander Federkiel",
+          "text": "Schickt ihn doch mal herum und lasst ihn Augen und Ohren offen halten."
+        },
+        {
+          "sourceId": "L2283",
+          "time": 7879,
+          "speaker": "Lysander Federkiel",
+          "text": "Aber er soll auf keinen Fall sagen, dass ich sie suche."
+        },
+        {
+          "sourceId": "L2284",
+          "time": 7883,
+          "speaker": "Spielleitung",
+          "text": "Er soll nur rausfinden, wo sie ist."
+        },
+        {
+          "sourceId": "L2285",
+          "time": 7886,
+          "speaker": "Lysander Federkiel",
+          "text": "Niemand muss wissen, dass wir hier sind."
+        },
+        {
+          "sourceId": "L2286",
+          "time": 7889,
+          "speaker": "Spielleitung",
+          "text": "Nun, das wäre natürlich ein Gefallen, den die Grünkappen um euch tun."
+        },
+        {
+          "sourceId": "L2287",
+          "time": 7896,
+          "speaker": "Spielleitung",
+          "text": "Und ihr wisst, Gefallen gegen Gefallen, nicht wahr?"
+        },
+        {
+          "sourceId": "L2288",
+          "time": 7898,
+          "speaker": "Lysander Federkiel",
+          "text": "Ich weiß."
+        },
+        {
+          "sourceId": "L2289",
+          "time": 7899,
+          "speaker": "Spielleitung",
+          "text": "Okay, nun denn, dann werde ich sehen, was sich tun lässt."
+        },
+        {
+          "sourceId": "L2290",
+          "time": 7903,
+          "speaker": "Lysander Federkiel",
+          "text": "Danke euch."
+        }
+      ],
+      "windowFingerprint": "702daa404234900f637fdaa1ed78a763c2bd4fb951befa233a2f6041fac4d4a9",
+      "facts": [
+        {
+          "id": "gruenkappen_favor_obligation",
+          "match": {
+            "predicate": [
+              "OBLIGATION"
+            ],
+            "participants": {
+              "debtor": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige",
+                "Lysander",
+                "Lysander Federkiel"
+              ],
+              "creditor": [
+                "Grünkappen",
+                "Grünkappenbund"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Gruppe",
+                  "Helden",
+                  "Gefährten",
+                  "Spielergruppe",
+                  "Flüchtige",
+                  "Lysander",
+                  "Lysander Federkiel"
+                ],
+                "property": [
+                  "obligation"
+                ],
+                "toTokensAny": [
+                  "Gefallen",
+                  "Gegenleistung",
+                  "favor"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "reported"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L2286"
+            ],
+            [
+              "L2287"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "v1 legte obligation beim Gläubiger ab. v2 prüft die Richtung: Gruppe/Lysander schuldet den Grünkappen einen Gefallen."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          7867,
+          7903
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "gm_switch",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L2468",
+          "time": 8478,
+          "speaker": "Spielleitung",
+          "text": "Und auf einmal kommen noch irgendwelche Schritte in diese kleine Kammer rein."
+        },
+        {
+          "sourceId": "L2469",
+          "time": 8483,
+          "speaker": "Spielleitung",
+          "text": "So, na dann, schreiten wir mal zur Tat."
+        },
+        {
+          "sourceId": "L2470",
+          "time": 8487,
+          "speaker": "Spielleitung",
+          "text": "Was hat das zu bedeuten?"
+        },
+        {
+          "sourceId": "L2471",
+          "time": 8488,
+          "speaker": "Spielleitung",
+          "text": "Satuna, und ihr hört nur, wie irgendeine Frau auf einmal irgendwelche komischen Sprüche aufsagt."
+        },
+        {
+          "sourceId": "L2472",
+          "time": 8497,
+          "speaker": "Spielleitung",
+          "text": "Und dann kommt eine Hand näher, ihr könnt überhaupt nicht richtig sehen, es ist nur so eine schwarze Silhouette."
+        },
+        {
+          "sourceId": "L2473",
+          "time": 8503,
+          "speaker": "Spielleitung",
+          "text": "Und diese Frau berührt jeweils von euch beiden die Stirn."
+        },
+        {
+          "sourceId": "L2474",
+          "time": 8507,
+          "speaker": "Spielleitung",
+          "text": "Und euch kommt diese Berührung vor, als wäre es eure Mutter gewesen, höchst selbst."
+        },
+        {
+          "sourceId": "L2475",
+          "time": 8512,
+          "speaker": "Spielleitung",
+          "text": "Es ist so eine ganz angenehme Berührung."
+        },
+        {
+          "sourceId": "L2476",
+          "time": 8514,
+          "speaker": "Spielleitung",
+          "text": "Ihr fühlt euch einmal ganz geborgen und warm wie zu Hause."
+        },
+        {
+          "sourceId": "L2477",
+          "time": 8519,
+          "speaker": "Spielleitung",
+          "text": "Durfte ich mich vorher noch ein bisschen wehren?"
+        },
+        {
+          "sourceId": "L2478",
+          "time": 8522,
+          "speaker": "Spielleitung",
+          "text": "Keine Chance."
+        },
+        {
+          "sourceId": "L2479",
+          "time": 8522,
+          "speaker": "Spielleitung",
+          "text": "Du hast geschlafen."
+        },
+        {
+          "sourceId": "L2480",
+          "time": 8523,
+          "speaker": "Spielleitung",
+          "text": "Du bist quasi überrascht worden."
+        },
+        {
+          "sourceId": "L2481",
+          "time": 8525,
+          "speaker": "Spielleitung",
+          "text": "Und es ist... Ihr seid so ein bisschen benommen, benebelt, berauscht."
+        },
+        {
+          "sourceId": "L2482",
+          "time": 8531,
+          "speaker": "Orasilas Albio",
+          "text": "Es ist alles so schön."
+        },
+        {
+          "sourceId": "L2483",
+          "time": 8532,
+          "speaker": "Orasilas Albio",
+          "text": "Wir sind Heiko vollkommen ausgeliefert."
+        },
+        {
+          "sourceId": "L2484",
+          "time": 8534,
+          "speaker": "Spielleitung",
+          "text": "Und in diesem Gefühl wollt ihr einfach alles sagen."
+        },
+        {
+          "sourceId": "L2485",
+          "time": 8540,
+          "speaker": "Spielleitung",
+          "text": "Ihr seid quasi... Euer Gefühl sagt, ihr müsst die Wahrheit sagen."
+        },
+        {
+          "sourceId": "L2486",
+          "time": 8544,
+          "speaker": "Spielleitung",
+          "text": "Es ist quasi ein Wahrheitszauber auf euch."
+        },
+        {
+          "sourceId": "L2487",
+          "time": 8547,
+          "speaker": "Spielleitung",
+          "text": "So, nun denn."
+        },
+        {
+          "sourceId": "L2488",
+          "time": 8548,
+          "speaker": "Spielleitung",
+          "text": "Danke, Satuna."
+        },
+        {
+          "sourceId": "L2489",
+          "time": 8550,
+          "speaker": "Spielleitung",
+          "text": "Ähm..."
+        },
+        {
+          "sourceId": "L2490",
+          "time": 8552,
+          "speaker": "Spielleitung",
+          "text": "Ja, ihr verzeiht ein bisschen, dass wir euch so überfallen müssen, aber es ist leider notwendig."
+        },
+        {
+          "sourceId": "L2491",
+          "time": 8558,
+          "speaker": "Spielleitung",
+          "text": "Ach, das ist schon okay."
+        },
+        {
+          "sourceId": "L2492",
+          "time": 8560,
+          "speaker": "Spielleitung",
+          "text": "Nun, ich habe ein paar Fragen an euch."
+        },
+        {
+          "sourceId": "L2493",
+          "time": 8563,
+          "speaker": "Spielleitung",
+          "text": "Oh, etwas blöd."
+        },
+        {
+          "sourceId": "L2494",
+          "time": 8567,
+          "speaker": "Spielleitung",
+          "text": "Ich stelle mir natürlich kurz vor."
+        },
+        {
+          "sourceId": "L2495",
+          "time": 8569,
+          "speaker": "Spielleitung",
+          "text": "Ich bin hier der Altvater."
+        },
+        {
+          "sourceId": "L2496",
+          "time": 8573,
+          "speaker": "Spielleitung",
+          "text": "Und, äh..."
+        },
+        {
+          "sourceId": "L2497",
+          "time": 8575,
+          "speaker": "Lysander Federkiel",
+          "text": "Der Chef von dem Ganzen."
+        },
+        {
+          "sourceId": "L2498",
+          "time": 8577,
+          "speaker": "Spielleitung",
+          "text": "Durchaus, durchaus."
+        },
+        {
+          "sourceId": "L2499",
+          "time": 8579,
+          "speaker": "Spielleitung",
+          "text": "Danke, Lysander."
+        },
+        {
+          "sourceId": "L2500",
+          "time": 8580,
+          "speaker": "Spielleitung",
+          "text": "Und ich habe ein paar Fragen an euch."
+        },
+        {
+          "sourceId": "L2501",
+          "time": 8582,
+          "speaker": "Spielleitung",
+          "text": "Wer hat daher zu meiner Rechten..."
+        },
+        {
+          "sourceId": "L2502",
+          "time": 8585,
+          "speaker": "Spielleitung",
+          "text": "Wie heißt ihr?"
+        },
+        {
+          "sourceId": "L2503",
+          "time": 8586,
+          "speaker": "Arlekin Dehsch",
+          "text": "Arlekin Dehsch aus Lohwangen."
+        },
+        {
+          "sourceId": "L2504",
+          "time": 8588,
+          "speaker": "Spielleitung",
+          "text": "Arlekin, es ist mir eine Freude."
+        }
+      ],
+      "windowFingerprint": "03d7245fe4f1fdea9fbb5b776e8a4ebcf76ccc1f2ff48324cef15b8ed30ad219",
+      "facts": [
+        {
+          "id": "altvater_role",
+          "match": {
+            "predicate": [
+              "IDENTITY",
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Altvater",
+                "der Altvater"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "role_status",
+                  "identity"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater",
+                  "Leiter",
+                  "Chef"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L2495"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          8478,
+          8588
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "identity_and_location",
+      "kind": "real",
+      "sourceRevision": "2670f6867dc3ffea5787e0f1641cd2360ededdfa3b7038835d1b137de62a848d",
+      "lines": [
+        {
+          "sourceId": "L2623",
+          "time": 9068,
+          "speaker": "Spielleitung",
+          "text": "Es wird so richtig gleisend hell im Raum auf einmal und alle kneifen so kurz die Augen zu und du siehst noch, wie in der Kammer hinten die Tür zugemacht wird von Sven und vor dir steht nun ein Zwerg, sehr wohlhabend gekleidet, also durchaus kann sich sehen lassen, feinste Seide, ein langer Bart, schön geflochtene Zöpfe, aber er ist recht jung."
+        },
+        {
+          "sourceId": "L2624",
+          "time": 9095,
+          "speaker": "Arlekin Dehsch",
+          "text": "Also ihr hättet gar nicht gedacht, dass ein Altvater dann doch"
+        },
+        {
+          "sourceId": "L2625",
+          "time": 9099,
+          "speaker": "Spielleitung",
+          "text": "Halten, dass mir sie jung sein kann."
+        },
+        {
+          "sourceId": "L2626",
+          "time": 9101,
+          "speaker": "Spielleitung",
+          "text": "Neben ihnen steht eine recht großgewachsene Menschenfrau."
+        },
+        {
+          "sourceId": "L2627",
+          "time": 9107,
+          "speaker": "Spielleitung",
+          "text": "Allerdings fällt dir sofort auf, diese Frau hat eine Augenbinde."
+        },
+        {
+          "sourceId": "L2628",
+          "time": 9114,
+          "speaker": "Spielleitung",
+          "text": "Sie kann eigentlich gar nichts sehen."
+        },
+        {
+          "sourceId": "L2629",
+          "time": 9116,
+          "speaker": "Spielleitung",
+          "text": "Sie war auch übrigens die Einzige, die nicht irgendwie von deinem Licht geblendet wurde."
+        },
+        {
+          "sourceId": "L2630",
+          "time": 9122,
+          "speaker": "Spielleitung",
+          "text": "Und doch scheint sie irgendwie vor dir zu stehen."
+        },
+        {
+          "sourceId": "L2631",
+          "time": 9128,
+          "speaker": "Spielleitung",
+          "text": "Der Altvater endet sich als Arlekin."
+        },
+        {
+          "sourceId": "L2632",
+          "time": 9132,
+          "speaker": "Spielleitung",
+          "text": "Wo muss das denn sein?"
+        },
+        {
+          "sourceId": "L2633",
+          "time": 9134,
+          "speaker": "Arlekin Dehsch",
+          "text": "Okay, dann mache ich das Licht ein bisschen dunkler, sodass man immer noch alles sieht, aber keiner mehr geblendet ist."
+        },
+        {
+          "sourceId": "L2634",
+          "time": 9141,
+          "speaker": "Orasilas Albio",
+          "text": "Ach, ihr seid der Altvater."
+        },
+        {
+          "sourceId": "L2635",
+          "time": 9144,
+          "speaker": "Orasilas Albio",
+          "text": "Ich habe euch schon öfter gesehen."
+        },
+        {
+          "sourceId": "L2636",
+          "time": 9147,
+          "speaker": "Spielleitung",
+          "text": "Ja, naja, noch nicht so lang."
+        },
+        {
+          "sourceId": "L2637",
+          "time": 9154,
+          "speaker": "Spielleitung",
+          "text": "Aber man tut, was man kann, nicht wahr?"
+        },
+        {
+          "sourceId": "L2638",
+          "time": 9158,
+          "speaker": "Spielleitung",
+          "text": "Entschuldigt, dass ich euch des Nachts so überfallen musste, aber ich glaube, ihr könnt verstehen, dass es die Umstände einfach bedürfen, dass wir sehr große Vorsicht walten lassen, zumal das adliche Geschlecht nicht gerade..."
+        },
+        {
+          "sourceId": "L2639",
+          "time": 9175,
+          "speaker": "Spielleitung",
+          "text": "Bei uns ein und aus geht."
+        },
+        {
+          "sourceId": "L2640",
+          "time": 9178,
+          "speaker": "Arlekin Dehsch",
+          "text": "Also mein Hauptaugenmerk gilt übrigens der Frau."
+        },
+        {
+          "sourceId": "L2641",
+          "time": 9182,
+          "speaker": "Spielleitung",
+          "text": "Die hält sich vornehm zurück."
+        },
+        {
+          "sourceId": "L2642",
+          "time": 9184,
+          "speaker": "Arlekin Dehsch",
+          "text": "Okay, dann verbeuge ich mich so leicht für ihr."
+        },
+        {
+          "sourceId": "L2643",
+          "time": 9186,
+          "speaker": "Arlekin Dehsch",
+          "text": "Dürfte ich den Namen von der Tochter Satuarias erfahren?"
+        },
+        {
+          "sourceId": "L2644",
+          "time": 9192,
+          "speaker": "Spielleitung",
+          "text": "Nun, wenn es euch was nützt."
+        },
+        {
+          "sourceId": "L2645",
+          "time": 9195,
+          "speaker": "Spielleitung",
+          "text": "Man nennt mich Satuna."
+        },
+        {
+          "sourceId": "L2646",
+          "time": 9197,
+          "speaker": "Spielleitung",
+          "text": "Satuna die Schlange."
+        },
+        {
+          "sourceId": "L2647",
+          "time": 9198,
+          "speaker": "Spielleitung",
+          "text": "Und du siehst, wie um ihrem Hals so eine Schlange sich so windet und dann in ihrer Kleidung so verschwindet."
+        },
+        {
+          "sourceId": "L2648",
+          "time": 9205,
+          "speaker": "Arlekin Dehsch",
+          "text": "Wie alt ist die ungefähr?"
+        },
+        {
+          "sourceId": "L2649",
+          "time": 9208,
+          "speaker": "Arlekin Dehsch",
+          "text": "30 Jahre?"
+        },
+        {
+          "sourceId": "L2650",
+          "time": 9209,
+          "speaker": "Spielleitung",
+          "text": "Ja, bei Hexen ist das so schwierig zu urteilen, denn Hexen altern nicht so oder beziehungsweise machen sich immer wieder jünger durch Magie."
+        },
+        {
+          "sourceId": "L2651",
+          "time": 9219,
+          "speaker": "Spielleitung",
+          "text": "Die Frau sieht aus, als wäre sie Mitte 20, könnte aber genauso gut auch 300 Jahre alt sein."
+        },
+        {
+          "sourceId": "L2652",
+          "time": 9225,
+          "speaker": "Arlekin Dehsch",
+          "text": "Ich wollte nur meinen Respekt erzielen."
+        },
+        {
+          "sourceId": "L2653",
+          "time": 9229,
+          "speaker": "Arlekin Dehsch",
+          "text": "Sagt mir Altvater, äh, Altvater war doch richtig, ne?"
+        },
+        {
+          "sourceId": "L2654",
+          "time": 9233,
+          "speaker": "Arlekin Dehsch",
+          "text": "Wenn ich eine Frage stellen dürfte, ihr habt gesagt, es gibt diesen Zwerg Arbon, ihr hättet von ihm gehört, wo finde ich ihn?"
+        },
+        {
+          "sourceId": "L2655",
+          "time": 9241,
+          "speaker": "Spielleitung",
+          "text": "Ja, der hat letztens einen von unseren Kollegen irgendwas andrehen wollen, irgendeinen Zauberspruch."
+        },
+        {
+          "sourceId": "L2656",
+          "time": 9251,
+          "speaker": "Spielleitung",
+          "text": "Keine Ahnung, weiß nichts Näheres, aber er hält sich in einem Gasthof auf, in den Docks."
+        },
+        {
+          "sourceId": "L2657",
+          "time": 9260,
+          "speaker": "Spielleitung",
+          "text": "Das nennt sich, ich glaube, beim Holzbein."
+        },
+        {
+          "sourceId": "L2658",
+          "time": 9265,
+          "speaker": "Arlekin Dehsch",
+          "text": "Beim Holzbein."
+        },
+        {
+          "sourceId": "L2659",
+          "time": 9266,
+          "speaker": "Orasilas Albio",
+          "text": "Ich weiß, wo das ist."
+        },
+        {
+          "sourceId": "L2660",
+          "time": 9268,
+          "speaker": "Orasilas Albio",
+          "text": "Ich könnte uns da hinbringen."
+        },
+        {
+          "sourceId": "L2661",
+          "time": 9269,
+          "speaker": "Orasilas Albio",
+          "text": "Aber was nützt uns der Zwerg?"
+        },
+        {
+          "sourceId": "L2662",
+          "time": 9271,
+          "speaker": "Orasilas Albio",
+          "text": "Wir wollen doch den Mörder der Prinzessin finden."
+        },
+        {
+          "sourceId": "L2663",
+          "time": 9273,
+          "speaker": "Arlekin Dehsch",
+          "text": "Lass das mal meine Sorge sein, Orasilas."
+        },
+        {
+          "sourceId": "L2664",
+          "time": 9276,
+          "speaker": "Orasilas Albio",
+          "text": "Okay."
+        }
+      ],
+      "windowFingerprint": "0edcb9dd91ac2e629f0a0ee268aa3e2ff9f3833f6bf765fc17e68ad0daa873bf",
+      "facts": [
+        {
+          "id": "satuna_distinct_named_person",
+          "match": {
+            "predicate": [
+              "IDENTITY",
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Satuna",
+                "Satuna die Schlange",
+                "Frau",
+                "die Frau",
+                "Menschenfrau"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange",
+                  "Frau",
+                  "die Frau",
+                  "Menschenfrau"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L2640",
+              "L2643"
+            ],
+            [
+              "L2645",
+              "L2646"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Frau -> Satuna ist eine zulässige lokale, belegte Zuordnung. Kein Merge mit dem Altvater aus gemeinsamem SL-Label."
+          }
+        },
+        {
+          "id": "arborn_at_holzbein",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Arbon",
+                "Arborn",
+                "Zwerg Arbon",
+                "Zwerg Arborn"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Arbon",
+                  "Arborn",
+                  "Zwerg Arbon",
+                  "Zwerg Arborn"
+                ],
+                "property": [
+                  "location"
+                ],
+                "to": [
+                  "Beim Holzbein",
+                  "beim Holzbein",
+                  "Gasthof Beim Holzbein",
+                  "Holzbein"
+                ]
+              }
+            ],
+            "epistemic": [
+              "reported",
+              "stated",
+              "suspected"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "L2654"
+            ],
+            [
+              "L2656"
+            ],
+            [
+              "L2657"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "NPC-Auskunft über einen abwesenden Zwerg; keine beobachtete Ortsanwesenheit. Die Unsicherheit des Gasthofnamens darf erhalten bleiben."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "satuna_not_altvater",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Altvater",
+                  "der Altvater"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_satuna",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Satuna",
+                  "Satuna die Schlange"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "altvater_not_arlekin",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Altvater",
+                  "der Altvater"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Arlekin",
+                  "Arlekin Dehsch"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "lostriana_not_transferred_to_pipo",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Gruppe",
+                "Helden",
+                "Gefährten",
+                "Spielergruppe",
+                "Flüchtige"
+              ],
+              "recipient": [
+                "Pipo",
+                "Wache Pipo",
+                "Pipo die Wache"
+              ],
+              "theme": [
+                "Lostriana",
+                "Schwert",
+                "Pipos Schwert"
+              ]
+            },
+            "stateChanges": []
+          }
+        },
+        {
+          "id": "kano_not_alive_after_scene",
+          "match": {
+            "stateChanges": [
+              {
+                "subject": [
+                  "Kano",
+                  "Kano Tommeldom"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "alive",
+                  "lebendig",
+                  "lebt"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "Nostria-0.4.58-E4B.zip / transkript.txt",
+        "sourceTimeRange": [
+          9068,
+          9276
+        ],
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "authority_variant_1",
+      "kind": "synthetic",
+      "sourceRevision": "7d91aa5f6a4b52cf26131efb1ca89a3ce81000762eff75436a8c66ff4ba849e3",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Neral liegt neben der Treppe."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Mira",
+          "text": "Was ist mit Neral? Kann die Person sich befreien?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Borin",
+          "text": "Die Person ist tot."
+        }
+      ],
+      "windowFingerprint": "7d91aa5f6a4b52cf26131efb1ca89a3ce81000762eff75436a8c66ff4ba849e3",
+      "facts": [
+        {
+          "id": "authority_variant_1_status",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Neral"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Neral"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0002"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "authority_variant_1_false_canon",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Borin"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Borin"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "authority_variant_2",
+      "kind": "synthetic",
+      "sourceRevision": "7507dda5fbd05964b9b1761c0db78853924023c056866e3dc5ec7892c3235c5c",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Wächterin Elna liegt neben der Treppe."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Jora",
+          "text": "Was ist mit Wächterin Elna? Kann die Person sich befreien?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Toren",
+          "text": "Die Person ist tot."
+        }
+      ],
+      "windowFingerprint": "7507dda5fbd05964b9b1761c0db78853924023c056866e3dc5ec7892c3235c5c",
+      "facts": [
+        {
+          "id": "authority_variant_2_status",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Wächterin Elna"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Wächterin Elna"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0002"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "authority_variant_2_false_canon",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Toren"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Toren"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "authority_variant_3",
+      "kind": "synthetic",
+      "sourceRevision": "d8b55a11ad9cdd93ad95094c2a0387836f06bb976fbbdfa660a758bc9e5c1722",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Pilot Daro liegt neben der Treppe."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Rika",
+          "text": "Was ist mit Pilot Daro? Kann die Person sich befreien?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Techniker Len",
+          "text": "Ich glaube, die Person ist tot. Sicher weiß ich es nicht."
+        }
+      ],
+      "windowFingerprint": "d8b55a11ad9cdd93ad95094c2a0387836f06bb976fbbdfa660a758bc9e5c1722",
+      "facts": [
+        {
+          "id": "authority_variant_3_status",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Pilot Daro"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Pilot Daro"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "epistemic": [
+              "believed",
+              "suspected"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0002"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "authority_variant_3_false_canon",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Pilot Daro"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Pilot Daro"
+                ],
+                "property": [
+                  "life_status"
+                ],
+                "to": [
+                  "dead",
+                  "tot"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "coreference_variant_1",
+      "kind": "synthetic",
+      "sourceRevision": "28f9514ca99ef34b6d59eb91a014ab43017f4d4314fe13852ed30ce4d00eb0c1",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Toren",
+          "text": "Mara, lass mich nach deinen Verletzungen sehen."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Juno",
+          "text": "Ich bleibe an der Tür."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Die verletzte Person hat gebrochene Rippen und blutet stark."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Toren",
+          "text": "Ich verbinde die Wunde mit meinem Hemd."
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Der Druckverband hält. Mara verliert vorerst kein weiteres Blut."
+        }
+      ],
+      "windowFingerprint": "28f9514ca99ef34b6d59eb91a014ab43017f4d4314fe13852ed30ce4d00eb0c1",
+      "facts": [
+        {
+          "id": "coreference_variant_1_injury",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Mara"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Mara"
+                ],
+                "property": [
+                  "physical_condition"
+                ],
+                "to": [
+                  "severely_injured",
+                  "schwer verletzt",
+                  "schwer verwundet"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        },
+        {
+          "id": "coreference_variant_1_aid",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Toren"
+              ],
+              "treated": [
+                "Mara"
+              ]
+            },
+            "stateChanges": [],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0004",
+              "S0005"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "coreference_variant_1_wrong_patient",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Toren"
+              ],
+              "treated": [
+                "Juno"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "coreference_variant_2",
+      "kind": "synthetic",
+      "sourceRevision": "caed25898593d23417313b7bf1b4bada6edd9aacf48aeffe422951ff838ff58e",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Pilot Ravo",
+          "text": "Mechanikerin Seli, lass mich nach deinen Verletzungen sehen."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Nima",
+          "text": "Ich bleibe an der Tür."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Die verletzte Person hat gebrochene Rippen und blutet stark."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Pilot Ravo",
+          "text": "Ich verbinde die Wunde mit meinem Hemd."
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Der Druckverband hält. Mechanikerin Seli verliert vorerst kein weiteres Blut."
+        }
+      ],
+      "windowFingerprint": "caed25898593d23417313b7bf1b4bada6edd9aacf48aeffe422951ff838ff58e",
+      "facts": [
+        {
+          "id": "coreference_variant_2_injury",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Mechanikerin Seli"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Mechanikerin Seli"
+                ],
+                "property": [
+                  "physical_condition"
+                ],
+                "to": [
+                  "severely_injured",
+                  "schwer verletzt",
+                  "schwer verwundet"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        },
+        {
+          "id": "coreference_variant_2_aid",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Pilot Ravo"
+              ],
+              "treated": [
+                "Mechanikerin Seli"
+              ]
+            },
+            "stateChanges": [],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0004",
+              "S0005"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "coreference_variant_2_wrong_patient",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Pilot Ravo"
+              ],
+              "treated": [
+                "Nima"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "coreference_variant_3",
+      "kind": "synthetic",
+      "sourceRevision": "940e2c9234cc57f4ef524b00a9ce89a088bf7fc01618bfdd54d4ce939c378646",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Heilerin Tessa",
+          "text": "Ritter Jarek, lass mich nach deinen Verletzungen sehen."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Dorin",
+          "text": "Ich bleibe an der Tür."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Die verletzte Person hat gebrochene Rippen und blutet stark."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Heilerin Tessa",
+          "text": "Ich verbinde die Wunde mit meinem Hemd."
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Der Druckverband hält. Ritter Jarek verliert vorerst kein weiteres Blut."
+        }
+      ],
+      "windowFingerprint": "940e2c9234cc57f4ef524b00a9ce89a088bf7fc01618bfdd54d4ce939c378646",
+      "facts": [
+        {
+          "id": "coreference_variant_3_injury",
+          "match": {
+            "predicate": [
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Ritter Jarek"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Ritter Jarek"
+                ],
+                "property": [
+                  "physical_condition"
+                ],
+                "to": [
+                  "severely_injured",
+                  "schwer verletzt",
+                  "schwer verwundet"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        },
+        {
+          "id": "coreference_variant_3_aid",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Heilerin Tessa"
+              ],
+              "treated": [
+                "Ritter Jarek"
+              ]
+            },
+            "stateChanges": [],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0005"
+            ],
+            [
+              "S0004",
+              "S0005"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "coreference_variant_3_wrong_patient",
+          "match": {
+            "predicate": [
+              "TREAT"
+            ],
+            "participants": {
+              "healer": [
+                "Heilerin Tessa"
+              ],
+              "treated": [
+                "Dorin"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "transfer_variant_1",
+      "kind": "synthetic",
+      "sourceRevision": "9cf42d59774ad082927a40a5959aaabc2840a781b7a2040c1cb835a96b4a25e9",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Mara hält den Relikt."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Toren",
+          "text": "Darf ich den Gegenstand haben?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Mara nickt und reicht ihn Toren."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Toren",
+          "text": "Ich nehme den Relikt entgegen."
+        }
+      ],
+      "windowFingerprint": "9cf42d59774ad082927a40a5959aaabc2840a781b7a2040c1cb835a96b4a25e9",
+      "facts": [
+        {
+          "id": "transfer_variant_1_handoff",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Mara"
+              ],
+              "recipient": [
+                "Toren"
+              ],
+              "theme": [
+                "Relikt"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Relikt"
+                ],
+                "property": [
+                  "possession"
+                ],
+                "to": [
+                  "Toren"
+                ],
+                "from": [
+                  "Mara"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0003"
+            ],
+            [
+              "S0003"
+            ],
+            [
+              "S0001",
+              "S0004"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "transfer_variant_1_reversed",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Toren"
+              ],
+              "recipient": [
+                "Mara"
+              ],
+              "theme": [
+                "Relikt"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "transfer_variant_2",
+      "kind": "synthetic",
+      "sourceRevision": "05cf242ff74e7c329a4a7a02e6fd23188a546e1515176cb8d01f1af3b6cf2ccd",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Pilot hält den Datenkern."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Mechanikerin",
+          "text": "Darf ich den Gegenstand haben?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Pilot nickt und reicht ihn Mechanikerin."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Mechanikerin",
+          "text": "Ich nehme den Datenkern entgegen."
+        }
+      ],
+      "windowFingerprint": "05cf242ff74e7c329a4a7a02e6fd23188a546e1515176cb8d01f1af3b6cf2ccd",
+      "facts": [
+        {
+          "id": "transfer_variant_2_handoff",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Pilot"
+              ],
+              "recipient": [
+                "Mechanikerin"
+              ],
+              "theme": [
+                "Datenkern"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Datenkern"
+                ],
+                "property": [
+                  "possession"
+                ],
+                "to": [
+                  "Mechanikerin"
+                ],
+                "from": [
+                  "Pilot"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0003"
+            ],
+            [
+              "S0003"
+            ],
+            [
+              "S0001",
+              "S0004"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "transfer_variant_2_reversed",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Mechanikerin"
+              ],
+              "recipient": [
+                "Pilot"
+              ],
+              "theme": [
+                "Datenkern"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "transfer_variant_3",
+      "kind": "synthetic",
+      "sourceRevision": "22bc369a71b9d271853b0f7c7237ff61a54d5dd04d8846869967cd996c5eba43",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Ritterin hält den Siegelring."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Heiler",
+          "text": "Darf ich den Gegenstand haben?"
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Ritterin nickt und reicht ihn Heiler."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Heiler",
+          "text": "Ich nehme den Siegelring entgegen."
+        }
+      ],
+      "windowFingerprint": "22bc369a71b9d271853b0f7c7237ff61a54d5dd04d8846869967cd996c5eba43",
+      "facts": [
+        {
+          "id": "transfer_variant_3_handoff",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Ritterin"
+              ],
+              "recipient": [
+                "Heiler"
+              ],
+              "theme": [
+                "Siegelring"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Siegelring"
+                ],
+                "property": [
+                  "possession"
+                ],
+                "to": [
+                  "Heiler"
+                ],
+                "from": [
+                  "Ritterin"
+                ]
+              }
+            ],
+            "epistemic": [
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0001",
+              "S0003"
+            ],
+            [
+              "S0003"
+            ],
+            [
+              "S0001",
+              "S0004"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "transfer_variant_3_reversed",
+          "match": {
+            "predicate": [
+              "TRANSFER"
+            ],
+            "participants": {
+              "source": [
+                "Heiler"
+              ],
+              "recipient": [
+                "Ritterin"
+              ],
+              "theme": [
+                "Siegelring"
+              ]
+            },
+            "stateChanges": [],
+            "modality": [
+              "actual"
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "gm_switch_variant_1",
+      "kind": "synthetic",
+      "sourceRevision": "caf8faca76e5c1aabf21f879c7594736060ca7836c4f17eb09f2f23cc1042a93",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Vor euch stehen Mira und ein älterer Mann."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Spielleitung",
+          "text": "Danke, Mira."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Der Mann tritt vor: Ich bin Toren, der Hafenmeister."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Jora",
+          "text": "Danke, Toren. Und wer ist die Frau?"
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Die Frau antwortet: Ich bin Mira."
+        }
+      ],
+      "windowFingerprint": "caf8faca76e5c1aabf21f879c7594736060ca7836c4f17eb09f2f23cc1042a93",
+      "facts": [
+        {
+          "id": "gm_switch_variant_1_identity",
+          "match": {
+            "predicate": [
+              "IDENTITY",
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Toren",
+                "Mann",
+                "der Mann"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Toren",
+                  "Mann",
+                  "der Mann"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Toren",
+                  "Hafenmeister"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "gm_switch_variant_1_merge",
+          "match": {
+            "anyOf": [
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Mira"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Toren",
+                      "Hafenmeister"
+                    ]
+                  }
+                ]
+              },
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Toren"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Mira"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "gm_switch_variant_2",
+      "kind": "synthetic",
+      "sourceRevision": "1f626f95c19999146b3632739d87b6d3f18da615e57a646ae5021d6dc674df64",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Vor euch stehen Seli und ein älterer Mann."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Spielleitung",
+          "text": "Danke, Seli."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Der Mann tritt vor: Ich bin Ravo, der Kommandant."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Nima",
+          "text": "Danke, Ravo. Und wer ist die Frau?"
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Die Frau antwortet: Ich bin Seli."
+        }
+      ],
+      "windowFingerprint": "1f626f95c19999146b3632739d87b6d3f18da615e57a646ae5021d6dc674df64",
+      "facts": [
+        {
+          "id": "gm_switch_variant_2_identity",
+          "match": {
+            "predicate": [
+              "IDENTITY",
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Ravo",
+                "Mann",
+                "der Mann"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Ravo",
+                  "Mann",
+                  "der Mann"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Ravo",
+                  "Kommandant"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "gm_switch_variant_2_merge",
+          "match": {
+            "anyOf": [
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Seli"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Ravo",
+                      "Kommandant"
+                    ]
+                  }
+                ]
+              },
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Ravo"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Seli"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    },
+    {
+      "id": "gm_switch_variant_3",
+      "kind": "synthetic",
+      "sourceRevision": "0bd849d015af6bf27ab6cb901a75816f43fa0d679334f41a0c4d2b389c170ea5",
+      "lines": [
+        {
+          "sourceId": "S0001",
+          "time": 0.0,
+          "speaker": "Spielleitung",
+          "text": "Vor euch stehen Tessa und ein älterer Mann."
+        },
+        {
+          "sourceId": "S0002",
+          "time": 3.0,
+          "speaker": "Spielleitung",
+          "text": "Danke, Tessa."
+        },
+        {
+          "sourceId": "S0003",
+          "time": 6.0,
+          "speaker": "Spielleitung",
+          "text": "Der Mann tritt vor: Ich bin Jarek, der Abt."
+        },
+        {
+          "sourceId": "S0004",
+          "time": 9.0,
+          "speaker": "Dorin",
+          "text": "Danke, Jarek. Und wer ist die Frau?"
+        },
+        {
+          "sourceId": "S0005",
+          "time": 12.0,
+          "speaker": "Spielleitung",
+          "text": "Die Frau antwortet: Ich bin Tessa."
+        }
+      ],
+      "windowFingerprint": "0bd849d015af6bf27ab6cb901a75816f43fa0d679334f41a0c4d2b389c170ea5",
+      "facts": [
+        {
+          "id": "gm_switch_variant_3_identity",
+          "match": {
+            "predicate": [
+              "IDENTITY",
+              "STATE"
+            ],
+            "participants": {
+              "subject": [
+                "Jarek",
+                "Mann",
+                "der Mann"
+              ]
+            },
+            "stateChanges": [
+              {
+                "subject": [
+                  "Jarek",
+                  "Mann",
+                  "der Mann"
+                ],
+                "property": [
+                  "identity",
+                  "role_status"
+                ],
+                "to": [
+                  "Jarek",
+                  "Abt"
+                ]
+              }
+            ],
+            "epistemic": [
+              "stated",
+              "observed"
+            ],
+            "modality": [
+              "actual"
+            ]
+          },
+          "evidenceGroups": [
+            [
+              "S0003"
+            ]
+          ],
+          "audit": {
+            "goldVersion": 2,
+            "humanVerified": false,
+            "reason": "Originalfenster mit expliziter Relation und Quellenbeleg."
+          }
+        }
+      ],
+      "expectedNonClaims": [
+        {
+          "id": "gm_switch_variant_3_merge",
+          "match": {
+            "anyOf": [
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Tessa"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Jarek",
+                      "Abt"
+                    ]
+                  }
+                ]
+              },
+              {
+                "stateChanges": [
+                  {
+                    "subject": [
+                      "Jarek"
+                    ],
+                    "property": [
+                      "identity",
+                      "role_status"
+                    ],
+                    "to": [
+                      "Tessa"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "audit": {
+        "source": "synthetic variants",
+        "sourceTextEdited": false,
+        "humanVerified": false
+      }
+    }
+  ]
+}

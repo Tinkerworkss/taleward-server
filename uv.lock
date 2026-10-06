@@ -1986,13 +1986,14 @@ wheels = [
 
 [[package]]
 name = "taleward-server"
-version = "0.4.58"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "pillow" },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic-settings" },
@@ -2027,6 +2028,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "pillow", specifier = ">=11" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.2" },
     { name = "pydantic-settings", specifier = ">=2.4" },

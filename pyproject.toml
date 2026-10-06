@@ -1,6 +1,6 @@
 [project]
 name = "taleward-server"
-version = "0.4.58"
+version = "0.5.0"
 description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
@@ -32,6 +32,7 @@ ki = [
 
 [project.scripts]
 chronik = "app.cli:app"
+taleward-ledger-mini = "app.ledger_v2_benchmark:main"
 
 [dependency-groups]
 dev = [
