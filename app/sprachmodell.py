@@ -621,6 +621,7 @@ URTEILE = {"belegt": "supported", "teilweise": "partial", "unbelegt": "unsupport
            "witz": "off_game", "supported": "supported", "partial": "partial", "unsupported": "unsupported",
            "contradicted": "contradicted", "off_game": "off_game"}
 BEANSTANDET = ("unsupported", "contradicted", "off_game")
+HINWEIS_RELATION = {"de": "Hinweis aus dem Transkript, bitte prüfen: ", "en": "Note from the transcript, please check: "}
 
 
 def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
@@ -748,7 +749,34 @@ def klartext(text) -> str:
     if len(re.findall(r"\s+\d{1,2}\.\s+(?=[A-ZÄÖÜ])", t)) >= 2:  # „… 1. Route … 2. Tarnung …“
         t = re.sub(r"\s+(\d{1,2}\.)\s+(?=[A-ZÄÖÜ])", r"\n\1 ", t)
     t = re.sub(r"(?m)^\s*[•*]\s+", "- ", t)
+    t = _MODELLMUELL.sub("", t)  # Steuerzeichen des Modells („<tool_call|>“, „<|im_end|>“) haben im Text nichts verloren
+    t = re.sub(r"(?m)^[ \t\-•,;:]*[\]\}\[\{][ \t\-•\]\}\[\{,;:]*$\n?", "", t)  # Zeilen nur aus Klammern (abgeschnittenes JSON)
     return re.sub(r"[ \t]+\n", "\n", t).strip()
+
+
+_MODELLMUELL = re.compile(r"<\|?/?[a-z_]*(?:tool_call|im_end|im_start|eot_id|end_of_turn|start_of_turn)[a-z_]*\|?>|</?s>",
+                          re.I)
+_ZEITMARKE = re.compile(r"\[\d{1,2}(?::\d{2}){1,2}\]")
+
+
+def _schon_erzaehlt(notiz: str, text: str) -> bool:
+    """Steht das Ereignis der Notiz schon im Text? Deterministisch über Kennwörter: Mindestens drei Kennwörter der
+    Notiz, und drei Viertel davon kommen im Text vor. Verhindert, dass die Vollständigkeitsprüfung Vorhandenes
+    „ergänzt“ (Lauf 1 am 06.10.: dieselbe Notiz stand als zweiter Satz noch einmal da)."""
+    kw = {w[:7] for w in _kennwoerter(notiz)}  # Wortstämme, damit „Lysanders“ zu „Lysander“ passt
+    if len(kw) < 3:
+        return False
+    da = {w[:7] for w in _kennwoerter(text)}
+    return len(kw & da) >= max(3, int(len(kw) * 0.75 + 0.5))
+
+
+def _rohe_notiz(neu: str, alt: str, notizen: list[str]) -> bool:
+    """Hat das Modell statt zu erzählen die Notiz abgeschrieben? Zeitmarke im neuen Text, die im alten nicht war,
+    oder der Notizkern steht wörtlich darin."""
+    if _ZEITMARKE.search(neu) and not _ZEITMARKE.search(alt):
+        return True
+    kern_neu = _notizkern(neu)
+    return any(_notizkern(n) and _notizkern(n) in kern_neu for n in notizen)
 
 
 RECAP_SCHLUESSEL = ("text", "recap", "summary", "zusammenfassung", "body", "content", "story", "inhalt")
@@ -1143,7 +1171,8 @@ class Ablauf:
                   .replace("{hoechstens}", str(FEHLEND_HOECHSTENS)))
         nutzer = f"{_kopf(ein)}\n\n{titel}:\n{grundlage}\n\nRecap:\n{text}"
         self._schritt("review")
-        return fehlend_lesen(self.zaehler.aufruf(self.klient, system, nutzer), grundlage)
+        aus = fehlend_lesen(self.zaehler.aufruf(self.klient, system, nutzer), grundlage)
+        return [f for f in aus if not _schon_erzaehlt(f["notiz"], text)]
 
     def ergaenzen(self, ein: dict, text: str, fehlend: list[dict]) -> str | None:
         """Genau eine Ergänzung um belegte fehlende Ereignisse. Nur geänderte Absätze kommen zurück; ein Absatz wird
@@ -1173,6 +1202,8 @@ class Ablauf:
             t = klartext(a.get("text")) if isinstance(a.get("text"), str) else ""
             if not (1 <= nr <= len(teile)) or len(t) < len(teile[nr - 1]):
                 continue  # gekürzt oder unbekannter Absatz
+            if _rohe_notiz(t, teile[nr - 1], [f["notiz"] for f in punkte]):
+                continue  # Notiz abgeschrieben statt erzählt
             alt = _kennwoerter(teile[nr - 1])
             # Deterministische Absicherung: Der alte Absatz muss die Nachbarn eines eingefügten Ereignisses erzählen,
             # und der neue Text muss das Ereignis enthalten – sonst stünde es an der falschen Stelle.
@@ -1230,11 +1261,14 @@ class Ablauf:
                        "zitat": klartext(a.get("zitat") or "")[:300], "fenster": fenster[nr - 1]}
             aus.append(eintrag)
             if urteil == "widerspricht":
+                # Nur ein Hinweis für die Spielleitung, kein Urteil: Die Relationsprüfung schlägt bei kleinen
+                # Modellen überwiegend falsch an (06.10.: 1 echter Treffer in 12 Flaggen). Das Urteil des Absatzes
+                # und damit die Nachbesserung bleiben unberührt.
                 for b in befund:
                     if b.get("index") == nr - 1:
-                        b["verdict"] = "contradicted"
-                        b["note"] = ("Transkript: " + (eintrag["begruendung"] or "Beziehung anders als im Recap")
-                                     + (f" („{eintrag['zitat']}“)" if eintrag["zitat"] else ""))[:600]
+                        hinweis = (HINWEIS_RELATION.get(_sprache(ein), HINWEIS_RELATION["de"])
+                                   + (eintrag["begruendung"] or "") + (f" („{eintrag['zitat']}“)" if eintrag["zitat"] else ""))
+                        b["note"] = ((b.get("note") or "").strip() + (" " if b.get("note") else "") + hinweis)[:600]
         return aus
 
     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
@@ -1278,9 +1312,8 @@ class Ablauf:
         try:
             self._schritt("review")
             befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
-            self.letzte_relationen_vorher = self.relationen(ein, r["text"], befund)
             self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
-            self.letzte_relationen_nachher = []
+            self.letzte_relationen_vorher, self.letzte_relationen_nachher = [], []
             if any(b["verdict"] in BEANSTANDET for b in befund):
                 self._schritt("revision")
                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
@@ -1288,8 +1321,9 @@ class Ablauf:
                     r["text"], pruefung["revised"] = neu, True
                     self._schritt("review")
                     befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, neu), neu)
-                    self.letzte_relationen_nachher = self.relationen(ein, neu, befund)
                     self.letzte_pruefung_nachher = befund
+            # Relationen einmal, auf der Endfassung: nur Hinweise für die Spielleitung, keine Nachbesserung daraus
+            self.letzte_relationen_nachher = self.relationen(ein, r["text"], befund)
             pruefung["paragraphs"] = befund
         except SprachmodellFehler as e:
             log.warning("Gegenprüfung übersprungen: %s", e)

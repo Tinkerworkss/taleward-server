@@ -139,12 +139,12 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
 
     recap, vorschlag = api.recap_aufruf(), api.vorschlags_aufruf()
-    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Relationen gegen das Transkript (0.4.47), Nachbesserung,
-    # zweite Prüfung, zweite Relationsprüfung, Vorschläge (0.4.6)
-    assert len(api.aufrufe) == 8 and recap["body"]["response_format"] == {"type": "json_object"}
+    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Nachbesserung, zweite Prüfung, Relationen gegen das Transkript
+    # einmal auf der Endfassung (0.4.48: nur Hinweis), Vorschläge (0.4.6)
+    assert len(api.aufrufe) == 7 and recap["body"]["response_format"] == {"type": "json_object"}
     assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
-    assert api.aufrufe[3]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
-    for a in api.aufrufe[1:7]:  # Vollständigkeit, Prüfungen und Nachbesserung sehen nur, was der Recap sah
+    assert api.aufrufe[5]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[5]["system"]
+    for a in api.aufrufe[1:6]:  # Vollständigkeit, Prüfungen und Nachbesserung sehen nur, was der Recap sah
         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
             assert verboten not in a["nutzer"] + a["system"], verboten
     # Recap: nichts Geheimes, nicht einmal der Name des geheimen Eintrags
@@ -182,8 +182,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert "geheimen Notizen" in vs["Rabenfels"]["visibilityReason"] and "low_confidence" in vs["Rabenfels"]["flags"]
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
     assert (log.engine, log.model, log.tokens_in, log.tokens_out) == ("external", "mistral-large-latest",
-                                                                     800_000, 32_000)  # 8 Aufrufe (0.4.47)
-    assert log.cost_cents == round((800_000 * 50 + 32_000 * 150) / 1e6)  # Preistabelle Mistral Large
+                                                                     700_000, 28_000)  # 7 Aufrufe (0.4.48)
+    assert log.cost_cents == round((700_000 * 50 + 28_000 * 150) / 1e6)  # Preistabelle Mistral Large
     # Spieler sehen weiterhin nichts davon
     assert client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["pl"]).status_code == 404
 

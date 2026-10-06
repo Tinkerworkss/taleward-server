@@ -531,7 +531,7 @@ def test_ergaenzung_nur_an_passender_stelle_und_nur_wichtige():
 
 
 def test_relationen_gegen_transkript():
-    """Die Relationsprüfung sieht nur Transkriptausschnitte um die belegten Stellen; „widerspricht“ schlägt „belegt“."""
+    """Die Relationsprüfung sieht nur Transkriptausschnitte um die belegten Stellen; „widerspricht“ wird zum Hinweis."""
     from app.sprachmodell import Ablauf, Antwort
 
     class Klient:
@@ -558,7 +558,69 @@ def test_relationen_gegen_transkript():
     assert "Senke dein Schwert, Pipo" in nutzer and "Satz 100 " not in nutzer  # nur ± 60 s um 1:11:40 und 1:56:40
     assert "Satz 214 " in nutzer and "Satz 218 " in nutzer and "Satz 230 " not in nutzer
     assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"] and aus[1]["urteil"] == "stimmt"
-    assert befund[0]["verdict"] == "contradicted" and befund[0]["note"].startswith("Transkript: Pipo gibt")
-    assert befund[1]["verdict"] == "supported"
+    # 0.4.48: nur ein Hinweis für die Spielleitung – das Urteil bleibt, damit keine Nachbesserung aus Fehlalarmen folgt
+    assert befund[0]["verdict"] == "supported"
+    assert befund[0]["note"].startswith("Hinweis aus dem Transkript, bitte prüfen: Pipo gibt") and "nehmt mein Schwert" in befund[0]["note"]
+    assert befund[1]["verdict"] == "supported" and befund[1]["note"] is None
     # ohne belegte Stellen: kein Aufruf
     assert Ablauf(k).relationen(ein, text, [{"index": 0, "verdict": "supported", "note": None, "evidence": []}]) == []
+
+
+def test_ergaenzung_verwirft_abgeschriebene_notiz_und_vorhandenes():
+    """06.10.: Das Modell schrieb die Notiz samt Zeitmarke ab, obwohl der Absatz das Ereignis schon erzählte."""
+    from app.sprachmodell import Ablauf, Antwort, _schon_erzaehlt
+
+    alt = "Die drei saßen in der Zelle; Arlekin und Orasilas teilten ein Heubett, während Lysanders Platz auf dem kalten Steinboden war."
+    notiz = "Arlekin und Orasilas liegen in einem Heubett, Lysander muss auf dem kalten Steinboden vorliegen."
+    assert _schon_erzaehlt(notiz, alt)  # die Vollständigkeitsprüfung meldet so etwas nicht mehr
+    assert not _schon_erzaehlt("Orasilas Albio bietet seine Bürgschaft für Lysander Federkiel an.", alt)
+
+    class Klient:
+        modell = "test"
+
+        def chat(self, system, nutzer):
+            return Antwort(json.dumps({"absaetze": [{"nr": 1, "text": alt + " [3:15] " + notiz}]}), 1, 1)
+
+    fehlend = [{"zeit": 195.0, "notiz": notiz, "wichtigkeit": "wichtig", "belegt": True,
+                "davor": "[2:29] Sie befinden sich in einer Zelle mit Gitterstäben.", "danach": "[4:10] Der Wächter bringt Nahrung.",
+                "ergaenzt": False}]
+    assert Ablauf(Klient()).ergaenzen(_ein(10), alt, fehlend) is None  # Zeitmarke → abgeschrieben → verworfen
+    assert fehlend[0]["ergaenzt"] is False
+
+
+def test_klartext_entfernt_modellmuell():
+    """06.10.: Ein Kapitel endete mit „]}<tool_call|>“."""
+    from app.sprachmodell import klartext
+
+    assert klartext("Wie wird die Allianz halten?\n- ]}<tool_call|>") == "Wie wird die Allianz halten?"
+    assert klartext("Absatz eins.\n\nAbsatz zwei.<|im_end|>") == "Absatz eins.\n\nAbsatz zwei."
+    assert klartext("- Punkt eins\n- Punkt zwei") == "- Punkt eins\n- Punkt zwei"  # Listen bleiben
+
+
+def test_gegenpruefung_relationen_nur_als_hinweis_auf_der_endfassung():
+    """Die Relationsprüfung läuft einmal, auf der Endfassung, und löst keine Nachbesserung aus."""
+    from app.sprachmodell import Ablauf, Antwort
+
+    class Klient:
+        modell = "test"
+
+        def __init__(self):
+            self.systeme = []
+
+        def chat(self, system, nutzer):
+            self.systeme.append(system[:40])
+            if "ORIGINALTRANSKRIPTS" in system:
+                return Antwort(json.dumps({"absaetze": [{"nr": 1, "urteil": "widerspricht", "begruendung": "andersrum", "zitat": "q"}]}), 1, 1)
+            if "überarbeitest" in system:
+                return Antwort(json.dumps({"absaetze": [{"nr": 1, "text": "nie"}]}), 1, 1)
+            return Antwort(json.dumps({"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "1:40", "zitat": "Schwert"}]}]}), 1, 1)
+
+    k = Klient()
+    ein = _ein(40)
+    ein["transkript"][5]["text"] = "Nehmt mein Schwert."
+    r = {"title": "T", "text": "Pipo gab der Gruppe sein Schwert."}
+    a = Ablauf(k)
+    p = a.gegenpruefen(ein, "Szenennotizen", "[1:40] Pipo gibt das Schwert.", r)
+    assert p["revised"] is False and r["text"] == "Pipo gab der Gruppe sein Schwert."
+    assert p["paragraphs"][0]["verdict"] == "supported" and "Hinweis aus dem Transkript" in p["paragraphs"][0]["note"]
+    assert a.letzte_relationen_vorher == [] and a.letzte_relationen_nachher[0]["urteil"] == "widerspricht"
