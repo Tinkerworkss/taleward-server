@@ -10,7 +10,7 @@ from tests.test_step2b import _kleine_teile, zusammenfassen  # noqa: F401 (Fixtu
 pytestmark = pytest.mark.usefixtures("_kleine_teile")
 
 
-def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
+def _ollama(aufrufe: list, kaputt: set[str] = frozenset(), pruefung_kaputt: bool = False):
     """Nachgebautes Ollama: antwortet je nach Systemanweisung mit passendem JSON."""
     def antwort(request: httpx.Request) -> httpx.Response:
         pfad = request.url.path
@@ -29,6 +29,10 @@ def _ollama(aufrufe: list, kaputt: set[str] = frozenset()):
         if body["model"] in kaputt:
             return httpx.Response(500, json={"error": "kaputt"})
         system = body["messages"][0]["content"]
+        if pruefung_kaputt and system.startswith("Du prüfst den Recap"):
+            zeile = {"message": {"content": "Hier ist meine Einschätzung: alles prima ]}<tool_call|>"}, "done": True,
+                     "eval_count": 5, "eval_duration": 1_000_000_000, "prompt_eval_count": 300}
+            return httpx.Response(200, content=(json.dumps(zeile) + "\n").encode())
         if system.startswith("Du prüfst"):
             inhalt = {"absaetze": [{"nr": 1, "urteil": "belegt", "stellen": [{"zeit": "00:00", "zitat": ""}]},
                                    {"nr": 2, "urteil": "unbelegt", "begruendung": "erfunden"}]}
@@ -71,6 +75,8 @@ def test_modellvergleich(client, world, dbs, tmp_path):
     erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
     assert erg["nachgebessert"] is True and erg["text"].endswith("Danach rasteten sie.")
     assert erg["selbst"]["supported"] == 1 and erg["richter"]["total"] == 2  # der Richter hat bewertet
+    assert erg["ollama"] == "http://ollama (Ollama 0.34.4)" and erg["warnungen"] == []
+    assert "Ollama: http://ollama (Ollama 0.34.4)." in bericht
     assert "Titel a:1" in (ordner / "bericht.html").read_text(encoding="utf-8")
     transkript = (ordner / "transkript.txt").read_text(encoding="utf-8")
     assert "] Spielleitung:" in transkript and "[0:00:00]" in transkript
@@ -121,3 +127,29 @@ Grünkappen
     e.kapitel1 = "Nach 10 Tagen Kerker floh die Gruppe."  # erster Entwurf ohne Pipo → Ergänzung hat ihn gerettet
     aus = mv.pruefliste_anwenden(punkte, ein, e)
     assert aus[0]["vorkommen"]["Kapitel 1"] is True and aus[1]["vorkommen"]["Kapitel 1"] is False
+
+
+def test_modellvergleich_ohne_nachbesserung_und_warnungen(client, world, dbs, tmp_path):
+    """--ohne-nachbesserung lässt das Kapitel stehen; eine ausgefallene Gegenprüfung landet mit Antwortanfang im Ergebnis."""
+    from app import modellvergleich as mv
+
+    s = _zur_pruefung(client, world, dbs, tmp_path)
+    server = mv.Server("http://testserver", client=client)
+    server.anmelden("anna", "geheim123")
+    einst = mv.Einstellungen(nachbesserung=False)
+    meldungen = []
+    ordner = mv.ausfuehren(server, s["id"], mv.modelle_lesen("a:1", 12288), "", 12288, "http://ollama",
+                           tmp_path / "aus", meldungen.append, client=_ollama([]), einst=einst)
+    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
+    assert erg["nachgebessert"] is False and erg["text"].endswith("Ein Drache erschien.")
+    assert erg["selbst"]["unsupported"] == 1  # geprüft wurde trotzdem
+    # Gegenprüfung liefert Fließtext statt JSON → übersprungen, Grund und Antwortanfang bleiben erhalten
+    meldungen = []
+    ordner = mv.ausfuehren(server, s["id"], mv.modelle_lesen("a:1", 12288), "", 12288, "http://ollama",
+                           tmp_path / "aus2", meldungen.append, client=_ollama([], pruefung_kaputt=True))
+    erg = json.loads((ordner / "a_1-ctx12288" / "ergebnis.json").read_text(encoding="utf-8"))
+    assert erg["selbst"]["unchecked"] == 2 and len(erg["warnungen"]) == 1
+    assert erg["warnungen"][0]["schritt"] == "review" and "JSON" in erg["warnungen"][0]["fehler"]
+    assert erg["warnungen"][0]["antwort"].startswith("Hier ist meine Einschätzung")
+    assert any("Warnung (review)" in m for m in meldungen)
+    assert "Warnung (review)" in (ordner / "bericht.md").read_text(encoding="utf-8")

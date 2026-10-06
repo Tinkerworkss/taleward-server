@@ -188,6 +188,8 @@ class Ergebnis:
     richter: dict = field(default_factory=dict)  # Bewertung des fertigen Textes durch den festen Richter
     richter_absaetze: list[dict] = field(default_factory=list)
     pruefliste: list[dict] = field(default_factory=list)  # Vorkommen der Prüfpunkte je Stufe (--pruefliste)
+    warnungen: list[dict] = field(default_factory=list)  # übersprungene Schritte: {schritt, fehler, antwort}
+    ollama: str = ""  # Adresse und Fassung des Ollama, das gerechnet hat
 
     @property
     def token_s(self) -> float:
@@ -238,6 +240,7 @@ class Einstellungen:
     temperatur: float | None = None  # nur für die Szenennotizen
     pruefliste: list[dict] = field(default_factory=list)
     notizen: str = ""  # fertige Szenennotizen statt neuer Extraktion (A/B auf identischen Notizen)
+    nachbesserung: bool = True  # False: Faktenprüfung ohne Umschreiben (--ohne-nachbesserung)
 
 
 def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschlag_ein: dict,
@@ -259,7 +262,9 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
     ablauf = _ablauf_klasse()(k, max_transkript_tokens=max(2000, kontext - 5000),
                               stueck_tokens=max(1500, (kontext - 4000) // 2), schritt=lambda n: melden(f"  … {n}"),
                               gliederung=einst.gliederung, temperatur_notizen=einst.temperatur)
+    ablauf.nachbesserung = einst.nachbesserung
     ablauf.notizen_vorgabe = einst.notizen
+    erg.ollama = ollama_fassung(url, client)
     t0 = time.monotonic()
     try:
         d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=True)
@@ -286,6 +291,7 @@ def modell_laufen(url: str, modell: str, kontext: int, recap_ein: dict, vorschla
         erg.fehlend = list(getattr(ablauf, "letzter_befund_fehlend", []) or [])
         erg.pruefung_vorher = list(getattr(ablauf, "letzte_pruefung_vorher", []) or [])
         erg.pruefung_nachher = list(getattr(ablauf, "letzte_pruefung_nachher", []) or [])
+        erg.warnungen = list(getattr(ablauf, "warnungen", []) or [])
         if einst.pruefliste:
             erg.pruefliste = pruefliste_anwenden(einst.pruefliste, recap_ein, erg)
         k.entladen()
@@ -421,7 +427,8 @@ def _zeit(s: float) -> str:
 
 def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
     zeilen = [f"# Modellvergleich – {info['kampagne']}, Kapitel {info['kapitel']}", "",
-              f"{info['zeilen']} Transkriptzeilen, Aufnahme {_zeit(info['dauer_s'])}. Richter: {richter or '–'}.", "",
+              f"{info['zeilen']} Transkriptzeilen, Aufnahme {_zeit(info['dauer_s'])}. Richter: {richter or '–'}."
+              + (f" Ollama: {ergebnisse[0].ollama}." if ergebnisse and ergebnisse[0].ollama else ""), "",
               "| Modell | Ergebnis | Dauer | Token/s | belegt (selbst) | unbelegt/widersprochen (selbst) | "
               "belegt (Richter) | unbelegt/widersprochen (Richter) | Vorschläge | nachgebessert | Grundlage |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -436,6 +443,10 @@ def bericht_md(info: dict, richter: str, ergebnisse: list[Ergebnis]) -> str:
         if not e.ok:
             zeilen.append(f"Fehler: {e.fehler}")
             continue
+        for w in e.warnungen:
+            zeilen.append(f"Warnung ({w.get('schritt')}): {w.get('fehler')} – Antwortanfang in ergebnis.json")
+        if e.warnungen:
+            zeilen.append("")
         zeilen += [f"### {e.titel}", "", e.text, ""]
         if e.offene_faeden:
             zeilen += ["Offene Fäden:"] + [f"- {f}" for f in e.offene_faeden]
@@ -538,8 +549,9 @@ def speichern(ordner: Path, info: dict, richter: str, ergebnisse: list[Ergebnis]
                                                      "pruefliste": None, "kapitel1": None, "kapitel2": None,
                                                      "fehlend": len(e.fehlend),
                                                      "ergaenzt": sum(1 for f in e.fehlend if f.get("ergaenzt")),
-                                                     "relationen_widersprochen": sum(
-                                                         1 for x in e.relationen_vorher if x.get("urteil") == "widerspricht"),
+                                                     "relationen_hinweise": sum(
+                                                         1 for x in e.relationen_vorher + e.relationen_nachher
+                                                         if x.get("urteil") == "widerspricht"),
                                                      "pruefung_vorher": None, "pruefung_nachher": None,
                                                      "relationen_vorher": None, "relationen_nachher": None,
                                                      "token_s": e.token_s}, ensure_ascii=False, indent=2),
@@ -581,6 +593,15 @@ def modelle_lesen(text: str, kontext: int) -> list[tuple[str, int]]:
     return aus
 
 
+def ollama_fassung(url: str, client: httpx.Client | None = None) -> str:
+    """„http://127.0.0.1:11435 (Ollama 0.35.0)“ – damit im Ergebnis steht, welche Instanz gerechnet hat."""
+    try:
+        v = (client or httpx.Client(timeout=3.0)).get(f"{url.rstrip('/')}/api/version", timeout=3.0).json().get("version")
+    except (httpx.HTTPError, ValueError, AttributeError):
+        v = None
+    return f"{url.rstrip('/')} (Ollama {v})" if v else url.rstrip("/")
+
+
 def ollama_finden(wunsch: str | None, client: httpx.Client | None = None) -> str:
     c = client or httpx.Client(timeout=3.0)
     for url in ([wunsch] if wunsch else list(OLLAMA_ADRESSEN)):
@@ -611,10 +632,13 @@ def ausfuehren(server: Server, session_id: str, modelle: list[tuple[str, int]], 
             if erg.ok:
                 belegt = sum(1 for f in erg.fehlend if f.get("belegt"))
                 ergaenzt = sum(1 for f in erg.fehlend if f.get("ergaenzt"))
-                wider = sum(1 for x in erg.relationen_vorher if x.get("urteil") == "widerspricht")
+                rel = erg.relationen_nachher or erg.relationen_vorher
+                wider = sum(1 for x in rel if x.get("urteil") == "widerspricht")
                 melden(f"  Vollständigkeit: {len(erg.fehlend)} fehlend gemeldet, {belegt} belegt, {ergaenzt} ergänzt; "
-                       f"Relationen (Transkript): {wider} von {len(erg.relationen_vorher)} Absätzen widersprochen; "
+                       f"Relationshinweise (Transkript): {wider} von {len(rel)} Absätzen; "
                        f"Prüfung: {_anteil(erg.selbst, 'supported')} belegt, nachgebessert: {'ja' if erg.nachgebessert else 'nein'}")
+                for w in erg.warnungen:
+                    melden(f"  Warnung ({w.get('schritt')}): {w.get('fehler')} – Antwortanfang in ergebnis.json")
             if erg.pruefliste:
                 for name in STUFEN:
                     werte = [p["vorkommen"][name] for p in erg.pruefliste if p["vorkommen"][name] is not None]

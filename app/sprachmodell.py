@@ -1002,6 +1002,8 @@ class Ablauf:
     letztes_kapitel2: str = ""  # nach der Ergänzung, vor der Nachbesserung
     letzte_relationen_vorher: list = field(default_factory=list)  # Relationsprüfung gegen das Transkript
     letzte_relationen_nachher: list = field(default_factory=list)
+    nachbesserung: bool = True  # Testoption (Modellvergleich): False = Faktenprüfung ohne Umschreiben
+    warnungen: list = field(default_factory=list)  # übersprungene Schritte mit Grund und Antwortanfang (Fehlersuche)
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1314,7 +1316,7 @@ class Ablauf:
             befund = spielleitung_beanstanden(self.pruefen(ein, titel, grundlage, r["text"]), r["text"])
             self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = befund, []
             self.letzte_relationen_vorher, self.letzte_relationen_nachher = [], []
-            if any(b["verdict"] in BEANSTANDET for b in befund):
+            if self.nachbesserung and any(b["verdict"] in BEANSTANDET for b in befund):
                 self._schritt("revision")
                 neu = self.nachbessern(ein, titel, grundlage, r["text"], befund)
                 if neu:
@@ -1327,6 +1329,9 @@ class Ablauf:
             pruefung["paragraphs"] = befund
         except SprachmodellFehler as e:
             log.warning("Gegenprüfung übersprungen: %s", e)
+            # Für die Fehlersuche im Modellvergleich: Grund und Anfang der letzten Modellantwort (bleibt lokal)
+            self.warnungen.append({"schritt": "review", "fehler": str(e),
+                                   "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
             pruefung["paragraphs"] = [{"index": i, "verdict": "unchecked", "note": None, "evidence": []}
                                       for i in range(len(absaetze(r["text"])))]
         return pruefung
