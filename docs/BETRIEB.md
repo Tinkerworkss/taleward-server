@@ -190,7 +190,7 @@ Der Server fragt einmal am Tag bei GitHub nach neuen Fassungen (**Updates**):
 - **Worker-App:** Sie installiert neue Fassungen selbst, sobald sie nichts zu tun hat (abschaltbar in ihren
   Einstellungen). Das KI-Paket folgt immer der Fassung des Servers.
 - **Web-App:** Enthält ein App-Release die Web-Fassung, liefert der Server sie unter `https://<server>/app/` selbst aus.
-  Sonst zeigt „Im Browser öffnen“ auf die zentrale Web-App auf taleward.org, sofern das unter Einstellungen erlaubt ist.
+  Sonst zeigt „Im Browser öffnen“ auf die zentrale Web-App unter app.taleward.org, sofern das unter Einstellungen erlaubt ist.
 - **Server:** siehe [INSTALLATION.md](../INSTALLATION.md#alltag-und-updates).
 - **Freigabe:** Übernommen wird nur eine Fassung, die der Rechteinhaber freigegeben hat. Dazu hängt der Ablauf
   „Freigabe“ an jedes Release eine `freigabe.txt` (Repo, Tag, Commit, SHA-256 jeder Datei) und deren Unterschrift

@@ -5,7 +5,8 @@ from tests.test_anmeldung import VERIFIER, dienst  # noqa: F401 (Fixture)
 from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
 
 API = "/api/v1"
-ZENTRAL = "https://taleward.org"
+ZENTRAL = "https://app.taleward.org"
+ALT = "https://taleward.org"  # bis 0.4.50, übergangsweise weiter erlaubt
 
 
 def vorab(client, herkunft):
@@ -27,6 +28,7 @@ def test_cors_zentral_eigene_und_fremde(client, dbs, admin):  # noqa: F811
     assert r.headers["access-control-allow-origin"] == ZENTRAL
     assert "access-control-allow-origin" not in client.get(f"{API}/info", headers={"Origin": "https://boese.example"}).headers
     assert vorab(client, "https://boese.example").status_code == 400
+    assert vorab(client, ALT).headers["access-control-allow-origin"] == ALT  # Übergang bis zur Umleitung der Website
     # eigene Adresse (für /app/ auf diesem Server)
     speichern(dbs, public_url="https://taleward.meinverein.de")
     dbs.commit()
@@ -35,14 +37,14 @@ def test_cors_zentral_eigene_und_fremde(client, dbs, admin):  # noqa: F811
         "https://taleward.meinverein.de"
     # In der Verwaltung abschalten
     seite = client.get("/verwaltung/einstellungen").text
-    assert "Die Web-App auf https://taleward.org darf diesen Server nutzen" in seite
+    assert "Die Web-App auf https://app.taleward.org darf diesen Server nutzen" in seite
     csrf = admin
     r = client.post("/verwaltung/einstellungen", data={"csrf": csrf, "server_name": "S", "server_operator": "B",
                                                        "min_age": "16", "web_zentral_feld": "1",
                                                        "public_url": "https://taleward.meinverein.de"},
                     follow_redirects=False)
     assert r.status_code == 303
-    assert vorab(client, ZENTRAL).status_code == 400
+    assert vorab(client, ZENTRAL).status_code == 400 and vorab(client, ALT).status_code == 400
     assert not webapp.zentral_erlaubt(dbs)
     # App im Emulator bleibt immer erlaubt
     assert vorab(client, "http://localhost").headers["access-control-allow-origin"] == "http://localhost"
@@ -56,10 +58,16 @@ def test_return_to_fuer_die_web_app(client, world, dbs, dienst):  # noqa: F811
     r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": "https://boese.example/#/auth"},
                    follow_redirects=False)
     assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed"
-    # unbekannter Dienst mit erlaubtem Ziel → Fehler dorthin
-    r = client.get(f"{API}/auth/oidc/apple/start", params={**params, "returnTo": f"{ZENTRAL}/app/#/auth"},
+    # unbekannter Dienst mit erlaubtem Ziel → Fehler dorthin; die zentrale Web-App liegt an der Wurzel
+    r = client.get(f"{API}/auth/oidc/apple/start", params={**params, "returnTo": f"{ZENTRAL}/#/auth"},
                    follow_redirects=False)
-    assert r.headers["location"] == f"{ZENTRAL}/app/#/auth?error=provider_unknown"
+    assert r.headers["location"] == f"{ZENTRAL}/#/auth?error=provider_unknown"
+    r = client.get(f"{API}/auth/oidc/apple/start", params={**params, "returnTo": f"{ALT}/app/#/auth"},
+                   follow_redirects=False)
+    assert r.headers["location"] == f"{ALT}/app/#/auth?error=provider_unknown"  # Übergang
+    r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": f"{ZENTRAL}/app/#/auth"},
+                   follow_redirects=False)
+    assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed"  # /app/ gibt es dort nicht
     # ganzer Ablauf über die eigene Adresse
     ziel = "http://testserver/app/#/auth"
     r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": ziel}, follow_redirects=False)
@@ -153,7 +161,7 @@ def test_einladung_im_browser_zentral_oder_gar_nicht(client, dbs, world):
     from app.einstellungen import meta_schreiben
 
     code = client.post(f"{API}/campaigns/{world['cid']}/invites", headers=world["gm"]).json()["code"]
-    assert f"{ZENTRAL}/app/#/verbinden?invite=" in client.get(f"/einladung/{code}").text
+    assert f"{ZENTRAL}/#/verbinden?invite=" in client.get(f"/einladung/{code}").text
     meta_schreiben(dbs, "web.zentral", "aus")
     dbs.commit()
     assert "Im Browser öffnen" not in client.get(f"/einladung/{code}").text
@@ -169,3 +177,16 @@ def test_weitere_herkuenfte(client, dbs, admin):  # noqa: F811
     assert r.status_code == 303
     assert vorab(client, "https://app.beispiel.de").headers["access-control-allow-origin"] == "https://app.beispiel.de"
     assert "https://app.beispiel.de" in client.get("/verwaltung/einstellungen").text
+
+
+def test_alte_zentrale_in_der_konfiguration_wird_gehoben(dbs, monkeypatch):
+    """Installationen mit CENTRAL_WEB_ORIGIN=https://taleward.org landen ohne Zutun auf app.taleward.org."""
+    from app import webapp
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "central_web_origin", "https://taleward.org")
+    assert webapp.konfigurierte_zentrale() == ZENTRAL and webapp.zentrale_herkunft(dbs) == ZENTRAL
+    assert webapp.rueckwege(dbs, "http://testserver") == {"http://testserver/app/#/auth", f"{ZENTRAL}/#/auth", f"{ALT}/app/#/auth"}
+    monkeypatch.setattr(get_settings(), "central_web_origin", "https://web.anderer-verein.de")
+    assert webapp.zentrale_herkunft(dbs) == "https://web.anderer-verein.de"
+    assert f"{ALT}/app/#/auth" not in webapp.rueckwege(dbs, "http://testserver")  # Übergang nur für die eigene Zentrale

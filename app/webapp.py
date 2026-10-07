@@ -1,8 +1,10 @@
 """Web-Fassung der App (Schnittstelle 0.4.2): CORS für die zentrale Web-App und die eigene Adresse, erlaubte Rückwege
 nach dem Anmelden mit einem Dienst (returnTo).
 
-- Zentrale Web-App: CENTRAL_WEB_ORIGIN (Standard https://taleward.org), in der Verwaltung abschaltbar
-  (server_meta web.zentral = "aus").
+- Zentrale Web-App: CENTRAL_WEB_ORIGIN (Standard https://app.taleward.org, an der Wurzel), in der Verwaltung
+  abschaltbar (server_meta web.zentral = "aus"). Bis 0.4.50 lag sie unter https://taleward.org/app/; diese alte
+  Herkunft bleibt übergangsweise erlaubt (ALTE_ZENTRALE), bis die Website dauerhaft umleitet.
+- Pfad: Die zentrale Web-App liegt an der Wurzel (/#/auth), die Web-App eines Servers und die alte zentrale unter /app/.
 - Eigene Herkunft: aus der öffentlichen Adresse (PUBLIC_URL bzw. Einstellungen).
 - Dazu die festen Herkünfte aus CORS_ORIGINS (App im Emulator, Entwicklung).
 """
@@ -17,6 +19,9 @@ from app.config import get_settings
 from app.einstellungen import angaben, meta_lesen
 
 _cache: dict = {"zeit": 0.0, "herkuenfte": frozenset()}
+
+ALTE_ZENTRALE = "https://taleward.org"  # Übergang: nach dem Umzug der Website (301 auf app.taleward.org) entfernen
+NEUE_ZENTRALE = "https://app.taleward.org"
 
 
 def herkunft(url: str | None) -> str | None:
@@ -34,8 +39,19 @@ def zentral_erlaubt(db: Session) -> bool:
     return bool(get_settings().central_web_origin) and meta_lesen(db, "web.zentral") != "aus"
 
 
+def konfigurierte_zentrale() -> str | None:
+    """CENTRAL_WEB_ORIGIN; Installationen, die noch ausdrücklich die alte Adresse gesetzt haben, heben wir mit."""
+    z = herkunft(get_settings().central_web_origin)
+    return NEUE_ZENTRALE if z == ALTE_ZENTRALE else z
+
+
 def zentrale_herkunft(db: Session) -> str | None:
-    return herkunft(get_settings().central_web_origin) if zentral_erlaubt(db) else None
+    return konfigurierte_zentrale() if zentral_erlaubt(db) else None
+
+
+def zentral_pfad(zentral: str) -> str:
+    """Wo die zentrale Web-App liegt: an der Wurzel – nur die alte Adresse hatte /app/."""
+    return "/app" if zentral == ALTE_ZENTRALE else ""
 
 
 def herkuenfte(db: Session) -> frozenset[str]:
@@ -46,6 +62,8 @@ def herkuenfte(db: Session) -> frozenset[str]:
     zentral = zentrale_herkunft(db)
     if zentral:
         werte.add(zentral)
+        if zentral == NEUE_ZENTRALE:
+            werte.add(ALTE_ZENTRALE)  # Übergang, bis die Website umleitet
     werte |= set(zusaetzliche(db))
     return frozenset(werte)
 
@@ -62,12 +80,13 @@ def browser_link(db: Session, basis: str, einladung: str) -> str | None:
     from app import aktualisierung
 
     if aktualisierung.web_ordner(db) is not None:
-        web = basis.rstrip("/")
+        web, pfad = basis.rstrip("/"), "/app"
     else:
         web = zentrale_herkunft(db)
+        pfad = zentral_pfad(web) if web else ""
     if not web:
         return None
-    return f"{web}/app/#/verbinden?invite=" + quote(einladung, safe="")
+    return f"{web}{pfad}/#/verbinden?invite=" + quote(einladung, safe="")
 
 
 def erlaubte_herkuenfte() -> frozenset[str]:
@@ -86,11 +105,14 @@ def vergessen() -> None:
 
 
 def rueckwege(db: Session, basis: str) -> set[str]:
-    """Erlaubte returnTo-Werte: <eigene Adresse>/app/#/auth und die zentrale Web-App."""
+    """Erlaubte returnTo-Werte: <eigene Adresse>/app/#/auth und die zentrale Web-App (an der Wurzel). Nur feste
+    Ziele, kein offener Umleiter."""
     ziele = {basis.rstrip("/") + "/app/#/auth"}
     zentral = zentrale_herkunft(db)
     if zentral:
-        ziele.add(zentral + "/app/#/auth")
+        ziele.add(zentral + zentral_pfad(zentral) + "/#/auth")
+        if zentral == NEUE_ZENTRALE:
+            ziele.add(ALTE_ZENTRALE + "/app/#/auth")  # Übergang, bis die Website umleitet
     return ziele
 
 

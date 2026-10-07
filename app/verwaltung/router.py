@@ -910,7 +910,7 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
                                          .where(Member.recording_consent_at.is_not(None))) or 0,
                   melden=benachrichtigung.konfig(db), web_zentral=webapp.zentral_erlaubt(db),
                   web_herkuenfte="\n".join(webapp.zusaetzliche(db)),
-                  zentrale_webapp=webapp.herkunft(get_settings().central_web_origin))
+                  zentrale_webapp=webapp.konfigurierte_zentrale())
 
 
 @router.post("/einstellungen", dependencies=[Depends(csrf_pruefen)])
