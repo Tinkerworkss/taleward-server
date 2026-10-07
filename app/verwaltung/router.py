@@ -1250,7 +1250,8 @@ def passwort_seite_setzen(token: str, request: Request, password: str = Form("")
 @seiten.get("/verwaltung/sprache/{code}")
 def sprache_waehlen(code: str, weiter: str = "/verwaltung/"):
     """Sprache der Weboberfläche wählen (Cookie für ein Jahr). Nur Rücksprung auf eigene Seiten."""
-    if not weiter.startswith(("/verwaltung", "/einladung")) or "//" in weiter or "\\" in weiter:
+    if not weiter.startswith(("/verwaltung", "/einladung", "/konto-loeschen", "/datenschutz")) or "//" in weiter \
+            or "\\" in weiter:
         weiter = "/verwaltung/"
     antwort = RedirectResponse(weiter, status_code=303)
     if code in SPRACHEN:
@@ -1310,7 +1311,7 @@ def einbinden(app: FastAPI) -> None:
         if pfad.startswith("/verwaltung/static/"):
             antwort.headers.setdefault("Cache-Control", "public, max-age=86400")  # Stil und Logo dürfen zwischengespeichert werden
             antwort.headers.setdefault("X-Content-Type-Options", "nosniff")
-        elif pfad.startswith(("/verwaltung", "/einladung", "/datenschutz", "/passwort", "/konto/")):
+        elif pfad.startswith(("/verwaltung", "/einladung", "/datenschutz", "/passwort", "/konto/", "/konto-loeschen")):
             for k, v in SICHERHEITS_KOPFZEILEN.items():
                 antwort.headers.setdefault(k, v)
         elif pfad == "/app" or pfad.startswith("/app/"):

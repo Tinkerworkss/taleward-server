@@ -787,6 +787,25 @@ EN: dict[str, str] = {
     'platform.openai.com → Konto anlegen → „Billing“ Guthaben aufladen → „API keys“ → „Create new secret key“ → Schlüssel kopieren.': 'platform.openai.com → create an account → add credit under “Billing” → “API keys” → “Create new secret key” → copy the key.',
     'portal.stackit.cloud → Konto und Projekt anlegen → „AI Model Serving“ → Token erzeugen → Token kopieren. Den genauen Weg beschreibt die STACKIT-Dokumentation (Link unten).': 'portal.stackit.cloud → create an account and project → “AI Model Serving” → create a token → copy the token. The STACKIT documentation (link below) describes the exact path.',
     '{modell} antwortet, aber nicht im JSON-Modus – das kann zu Wiederholungen führen.': '{modell} answers, but not in JSON mode – this can lead to retries.',
+
+    # Konto löschen ohne App (0.4.53)
+    'Benutzername oder Passwort stimmen nicht.': 'Username or password is wrong.',
+    'Bitte das Löschen mit dem Haken bestätigen.': 'Please confirm the deletion with the checkbox.',
+    'Das Konto „{name}“ auf {server} ist gelöscht. Auf allen Geräten bist du abgemeldet.': 'The account “{name}” on {server} has been deleted. You are signed out on all devices.',
+    'Dein Konto mit Anmeldungen, E-Mail-Adresse, Charakterbildern, Charakter-Hintergründen, Zustimmungen und Stimmprofil. Kampagnen, in denen sonst niemand mehr ist, werden mitgelöscht.': 'Your account with sign-ins, e-mail address, character portraits, character backstories, consents and voice profile. Campaigns with nobody else left in them are deleted as well.',
+    'Dieses Konto hat kein Passwort (Anmeldung über einen Dienst). Bitte in der App unter Konto löschen.': 'This account has no password (sign-in via a service). Please delete it in the app under Account.',
+    'Du kannst dein Konto auch in der App löschen: Konto → „Daten und Konto löschen“. Hier geht es ohne App, mit Benutzername und Passwort.': 'You can also delete your account in the app: Account → “Delete data and account”. Here it works without the app, with username and password.',
+    'Für Konten auf {server} ({betreiber}).': 'For accounts on {server} ({betreiber}).',
+    'Ich will dieses Konto endgültig löschen. Das lässt sich nicht rückgängig machen.': 'I want to delete this account for good. This cannot be undone.',
+    'In gemeinsamen Kampagnen bleibt dein Platz als „Gelöschtes Konto“ stehen, damit Kapitel, Anwesenheitslisten und Kommentare stimmig bleiben; der Name deiner Figur bleibt Teil der Geschichte. Der Widerruf deiner Zustimmungen bleibt als Nachweis im Protokoll.': 'In shared campaigns your seat remains as “Deleted account” so that chapters, attendance lists and comments stay consistent; your character’s name remains part of the story. The withdrawal of your consents stays in the log as proof.',
+    'Konten, die sich nur über einen Dienst (Google, Discord, Apple, Microsoft) anmelden, haben kein Passwort. Lösche sie in der App unter Konto, oder wende dich an {kontakt}.': 'Accounts that only sign in via a service (Google, Discord, Apple, Microsoft) have no password. Delete them in the app under Account, or contact {kontakt}.',
+    'Konto endgültig löschen': 'Delete account for good',
+    'Konto gelöscht': 'Account deleted',
+    'Leitest du eine Kampagne als einzige Spielleitung, in der noch andere sind, ernenne dort zuerst in der App eine andere Spielleitung. Vorher solltest du deine Daten in der App exportieren (Konto → „Meine Daten“).': 'If you are the only game master of a campaign that still has other members, first appoint another game master there in the app. Before that, you should export your data in the app (Account → “My data”).',
+    'Sicherungskopien des Servers können das Konto noch einige Tage enthalten; sie werden nur zur Wiederherstellung nach einem Ausfall genutzt.': 'Server backups may still contain the account for a few days; they are only used for recovery after an outage.',
+    'Was bleibt': 'What stays',
+    'Was gelöscht wird': 'What is deleted',
+    'Zu viele Versuche. Bitte in einer Viertelstunde noch einmal.': 'Too many attempts. Please try again in a quarter of an hour.',
 }
 
 WOERTERBUECHER: dict[str, dict[str, str]] = {"en": EN}

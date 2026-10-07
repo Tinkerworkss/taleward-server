@@ -52,10 +52,21 @@ def test_cloud_zusammenfassung_nur_mit_erlaubnis(client, world, dbs):
     assert c["allowCloudSummary"] is False
     info = client.get(f"{API}/info").json()
     assert info["cloudSummary"] is None and info["externalTranscriptionMode"] is None
+    assert info["cloudSummaryInfo"] is None and info["externalTranscriptionInfo"] is None  # 0.4.11
     meta_schreiben(dbs, "llm.art", "api")
     meta_schreiben(dbs, "llm.api_key", "sk-test-1234567890")
     dbs.commit()
-    assert client.get(f"{API}/info").json()["cloudSummary"] == "mistral"
+    info = client.get(f"{API}/info").json()
+    assert info["cloudSummary"] == "mistral"
+    assert info["cloudSummaryInfo"] == {"id": "mistral", "name": "Mistral AI", "region": "eu", "country": "FR"}
+    meta_schreiben(dbs, "llm.api_url", "https://llm.verein.example/v1")  # eigener Anbieter: vorsichtig
+    dbs.commit()
+    info = client.get(f"{API}/info").json()
+    assert info["cloudSummary"] == "llm.verein.example"
+    assert info["cloudSummaryInfo"] == {"id": "llm.verein.example", "name": "llm.verein.example", "region": "non_eu",
+                                        "country": None}
+    meta_schreiben(dbs, "llm.api_url", "https://api.mistral.ai/v1")
+    dbs.commit()
     assert client.patch(f"{API}/campaigns/{w['cid']}", json={"allowCloudSummary": True},
                         headers=w["pl"]).status_code == 403
     r = client.patch(f"{API}/campaigns/{w['cid']}", json={"allowCloudSummary": True}, headers=w["gm"])

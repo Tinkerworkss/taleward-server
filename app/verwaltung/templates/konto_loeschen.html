@@ -1,0 +1,32 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Konto löschen") }}{% endblock %}
+{% block inhalt %}
+<div class="anmeldung">
+  {% include "_kopf_marke.html" %}
+  <div class="karte">
+    {% if fertig %}
+    <h2>{{ _("Konto gelöscht") }}</h2>
+    <p>{{ _("Das Konto „{name}“ auf {server} ist gelöscht. Auf allen Geräten bist du abgemeldet.", name=konto, server=angaben.server_name) }}</p>
+    <p class="hilfe">{{ _("Sicherungskopien des Servers können das Konto noch einige Tage enthalten; sie werden nur zur Wiederherstellung nach einem Ausfall genutzt.") }}</p>
+    {% else %}
+    <h2>{{ _("Konto löschen") }}</h2>
+    <p class="leise">{{ _("Für Konten auf {server} ({betreiber}).", server=angaben.server_name, betreiber=angaben.server_operator) }}</p>
+    <p>{{ _("Du kannst dein Konto auch in der App löschen: Konto → „Daten und Konto löschen“. Hier geht es ohne App, mit Benutzername und Passwort.") }}</p>
+    <h3>{{ _("Was gelöscht wird") }}</h3>
+    <p>{{ _("Dein Konto mit Anmeldungen, E-Mail-Adresse, Charakterbildern, Charakter-Hintergründen, Zustimmungen und Stimmprofil. Kampagnen, in denen sonst niemand mehr ist, werden mitgelöscht.") }}</p>
+    <h3>{{ _("Was bleibt") }}</h3>
+    <p>{{ _("In gemeinsamen Kampagnen bleibt dein Platz als „Gelöschtes Konto“ stehen, damit Kapitel, Anwesenheitslisten und Kommentare stimmig bleiben; der Name deiner Figur bleibt Teil der Geschichte. Der Widerruf deiner Zustimmungen bleibt als Nachweis im Protokoll.") }}</p>
+    <p class="hilfe">{{ _("Leitest du eine Kampagne als einzige Spielleitung, in der noch andere sind, ernenne dort zuerst in der App eine andere Spielleitung. Vorher solltest du deine Daten in der App exportieren (Konto → „Meine Daten“).") }}</p>
+    {% if fehler %}<div class="meldung meldung--fehler" role="alert">{{ fehler }}</div>{% endif %}
+    <form class="formular" method="post" action="/konto-loeschen">
+      <label>{{ _("Benutzername") }} <input type="text" name="username" value="{{ konto }}" autocomplete="username" required maxlength="64" autofocus></label>
+      <label>{{ _("Passwort") }} <input type="password" name="password" autocomplete="current-password" required maxlength="500"></label>
+      <label class="haken"><input type="checkbox" name="bestaetigt" value="1" required> {{ _("Ich will dieses Konto endgültig löschen. Das lässt sich nicht rückgängig machen.") }}</label>
+      <div><button class="tw-btn tw-btn--danger" type="submit">{{ _("Konto endgültig löschen") }}</button></div>
+    </form>
+    <p class="hilfe">{{ _("Konten, die sich nur über einen Dienst (Google, Discord, Apple, Microsoft) anmelden, haben kein Passwort. Lösche sie in der App unter Konto, oder wende dich an {kontakt}.", kontakt=angaben.server_contact or angaben.server_operator) }}</p>
+    {% endif %}
+  </div>
+  <p class="leise zentriert">{% if angaben.privacy_policy_url %}<a href="{{ angaben.privacy_policy_url }}" rel="noopener">{{ _("Datenschutz") }}</a> · {% endif %}{% include "_sprachen.html" %}</p>
+</div>
+{% endblock %}

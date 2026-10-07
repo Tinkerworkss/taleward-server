@@ -62,9 +62,19 @@ class ServerInfoOut(ApiModel):
     external_transcription: str | None
     external_transcription_mode: Literal["fallback", "primary"] | None = None
     cloud_summary: str | None = None
+    cloud_summary_info: "CloudProviderInfoOut | None" = None  # 0.4.11
+    external_transcription_info: "CloudProviderInfoOut | None" = None  # 0.4.11
     auth_providers: list["AuthProviderOut"] = []
     password_reset: bool = False
     audio_retention: "AudioRetentionOut | None" = None
+
+
+class CloudProviderInfoOut(ApiModel):
+    """0.4.11: Wer Text (Zusammenfassung) bzw. Aufnahmen (Transkription) verarbeitet – ohne sprachabhängige Wörter."""
+    id: str
+    name: str
+    region: Literal["eu", "non_eu"]
+    country: str | None = None
 
 
 class AudioRetentionOut(ApiModel):

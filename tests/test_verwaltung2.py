@@ -18,8 +18,10 @@ def ui_texte() -> set[str]:
         texte |= set(re.findall(r'_\(\s*"((?:[^"\\]|\\.)*)"', s)) | set(re.findall(r"_\(\s*'((?:[^'\\]|\\.)*)'", s))
     r = pathlib.Path("app/verwaltung/router.py").read_text()
     texte |= set(re.findall(r'(?:\b_|tr\(request\))\(\s*"((?:[^"\\]|\\.)*)"', r))
+    for datei in ("app/verwaltung/assistent.py", "app/routers/anmeldung.py"):
+        a = pathlib.Path(datei).read_text()
+        texte |= set(re.findall(r'(?:\b_|tr\(request\))\(\s*"((?:[^"\\]|\\.)*)"', a))
     a = pathlib.Path("app/verwaltung/assistent.py").read_text()
-    texte |= set(re.findall(r'(?:\b_|tr\(request\))\(\s*"((?:[^"\\]|\\.)*)"', a))
     schritte = re.search(r"SCHRITTE = \[(.*?)\]", a, re.S).group(1)
     texte |= set(re.findall(r'\("\w+", "([^"]+)"\)', schritte))
     e = pathlib.Path("app/einrichtung.py").read_text()

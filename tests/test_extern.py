@@ -70,7 +70,9 @@ def wartende_session(client, w, dbs, tmp_path, erlauben=True, stunden=25, source
 
 
 def test_info_und_statushinweis(client, world, dbs, tmp_path):
-    assert client.get(f"{API}/info").json()["externalTranscription"] == "mistral"
+    info = client.get(f"{API}/info").json()
+    assert info["externalTranscription"] == "mistral"
+    assert info["externalTranscriptionInfo"] == {"id": "mistral", "name": "Mistral AI", "region": "eu", "country": "FR"}
     s = wartende_session(client, world, dbs, tmp_path, stunden=1)
     msg = status(client, world["gm"], s["id"])["message"]
     assert "Mistral" in msg and "Uhr" in msg

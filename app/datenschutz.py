@@ -70,7 +70,8 @@ def vorlage(db: Session, hosting: str = "") -> str:
           f"- Aufnahmen: werden gelöscht, sobald sie in Text umgewandelt sind, spätestens nach {tage} Tagen.")
          + " Kurze Hörproben je Stimme bleiben nur, bis die Spielleitung die Stimmen zugeordnet hat.",
          "- Stimmprofile: bis zum Widerruf; Löschen entfernt auch alles daraus Gelernte.",
-         "- Konto und Inhalte: bis zur Löschung des Kontos (in der App möglich). Beiträge zu gemeinsamen "
+         "- Konto und Inhalte: bis zur Löschung des Kontos (in der App oder unter /konto-loeschen auf diesem Server). "
+         "Beiträge zu gemeinsamen "
          "Kampagnen (Kommentare, Zusammenfassungen) bleiben danach ohne Namen als „Gelöschtes Konto“ stehen.",
          "- Sicherungskopien: bis zu [14] Tage.",
          "## Wer die Daten sonst erhält"]
@@ -108,7 +109,8 @@ def vorlage(db: Session, hosting: str = "") -> str:
     t += ["## Deine Rechte",
           "Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, "
           "Datenübertragbarkeit und Widerspruch sowie auf Widerruf erteilter Einwilligungen. In der App kannst du "
-          "deine Daten selbst exportieren und dein Konto löschen. Für alles andere wende dich an "
+          "deine Daten selbst exportieren und dein Konto löschen (auch ohne App unter /konto-loeschen). Für alles andere "
+          "wende dich an "
           f"{kontakt}. Du kannst dich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren, "
           "z. B. [zuständige Landesbehörde].",
           "## Mindestalter",

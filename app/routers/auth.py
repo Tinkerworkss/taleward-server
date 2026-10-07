@@ -23,6 +23,7 @@ def info(request: Request, db: Session = Depends(get_db)):
     from app import aktualisierung, anmeldedienste, aufbewahrung, mail
     from app.einstellungen import oeffentliche_adresse
     from app.einrichtung import betriebsart
+    from app import cloudanbieter
     from app.einstellungen import llm_konfig
     from app.services import cloud_anbieter
 
@@ -33,6 +34,7 @@ def info(request: Request, db: Session = Depends(get_db)):
     # Neueste App: von Hand in der Verwaltung eingetragen, sonst die freigegebene Fassung aus den Updates
     # (Datei liegt auf diesem Server – die App fragt nie direkt bei GitHub)
     neu = None if a.app_latest_version else aktualisierung.angebot(db, "app", oeffentliche_adresse(db, request))
+    cloud = cloud_anbieter(k) if k.art == "api" and k.api_key else None
     return schemas.ServerInfoOut(
         name=a.server_name, operator=a.server_operator, contact=a.server_contact, api_version=API_VERSION,
         registration=registrierung(db), auth_methods=["password"] + (["oidc"] if dienste else []),
@@ -43,7 +45,9 @@ def info(request: Request, db: Session = Depends(get_db)):
         release_notes=a.app_release_notes or (neu and neu["notes"]),
         app_download_sha256=neu and neu.get("sha256"), app_download_size_bytes=neu and neu.get("sizeBytes"),
         external_transcription_mode=(("primary" if betriebsart(db) == "cloud" else "fallback") if extern else None),
-        cloud_summary=cloud_anbieter(k) if k.art == "api" and k.api_key else None,
+        cloud_summary=cloud,
+        cloud_summary_info=cloudanbieter.info_fuer(cloud, k.api_url),
+        external_transcription_info=cloudanbieter.info_fuer(extern),
         auth_providers=[schemas.AuthProviderOut(id=d, name=anmeldedienste.DIENSTE[d]["name"]) for d in dienste],
         password_reset=mail.kann_senden(db) and mail_adresse(db) is not None,
         audio_retention=schemas.AudioRetentionOut(**aufbewahrung.lesen(db).api()),

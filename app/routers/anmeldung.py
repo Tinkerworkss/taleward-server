@@ -163,6 +163,57 @@ def email_bestaetigen(token: str, request: Request, db: Session = Depends(get_db
     return _seite(request, db, gueltig=True, fertig=True, token="", adresse=adresse, konto=u.username, fehler="")
 
 
+# ---------------------------------------------------------------- Konto löschen ohne App (Seite)
+@seiten.get("/konto-loeschen", response_class=HTMLResponse)
+def konto_loeschen_seite(request: Request, db: Session = Depends(get_db)):
+    """Öffentliche Seite, die der Store-Eintrag verlangt: Konto ohne App löschen, mit Benutzername und Passwort.
+    Bestätigungslogik wie DELETE /me (app/konto.py); Fehlversuche zählen wie beim Anmelden."""
+    from app.verwaltung.router import _seite as seite
+
+    return seite(request, "konto_loeschen.html", None, db, fertig=False, konto="", fehler="")
+
+
+@seiten.post("/konto-loeschen", response_class=HTMLResponse)
+def konto_loeschen_ausfuehren(request: Request, username: str = Form(""), password: str = Form(""),
+                              bestaetigt: str = Form(""), db: Session = Depends(get_db)):
+    from app.begrenzung import ZAEHLER
+    from app.konto import entfernen
+    from app.routers.auth import LOGIN_FENSTER, LOGIN_JE_ADRESSE, LOGIN_JE_NAME
+    from app.verwaltung.router import _seite as seite, sprache_von, tr
+
+    _ = tr(request)
+    name = username.strip().lower()[:64]
+    adresse = request.client.host if request.client else "?"
+
+    def fehler(text: str, status: int = 400) -> HTMLResponse:
+        db.rollback()
+        antwort = seite(request, "konto_loeschen.html", None, db, fertig=False, konto=name, fehler=text)
+        antwort.status_code = status
+        return antwort
+
+    if not bestaetigt:
+        return fehler(_("Bitte das Löschen mit dem Haken bestätigen."))
+    if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
+            ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
+        return fehler(_("Zu viele Versuche. Bitte in einer Viertelstunde noch einmal."), 429)
+    user = db.scalar(select(User).where(User.username == name)) if name else None
+    methode = None
+    if user is not None:
+        methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id, AuthMethod.kind == "password"))
+    if user is not None and methode is None and not user.setup_account:
+        return fehler(_("Dieses Konto hat kein Passwort (Anmeldung über einen Dienst). Bitte in der App unter Konto löschen."))
+    if not verify_password(password, methode.secret if methode else None) or user.setup_account:
+        ZAEHLER.zaehlen(f"login-adr:{adresse}", LOGIN_FENSTER)
+        ZAEHLER.zaehlen(f"login-name:{name}", LOGIN_FENSTER)
+        return fehler(_("Benutzername oder Passwort stimmen nicht."), 401)
+    try:
+        entfernen(db, user)
+    except errors.ApiError as e:
+        return fehler(e.message(sprache_von(request)), 409)
+    db.commit()
+    return seite(request, "konto_loeschen.html", None, db, fertig=True, konto=name, fehler="")
+
+
 # ---------------------------------------------------------------- Passwort setzen oder ändern
 @router.put("/me/password", status_code=204)
 def passwort_aendern(body: schemas.PasswordChangeRequest, request: Request, user: User = Depends(current_user),

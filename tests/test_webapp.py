@@ -6,7 +6,7 @@ from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
 
 API = "/api/v1"
 ZENTRAL = "https://app.taleward.org"
-ALT = "https://taleward.org"  # bis 0.4.50, übergangsweise weiter erlaubt
+ALT = "https://taleward.org"  # bis 0.4.50; wird nur noch in der Konfiguration gehoben
 
 
 def vorab(client, herkunft):
@@ -28,7 +28,7 @@ def test_cors_zentral_eigene_und_fremde(client, dbs, admin):  # noqa: F811
     assert r.headers["access-control-allow-origin"] == ZENTRAL
     assert "access-control-allow-origin" not in client.get(f"{API}/info", headers={"Origin": "https://boese.example"}).headers
     assert vorab(client, "https://boese.example").status_code == 400
-    assert vorab(client, ALT).headers["access-control-allow-origin"] == ALT  # Übergang bis zur Umleitung der Website
+    assert vorab(client, ALT).status_code == 400  # alte Adresse seit der Umleitung der Website nicht mehr erlaubt
     # eigene Adresse (für /app/ auf diesem Server)
     speichern(dbs, public_url="https://taleward.meinverein.de")
     dbs.commit()
@@ -64,7 +64,7 @@ def test_return_to_fuer_die_web_app(client, world, dbs, dienst):  # noqa: F811
     assert r.headers["location"] == f"{ZENTRAL}/#/auth?error=provider_unknown"
     r = client.get(f"{API}/auth/oidc/apple/start", params={**params, "returnTo": f"{ALT}/app/#/auth"},
                    follow_redirects=False)
-    assert r.headers["location"] == f"{ALT}/app/#/auth?error=provider_unknown"  # Übergang
+    assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed"  # alte Adresse nicht mehr
     r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": f"{ZENTRAL}/app/#/auth"},
                    follow_redirects=False)
     assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed"  # /app/ gibt es dort nicht
@@ -186,7 +186,7 @@ def test_alte_zentrale_in_der_konfiguration_wird_gehoben(dbs, monkeypatch):
 
     monkeypatch.setattr(get_settings(), "central_web_origin", "https://taleward.org")
     assert webapp.konfigurierte_zentrale() == ZENTRAL and webapp.zentrale_herkunft(dbs) == ZENTRAL
-    assert webapp.rueckwege(dbs, "http://testserver") == {"http://testserver/app/#/auth", f"{ZENTRAL}/#/auth", f"{ALT}/app/#/auth"}
+    assert webapp.rueckwege(dbs, "http://testserver") == {"http://testserver/app/#/auth", f"{ZENTRAL}/#/auth"}
     monkeypatch.setattr(get_settings(), "central_web_origin", "https://web.anderer-verein.de")
     assert webapp.zentrale_herkunft(dbs) == "https://web.anderer-verein.de"
-    assert f"{ALT}/app/#/auth" not in webapp.rueckwege(dbs, "http://testserver")  # Übergang nur für die eigene Zentrale
+    assert f"{ALT}/app/#/auth" not in webapp.rueckwege(dbs, "http://testserver")

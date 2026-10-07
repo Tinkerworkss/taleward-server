@@ -155,6 +155,10 @@ leite heute“): Der Server schlägt die Zuordnung der Stimmen dann selbst vor.
   unter **Einstellungen → Öffentliche Adresse des Servers**. Unter **Anmeldung** steht für jeden Dienst eine kurze
   Anleitung mit der Rückleitungsadresse, die du beim Dienst einträgst. Apple braucht ein Apple-Entwicklerkonto.
   Jeder eingeschaltete Dienst gehört in den Datenschutzhinweis; die Vorlage ergänzt ihn automatisch.
+- **Konto löschen ohne App:** Unter `https://<server>/konto-loeschen` kann jede Person ihr Konto mit Benutzername und
+  Passwort selbst löschen (gleiche Regeln wie in der App: einzige Spielleitung einer Kampagne muss erst übergeben;
+  der Platz bleibt als „Gelöschtes Konto“ stehen). Die Datenschutzseite verweist darauf. Diese Adresse ist auch der
+  Link für App-Stores, die eine Lösch-Seite verlangen.
 - **App-Versionen:** Unter Einstellungen lassen sich eine Mindestversion und ein Download-Link festlegen. Ältere Apps
   werden dann gesperrt, bis sie aktualisiert sind.
 

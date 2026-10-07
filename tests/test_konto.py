@@ -3,6 +3,7 @@ import io
 import json
 
 import pytest
+from sqlalchemy import select
 
 from tests.test_verwaltung import admin  # noqa: F401 (Fixture)
 
@@ -265,3 +266,36 @@ def test_verwaltung_registrierung(client, dbs, admin):  # noqa: F811
                     follow_redirects=False)
     assert r.status_code == 303
     assert client.get(f"{API}/info").json()["registration"] == "closed"
+
+
+def test_konto_loeschen_seite_ohne_app(client, world, dbs):
+    """Öffentliche Seite /konto-loeschen (Store-Eintrag): Benutzername + Passwort + Haken, Fehler wie DELETE /me."""
+    from app.models import User
+
+    w = world
+    seite = client.get("/konto-loeschen")
+    assert seite.status_code == 200 and "Konto löschen" in seite.text and "Gelöschtes Konto" in seite.text
+    assert seite.headers.get("content-security-policy")  # Sicherheits-Kopfzeilen wie auf den anderen Seiten
+    url = "/konto-loeschen"
+    # ohne Haken, falsches Passwort, Konto einer einzigen SL
+    r = client.post(url, data={"username": "ben", "password": "geheim123"})
+    assert r.status_code == 400 and "Haken" in r.text
+    r = client.post(url, data={"username": "ben", "password": "falsch", "bestaetigt": "1"})
+    assert r.status_code == 401 and "stimmen nicht" in r.text
+    r = client.post(url, data={"username": "anna", "password": "geheim123", "bestaetigt": "1"})
+    assert r.status_code == 409 and "einzige Spielleitung" in r.text
+    assert client.post(f"{API}/auth/login", json={"username": "anna", "password": "geheim123"}).status_code == 200
+    # Spieler: klappt, danach ist das Konto weg und „Gelöschtes Konto“ bleibt
+    r = client.post(url, data={"username": "Ben", "password": "geheim123", "bestaetigt": "1"})
+    assert r.status_code == 200 and "Konto gelöscht" in r.text
+    dbs.expire_all()
+    assert dbs.scalar(select(User).where(User.username == "ben")) is None
+    assert client.get(f"{API}/me", headers=w["pl"]).status_code == 401
+    c = client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()
+    assert next(x for x in c["members"] if x["id"] == w["pl_member"])["displayName"] == "Gelöschtes Konto"
+    # unbekannter Name zählt als Fehlversuch, verrät aber nichts
+    r = client.post(url, data={"username": "niemand", "password": "geheim123", "bestaetigt": "1"})
+    assert r.status_code == 401 and "stimmen nicht" in r.text
+    # Datenschutzseite verweist auf die Seite; Sprachumschalter führt zurück
+    r = client.get("/verwaltung/sprache/en", params={"weiter": "/konto-loeschen"}, follow_redirects=False)
+    assert r.headers["location"] == "/konto-loeschen"
