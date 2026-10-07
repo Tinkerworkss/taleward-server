@@ -1,0 +1,46 @@
+{% extends "basis.html" %}
+{% block titel %}{{ _("Probelauf") }}{% endblock %}
+{% block kopfzeilen %}{% if p.zustand == "läuft" %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block inhalt %}
+<h1>{{ _("Probelauf") }}</h1>
+<p class="leise"><a href="/verwaltung/zusammenfassung">{{ _("Zurück zur Zusammenfassung") }}</a></p>
+<div class="karte">
+  <h2>{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}</h2>
+  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
+  {% if p.zustand == "läuft" %}
+    <p><span class="marke-status marke-status--warten">{{ _("läuft") }}</span> {% if schritt %}{{ _("Schritt") }}: {{ _(schritt) }}{% endif %} · <span class="leise">{{ _("Die Seite lädt alle 10 Sekunden neu. Ein Kapitel aus einer langen Runde braucht einige Minuten.") }}</span></p>
+  {% elif p.zustand == "fehler" %}
+    <p><span class="marke-status marke-status--fehler">{{ _("fehlgeschlagen") }}</span> {{ p.fehler }}</p>
+  {% else %}
+    <p><span class="marke-status marke-status--gut">{{ _("fertig") }}</span> {{ _("{n} Aufrufe", n=p.aufrufe) }} · {{ _("{ein} Tokens ein, {aus} aus", ein=p.tokens_ein, aus=p.tokens_aus) }} · {{ _("etwa {cent} Cent", cent=p.kosten_cent) }} · {{ (p.dauer_s // 60)|int }} min {{ (p.dauer_s % 60)|int }} s</p>
+    {% for w in p.warnungen %}<p class="hilfe">{{ _("Hinweis") }} ({{ w.schritt }}): {{ w.fehler }}</p>{% endfor %}
+    {% if dateien %}<p>{{ _("Dateien") }}: {% for n in dateien %}<a href="/verwaltung/probelauf/{{ p.id }}/{{ n }}">{{ n }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  {% endif %}
+</div>
+{% if p.zustand == "fertig" %}
+<div class="karte">
+  <h2>{{ p.titel }}</h2>
+  {% for absatz in p.text.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
+  {% if p.offene_faeden %}<h3>{{ _("Offene Fäden") }}</h3><ul>{% for f in p.offene_faeden %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+</div>
+<div class="karte">
+  <h2>{{ _("Vorschläge") }} ({{ p.vorschlaege|length }})</h2>
+  {% for v in p.vorschlaege %}
+    <p><strong>{{ v.title }}</strong> <span class="leise">({{ v.entryType or v.entry_type }} · {{ v.action }} · {{ v.suggestedVisibility or v.suggested_visibility }})</span><br>{{ v.detail }}</p>
+  {% else %}<p class="leise">{{ _("Keine Vorschläge.") }}</p>{% endfor %}
+</div>
+{% if p.pruefung and p.pruefung.paragraphs %}
+<div class="karte">
+  <h2>{{ _("Prüfung") }}</h2>
+  {% for a in p.pruefung.paragraphs %}<p><span class="leise">{{ _("Absatz {n}", n=a.index + 1) }}:</span> {{ a.verdict }}{% if a.note %} – {{ a.note }}{% endif %}</p>{% endfor %}
+</div>
+{% endif %}
+{% endif %}
+<details><summary>{{ _("Probelauf löschen") }}</summary>
+  <p class="hilfe">{{ _("Entfernt Ergebnis und Dateien dieses Probelaufs. Die Runde selbst ist davon nicht betroffen.") }}</p>
+  <form method="post" action="/verwaltung/probelauf/{{ p.id }}/loeschen">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="tw-btn tw-btn--danger tw-btn--klein" type="submit">{{ _("Endgültig löschen") }}</button>
+  </form>
+</details>
+{% endblock %}

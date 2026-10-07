@@ -310,7 +310,8 @@ def usage(
     return schemas.UsageOut(
         month=month, sessions=len(sessions),
         audio_seconds=int(round(sum(z.audio_seconds for z in zeilen if z.kind == "transcription"))),
-        documents=len(documents), cost_estimate_cents=sum(z.cost_cents for z in zeilen), billed_to="gm",
+        documents=len(documents), billed_to="gm",
+        cost_estimate_cents=sum(z.cost_cents for z in zeilen if z.kind != "probe"),  # Probeläufe zahlt der Betreiber
     )
 
 

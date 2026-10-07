@@ -75,6 +75,39 @@
   <p class="hilfe">{{ _("Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.") }}</p>
 </div>
 
+<div class="karte">
+  <h2>{{ _("Probelauf") }}</h2>
+  <p class="hilfe">{{ _("Kapitel und Vorschläge für eine Runde mit Abschrift neu schreiben lassen, ohne die Runde zu verändern – zum Vergleichen von Modellen und Fassungen. Rechnet mit der Einstellung oben (Cloud-API oder Testmodus) direkt auf dem Server, auch ohne Worker. Kosten zählen zum Monatslimit, nicht zur Kampagne.") }}</p>
+  {% if runden %}
+  <form class="formular" method="post" action="/verwaltung/probelauf" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ _("Runde") }}
+      <select name="session" required>
+        {% for r in runden %}<option value="{{ r.id }}">{{ r.kampagne }} · {{ _("Kapitel {n}", n=r.kapitel) }}{% if r.titel %} · {{ r.titel }}{% endif %} · {{ _("{n} Zeilen", n=r.zeilen) }}</option>{% endfor %}
+      </select></label>
+    <label>{{ _("Abschrift aus Datei (optional)") }} <input type="file" name="abschrift" accept=".txt,text/plain">
+      <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
+    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
+  </form>
+  {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift auf diesem Server.") }}</p>{% endif %}
+  {% if proben %}
+  <table>
+    <thead><tr><th>{{ _("Gestartet") }}</th><th>{{ _("Runde") }}</th><th>{{ _("Modell") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Kosten") }}</th></tr></thead>
+    <tbody>
+    {% for p in proben %}
+      <tr>
+        <td data-label="{{ _('Gestartet') }}"><a href="/verwaltung/probelauf/{{ p.id }}">{{ p.gestartet[:16]|replace("T", " ") }}</a></td>
+        <td data-label="{{ _('Runde') }}">{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}{% if p.quelle != "Runde" %}<br><span class="leise">{{ p.quelle }}</span>{% endif %}</td>
+        <td data-label="{{ _('Modell') }}" class="leise">{{ p.modell }}</td>
+        <td data-label="{{ _('Zustand') }}">{% if p.zustand == "fertig" %}<span class="marke-status marke-status--gut">{{ _("fertig") }}</span>{% elif p.zustand == "läuft" %}<span class="marke-status marke-status--warten">{{ _("läuft") }}</span>{% else %}<span class="marke-status marke-status--fehler">{{ _("fehlgeschlagen") }}</span>{% endif %}</td>
+        <td data-label="{{ _('Kosten') }}" class="leise">{{ _("{cent} Cent", cent=p.kosten_cent) if p.zustand == "fertig" else "–" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
 <div class="karte tabelle-huelle">
   <h2>{{ _("Worker mit Sprachmodell") }}</h2>
   <table>

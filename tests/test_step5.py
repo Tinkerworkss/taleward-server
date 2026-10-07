@@ -367,3 +367,69 @@ def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
     assert "Die Gruppe ritt nach Rabenfels." in r.output and "3 Aufrufe" in r.output  # Recap, Vollständigkeit, Vorschläge
     assert api.aufrufe[0]["body"]["model"] == "mistral-small-latest"
     assert dbs.query(Recap).count() == 0
+
+
+def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa: F811
+    """Probelauf: Kapitel und Vorschläge für eine Runde mit Abschrift, ohne die Runde zu ändern; Kosten im
+    Verbrauchsprotokoll, aber nicht bei der Kampagne; wahlweise mit hochgeladener Abschrift."""
+    import time as _time
+
+    from app import kapitelprobe as probelauf
+    from app.models import GameSession, UsageLog
+
+    w = world
+    s = transkribiert(client, w, dbs, tmp_path)
+    url = "/verwaltung/zusammenfassung"
+    basis = {"csrf": admin, "art": "api", "anbieter": "mistral", "api_modell": "mistral-large-latest",
+             "lokal_modell": "auto", "lokal_kontext": "12288", "api_key": "sk-abcdefghijklmnop1234"}
+    assert client.post(url, data=basis, follow_redirects=False).status_code == 303
+    seite = client.get(url).text
+    assert "Probelauf starten" in seite and s["id"] in seite
+    # ohne Runde → Hinweis
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": ""}, follow_redirects=False)
+    assert r.status_code == 303 and "ok=probe_runde" in r.headers["location"]
+    # mit Runde → läuft im Hintergrund, Seite zeigt den Stand
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/verwaltung/probelauf/")
+    pid = r.headers["location"].rsplit("/", 1)[1]
+    for _ in range(100):
+        p = probelauf.lesen(pid)
+        if p.zustand != "läuft":
+            break
+        _time.sleep(0.1)
+    assert p.zustand == "fertig", p.fehler
+    assert p.text and isinstance(p.vorschlaege, list) and p.aufrufe >= 2 and p.kosten_cent >= 0 and p.quelle == "Runde"
+    seite = client.get(f"/verwaltung/probelauf/{pid}").text
+    assert p.titel in seite and "fertig" in seite and "recap.txt" in seite
+    assert client.get(f"/verwaltung/probelauf/{pid}/recap.txt").text.startswith(p.titel)
+    assert client.get(f"/verwaltung/probelauf/{pid}/../stand.json").status_code in (404, 400)
+    assert client.get(f"/verwaltung/probelauf/{pid}/stand.json").status_code == 404  # nur bekannte Dateien
+    # Runde unverändert, Kosten beim Betreiber, nicht bei der Kampagne
+    dbs.expire_all()
+    assert dbs.get(GameSession, s["id"]).state == "awaiting_speakers"
+    log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="probe").one()
+    assert log.engine == "external" and log.model == "mistral-large-latest"
+    nutzung = client.get(f"{API}/campaigns/{w['cid']}/usage", headers=w["gm"]).json()
+    assert nutzung["costEstimateCents"] == 0
+    # Abschrift aus Datei ersetzt die Abschrift der Runde
+    datei = "[0:00:05] Spielleitung: Ihr steht vor dem Tor von Rabenfels.\n[0:00:12] Mira: Ich klopfe.\n" * 3
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]},
+                    files={"abschrift": ("eigene.txt", datei.encode(), "text/plain")}, follow_redirects=False)
+    pid2 = r.headers["location"].rsplit("/", 1)[1]
+    for _ in range(100):
+        p2 = probelauf.lesen(pid2)
+        if p2.zustand != "läuft":
+            break
+        _time.sleep(0.1)
+    assert p2.zustand == "fertig" and p2.quelle == "eigene.txt" and p2.zeilen == 6
+    assert client.get(f"/verwaltung/probelauf/{pid2}/transkript.txt").text == datei
+    # Übersicht listet beide, Löschen räumt auf
+    seite = client.get(url).text
+    assert seite.count("/verwaltung/probelauf/") >= 2 and "eigene.txt" in seite
+    r = client.post(f"/verwaltung/probelauf/{pid2}/loeschen", data={"csrf": admin}, follow_redirects=False)
+    assert r.status_code == 303 and probelauf.lesen(pid2) is None
+    assert client.get(f"/verwaltung/probelauf/{pid2}").status_code == 404
+    # lokales Modell eingestellt → verständlicher Hinweis statt Lauf
+    client.post(url, data={**basis, "art": "lokal"})
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+    assert "ok=probe_lokal" in r.headers["location"]

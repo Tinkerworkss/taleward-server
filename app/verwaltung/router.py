@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import jwt
-from fastapi import APIRouter, Depends, FastAPI, Form, Request
+from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -73,6 +73,12 @@ def tr(request: Request):
 
 # Meldungen nach einer Aktion (?ok=…) – der Text ist zugleich der Übersetzungsschlüssel
 MELDUNGEN = {
+    "probe_runde": "Bitte eine Runde mit Abschrift wählen.",
+    "probe_datei": "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.",
+    "probe_lokal": "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.",
+    "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",
+    "probe_leer": "Diese Runde hat keine Abschrift.",
+    "probe_geloescht": "Probelauf gelöscht.",
     "konto_angelegt": "Konto angelegt.",
     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
     "verwalter": "Verwalter-Recht geändert.",
@@ -701,7 +707,77 @@ def _llm_anzeige(db: Session) -> dict:
 @router.get("/zusammenfassung", response_class=HTMLResponse)
 def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db),
                           fehler: str = ""):
-    return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler)
+    from app import kapitelprobe as probelauf
+
+    return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
+                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10])
+
+
+def _runden_mit_abschrift(db: Session) -> list[dict]:
+    from app.models import Campaign, GameSession, TranscriptSegment
+
+    zeilen = db.execute(select(GameSession, Campaign.title, func.count(TranscriptSegment.id))
+                        .join(Campaign, Campaign.id == GameSession.campaign_id)
+                        .join(TranscriptSegment, TranscriptSegment.session_id == GameSession.id)
+                        .group_by(GameSession.id).order_by(GameSession.created_at.desc()).limit(30)).all()
+    return [{"id": s.id, "kampagne": titel, "kapitel": s.number, "titel": s.title, "zeilen": n} for s, titel, n in zeilen]
+
+
+# ---------- Probelauf der Zusammenfassung ----------
+@router.post("/probelauf", dependencies=[Depends(csrf_pruefen)])
+async def probelauf_starten(request: Request, session: str = Form(""), abschrift: UploadFile | None = File(None),
+                            user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    """Kapitel und Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern."""
+    from app import kapitelprobe as probelauf
+    from app.models import GameSession
+
+    _ = tr(request)
+    s = db.get(GameSession, session.strip()) if session.strip() else None
+    if s is None:
+        return _zurueck("/verwaltung/zusammenfassung", "probe_runde")
+    text, name = None, None
+    if abschrift is not None and abschrift.filename:
+        roh = await abschrift.read()
+        if len(roh) > 5_000_000:
+            return _zurueck("/verwaltung/zusammenfassung", "probe_datei")
+        text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
+    try:
+        p = probelauf.starten(db, s, text, name)
+    except ValueError as e:
+        return _zurueck("/verwaltung/zusammenfassung", f"probe_{e}")
+    return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)
+
+
+@router.get("/probelauf/{probe_id}", response_class=HTMLResponse)
+def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    from app import kapitelprobe as probelauf
+
+    p = probelauf.lesen(probe_id)
+    if p is None:
+        raise errors.not_found()
+    schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
+                "proposals": "Vorschläge"}
+    return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
+                  dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
+
+
+@router.get("/probelauf/{probe_id}/{name}")
+def probelauf_datei(probe_id: str, name: str, user: User = Depends(verwalter)):
+    from app import kapitelprobe as probelauf
+
+    pfad = probelauf.datei(probe_id, name)
+    if pfad is None:
+        raise errors.not_found()
+    return FileResponse(pfad, filename=f"probe-{probe_id[:8]}-{name}",
+                        media_type="application/json" if name.endswith(".json") else "text/plain; charset=utf-8")
+
+
+@router.post("/probelauf/{probe_id}/loeschen", dependencies=[Depends(csrf_pruefen)])
+def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter)):
+    from app import kapitelprobe as probelauf
+
+    probelauf.loeschen(probe_id)
+    return _zurueck("/verwaltung/zusammenfassung", "probe_geloescht")
 
 
 @router.post("/zusammenfassung", dependencies=[Depends(csrf_pruefen)])
