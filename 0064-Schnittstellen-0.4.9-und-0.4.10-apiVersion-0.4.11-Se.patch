@@ -1,0 +1,1198 @@
+From 53b4eea8cfb05600c1e718af7d59e5e36e1e2650 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 23:17:50 +0200
+Subject: [PATCH] Schnittstellen 0.4.9 und 0.4.10, apiVersion 0.4.11 (Server
+ 0.4.54)
+
+0.4.9 - Figuren ausgetretener Spieler: Verlaesst ein Spieler die Kampagne oder loescht sein Konto, bekommt die SL
+den Hinweis character_orphaned mit seinen pc-Eintraegen. POST /entries/{id}/to-npc macht daraus einen NSC
+(Entry.formerHolderMemberId, nur fuer die SL), POST /entries/{id}/assign gibt die Figur einem aktiven Spieler ohne
+eigene Figur (Name und Kurzbeschreibung gehen ans Mitglied, PUT .../members/me/character verknuepft spaeter denselben
+Eintrag). Der Hinweis raeumt sich selbst ab, auch wenn die Person zurueckkommt. 429 too_many_requests bei
+/auth/login und /campaigns/join (vorher 401 bzw. 409 mit demselben code).
+
+0.4.10 - POST /sessions/{id}/resummarize schreibt ein Kapitel in awaiting_review aus der vorhandenen Abschrift neu
+(Entwurf und Entscheidungen fallen weg, SL-Notiz, Korrekturen und Zuordnung bleiben). GET .../speakers liefert nach
+der Bestaetigung assignedMemberId; PUT .../speakers geht auch in awaiting_review und schreibt das Kapitel neu
+(falscher Zustand jetzt 409 wrong_state). GET /invites/{code} ohne Anmeldung: Kampagnentitel, bei Platz-Einladungen
+der Figurenname, Ablauf; 404 invite_invalid, begrenzt je Adresse wie der Beitritt, Cache-Control no-store.
+
+YAML 0.4.11 unveraendert aus dem App-Repo uebernommen (contract/), apiVersion 0.4.11. Migration fuer
+entries.former_holder_member_id.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/errors.py                                 |  18 ++
+ app/figuren.py                                | 106 +++++++++
+ app/konto.py                                  |   4 +
+ app/models.py                                 |   2 +
+ app/routers/auth.py                           |   5 +-
+ app/routers/campaigns.py                      |  29 ++-
+ app/routers/entries.py                        |  28 ++-
+ app/routers/pruefung.py                       |  39 +++-
+ app/routers/sessions.py                       |  23 +-
+ app/schemas.py                                |  16 +-
+ app/services.py                               |   1 +
+ contract/session-chronik-api.yaml             | 221 +++++++++++++++++-
+ docs/ARCHITEKTUR.md                           |   8 +
+ .../versions/c3d9e1f7a2b5_figuren_0_4_9.py    |  27 +++
+ pyproject.toml                                |   2 +-
+ tests/contract.py                             |   2 +
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_eingaben_pruefen.py                |   4 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_schnittstelle_0410.py              | 193 +++++++++++++++
+ tests/test_step1b.py                          |   2 +-
+ tests/test_step2b.py                          |   2 +-
+ tests/test_umzug_048.py                       |   2 +-
+ tests/test_verwaltung2.py                     |   2 +-
+ tests/test_webapp.py                          |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 28 files changed, 707 insertions(+), 41 deletions(-)
+ create mode 100644 app/figuren.py
+ create mode 100644 migrations/versions/c3d9e1f7a2b5_figuren_0_4_9.py
+ create mode 100644 tests/test_schnittstelle_0410.py
+
+diff --git a/app/errors.py b/app/errors.py
+index 630d82c..926d12d 100644
+--- a/app/errors.py
++++ b/app/errors.py
+@@ -179,4 +179,22 @@ MESSAGES: dict[str, tuple[str, str]] = {
+     "wrong_state": ("Korrigieren geht nur, solange das Kapitel zur Prüfung bereitliegt.",
+                     "Corrections are only possible while the chapter is waiting for review."),
++    "wrong_state.speakers": ("Stimmen lassen sich nur zuordnen, solange das Kapitel auf „Stimmen zuordnen“ oder auf die "
++                             "Prüfung wartet.",
++                             "Voices can only be assigned while the chapter is waiting for voice assignment or review."),
++    "wrong_state.resummarize": ("Neu schreiben geht nur, solange das Kapitel zur Prüfung bereitliegt.",
++                                "A chapter can only be rewritten while it is waiting for review."),
++    "transcript_missing": ("Für dieses Kapitel gibt es keine Abschrift mehr. Bitte die Aufnahme neu hochladen.",
++                           "There is no transcript for this chapter any more. Please upload the recording again."),
++    # Figuren ausgetretener Spieler (0.4.9)
++    "holder_active": ("Diese Figur wird noch gespielt. Erst wenn die Person die Kampagne verlassen hat, kann sie ein "
++                      "NSC werden.",
++                      "This character is still being played. It can become an NPC once the person has left the "
++                      "campaign."),
++    "not_a_character": ("Dieser Eintrag ist keine Figur eines ausgetretenen Spielers.",
++                        "This entry is not the character of a player who has left."),
++    "member_has_character": ("Diese Person spielt schon eine Figur in dieser Kampagne.",
++                             "This person already plays a character in this campaign."),
++    "not_a_player": ("Die Figur kann nur einem aktiven Spieler dieser Kampagne gegeben werden.",
++                     "The character can only be given to an active player of this campaign."),
+     "retranscribe_limit": ("Diese Aufnahme wurde schon zweimal neu transkribiert – mehr geht nicht.",
+                            "This recording has already been transcribed again twice – no more attempts."),
+diff --git a/app/figuren.py b/app/figuren.py
+new file mode 100644
+index 0000000..ef8cb09
+--- /dev/null
++++ b/app/figuren.py
+@@ -0,0 +1,106 @@
++"""Figuren ausgetretener Spieler (Schnittstelle 0.4.9).
++
++Verlässt ein Spieler die Kampagne (oder löscht sein Konto), bleibt seine Figur als Geschichte in der Kampagne: der
++pc-Eintrag mit Name, Kurzbeschreibung, Erwähnungen und Kapiteln. Die SL bekommt einen Hinweis (character_orphaned)
++und entscheidet: als NSC weiterführen (to-npc) oder einem anderen Spieler geben (assign). Die Person selbst –
++Hintergrund, Kommentare, Zustimmungen, Kennung des Charakters, Porträt – geht dabei nicht mit.
++
++Der Hinweis räumt sich selbst ab, sobald keiner seiner Einträge mehr eine Figur ohne aktiven Halter ist (nach
++to-npc, assign oder wenn die Person zurückkommt).
++"""
++from __future__ import annotations
++
++import json
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app import errors
++from app.db import utcnow
++from app.models import Entry, GmNotice, Member
++
++HINWEIS = "character_orphaned"
++
++
++def _halter_weg(db: Session, e: Entry) -> bool:
++    """pc ohne aktiven Halter: kein Halter, Halter hat verlassen oder Konto gelöscht. Ein offener Platz aus einem
++    Umzug zählt nicht als weg – der wartet auf seine Person."""
++    if e.holder_member_id is None:
++        return True
++    h = db.get(Member, e.holder_member_id)
++    return h is None or h.left_at is not None or h.deleted_at is not None
++
++
++def verwaist_melden(db: Session, m: Member) -> None:
++    """Beim Verlassen bzw. Kontolöschen: Hinweis an die SL mit den pc-Einträgen des Spielers (nur Rolle player)."""
++    if m.role != "player":
++        return
++    ids = sorted(db.scalars(select(Entry.id).where(Entry.campaign_id == m.campaign_id, Entry.type == "pc",
++                                                   Entry.holder_member_id == m.id)))
++    if not ids:
++        return
++    vorhanden = db.scalar(select(GmNotice).where(GmNotice.campaign_id == m.campaign_id, GmNotice.code == HINWEIS,
++                                                 GmNotice.member_id == m.id))
++    if vorhanden is not None:  # z. B. erst verlassen, später Konto gelöscht
++        vorhanden.entry_ids = json.dumps(sorted(set(json.loads(vorhanden.entry_ids or "[]")) | set(ids)))
++        return
++    db.add(GmNotice(campaign_id=m.campaign_id, code=HINWEIS, member_id=m.id, entry_ids=json.dumps(ids)))
++
++
++def aufraeumen(db: Session, campaign_id: str) -> None:
++    """Hinweise entfernen, deren Einträge alle nicht mehr pc ohne aktiven Halter sind."""
++    db.flush()
++    for n in db.scalars(select(GmNotice).where(GmNotice.campaign_id == campaign_id, GmNotice.code == HINWEIS)):
++        offen = False
++        for i in json.loads(n.entry_ids or "[]"):
++            e = db.get(Entry, i)
++            if e is not None and e.type == "pc" and _halter_weg(db, e):
++                offen = True
++                break
++        if not offen:
++            db.delete(n)
++
++
++def _geaendert(e: Entry) -> None:
++    jetzt = utcnow()
++    e.updated_at = jetzt
++    if e.visibility == "public":
++        e.public_changed_at = jetzt
++
++
++def zu_nsc(db: Session, e: Entry) -> None:
++    """POST /entries/{id}/to-npc. Name, Kurzbeschreibung, Status, Sichtbarkeit und Erwähnungen bleiben."""
++    if e.type != "pc":
++        raise errors.conflict("not_a_character")
++    if not _halter_weg(db, e):
++        raise errors.conflict("holder_active")
++    e.former_holder_member_id = e.holder_member_id
++    e.type, e.holder_member_id, e.pc_character_id, e.status = "npc", None, None, None
++    _geaendert(e)
++    aufraeumen(db, e.campaign_id)
++
++
++def geben(db: Session, e: Entry, member_id: str) -> None:
++    """POST /entries/{id}/assign: Figur einem aktiven Spieler ohne eigene Figur geben. Name und Kurzbeschreibung
++    gehen an das Mitglied; die Kennung des Charakters bleibt leer, bis die Person die Figur in ihre Sammlung
++    übernimmt (PUT …/members/me/character verknüpft dann diesen Eintrag)."""
++    passt = (e.type == "npc" and e.former_holder_member_id is not None) or (e.type == "pc" and _halter_weg(db, e))
++    if not passt:
++        raise errors.conflict("not_a_character")
++    ziel = db.get(Member, member_id)
++    if ziel is None or ziel.campaign_id != e.campaign_id or not ziel.aktiv or ziel.role != "player" \
++            or ziel.open_seat:
++        raise errors.conflict("not_a_player")
++    hat = db.scalar(select(Entry.id).where(Entry.campaign_id == e.campaign_id, Entry.type == "pc",
++                                           Entry.holder_member_id == ziel.id, Entry.id != e.id).limit(1))
++    if hat is not None:
++        raise errors.conflict("member_has_character")
++    e.type, e.holder_member_id, e.pc_character_id, e.status = "pc", ziel.id, None, None
++    e.former_holder_member_id = None
++    if ziel.id in e.hidden_member_ids:  # wer die Figur spielt, sieht ihren Eintrag
++        e.hidden_from = [h for h in e.hidden_from if h.member_id != ziel.id]
++    ziel.character_name = e.name[:200]
++    ziel.character_summary = (e.summary or "").strip()[:1000] or None
++    _geaendert(e)
++    aufraeumen(db, e.campaign_id)
++
+diff --git a/app/konto.py b/app/konto.py
+index f74f353..a0f8452 100644
+--- a/app/konto.py
++++ b/app/konto.py
+@@ -246,5 +246,9 @@ def entfernen(db: Session, u: User) -> None:
+     db.flush()
+     jetzt = utcnow()
++    from app import figuren
++
+     for m in db.scalars(select(Member).where(Member.user_id == u.id)):
++        if m.left_at is None:
++            figuren.verwaist_melden(db, m)  # 0.4.9: Hinweis an die SL, was aus der Figur wird
+         set_recording_consent(db, m, False)  # Widerruf bleibt als Nachweis im Protokoll
+         set_move_consent(db, m, False)  # 0.4.8
+diff --git a/app/models.py b/app/models.py
+index 1b46556..5bb233c 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -278,4 +278,6 @@ class Entry(Base):
+     origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+     origin_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    # 0.4.9: NSC aus der Figur eines ausgetretenen Mitglieds – nur die SL sieht, von wem
++    former_holder_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+ 
+     mentions: Mapped[list["EntryMention"]] = relationship(cascade="all, delete-orphan")
+diff --git a/app/routers/auth.py b/app/routers/auth.py
+index df22f81..8a944a0 100644
+--- a/app/routers/auth.py
++++ b/app/routers/auth.py
+@@ -14,5 +14,5 @@ from app.security import create_token, verify_password
+ from app.services import user_out
+ 
+-API_VERSION = "0.4.8"
++API_VERSION = "0.4.11"
+ 
+ router = APIRouter(tags=["Auth"])
+@@ -67,6 +67,5 @@ def login(body: schemas.LoginRequest, request: Request, db: Session = Depends(ge
+     if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
+             ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
+-        # 401 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
+-        raise errors.ApiError(401, "too_many_requests")
++        raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 401 mit demselben code)
+     user = db.scalar(select(User).where(User.username == name))
+     methode = None
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index 086418c..5fb4003 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -61,4 +61,24 @@ JOIN_JE_KONTO, JOIN_JE_ADRESSE = 10, 30  # falsche Codes im Fenster
+ 
+ 
++@router.get("/invites/{code}", response_model=schemas.InvitePreviewOut)
++def invite_preview(code: str, request: Request, response: Response, db: Session = Depends(get_db)):
++    """0.4.10: Vorschau ohne Anmeldung – Kampagnentitel und bei Platz-Einladungen der Name der Figur. Mehr nicht.
++    Fehlversuche zählen je Adresse wie beim Beitritt."""
++    from app.begrenzung import ZAEHLER
++
++    response.headers["Cache-Control"] = "no-store"
++    adresse = request.client.host if request.client else "?"
++    if ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
++        raise errors.ApiError(429, "too_many_requests")
++    inv = db.get(Invite, normalize_invite_code(code[:64]))
++    c = db.get(Campaign, inv.campaign_id) if inv is not None else None
++    platz = db.get(Member, inv.member_id) if inv is not None and inv.member_id else None
++    if inv is None or c is None or inv.expires_at <= utcnow() or (inv.member_id and (platz is None or not platz.open_seat)):
++        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
++        raise errors.ApiError(404, "invite_invalid")
++    return schemas.InvitePreviewOut(campaign_title=c.title, expires_at=inv.expires_at,
++                                    seat_character_name=platz.character_name if platz else None)
++
++
+ @router.post("/campaigns/join", response_model=schemas.CampaignOut, response_model_exclude_unset=True)
+ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(current_user),
+@@ -69,6 +89,5 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
+     if ZAEHLER.voll(f"join-konto:{user.id}", JOIN_JE_KONTO, JOIN_FENSTER) or \
+             ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
+-        # 409 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
+-        raise errors.ApiError(409, "too_many_requests")
++        raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 409 mit demselben code)
+     inv = db.get(Invite, normalize_invite_code(body.code))
+     if inv is None or inv.expires_at <= utcnow():
+@@ -106,4 +125,7 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
+             me = frueher
+             me.left_at, me.role, me.joined_at = None, "player", utcnow()
++            from app import figuren
++
++            figuren.aufraeumen(db, c.id)  # 0.4.9: die Figur hat ihren Halter wieder
+             me.chronicle_seen_at = me.bible_seen_at = None
+             if body.character is not None and me.character_id not in (None, body.character.id.lower()):
+@@ -262,4 +284,7 @@ def remove_member(campaignId: str, memberId: str, user: User = Depends(current_u
+     target.character_backstory = None
+     target.left_at = utcnow()
++    from app import figuren
++
++    figuren.verwaist_melden(db, target)  # 0.4.9: Hinweis an die SL, was aus der Figur wird
+     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))
+     db.execute(DateVote.__table__.delete().where(DateVote.member_id == target.id))
+diff --git a/app/routers/entries.py b/app/routers/entries.py
+index 980b791..6fbadbd 100644
+--- a/app/routers/entries.py
++++ b/app/routers/entries.py
+@@ -4,5 +4,5 @@ from sqlalchemy import select
+ from sqlalchemy.orm import Session, selectinload
+ 
+-from app import errors, schemas
++from app import errors, figuren, schemas
+ from app.access import current_user, load_entry, require_gm, require_member
+ from app.db import get_db
+@@ -85,2 +85,28 @@ def delete_entry(entryId: str, user: User = Depends(current_user), db: Session =
+     db.commit()
+     return Response(status_code=204)
++
++
++# ---------- Figuren ausgetretener Spieler (0.4.9) ----------
++@router.post("/entries/{entryId}/to-npc", tags=["Charaktere"], response_model=schemas.EntryOut,
++             response_model_exclude_unset=True)
++def entry_to_npc(entryId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    """Figur eines ausgetretenen Spielers als NSC weiterführen (nur SL)."""
++    acc = load_entry(db, entryId, user)
++    require_gm(acc.member)
++    figuren.zu_nsc(db, acc.entry)
++    db.commit()
++    db.refresh(acc.entry)
++    return entry_out(acc.entry, True)
++
++
++@router.post("/entries/{entryId}/assign", tags=["Charaktere"], response_model=schemas.EntryOut,
++             response_model_exclude_unset=True)
++def entry_assign(entryId: str, body: schemas.EntryAssignIn, user: User = Depends(current_user),
++                 db: Session = Depends(get_db)):
++    """Figur einem anderen Spieler geben (nur SL)."""
++    acc = load_entry(db, entryId, user)
++    require_gm(acc.member)
++    figuren.geben(db, acc.entry, body.member_id)
++    db.commit()
++    db.refresh(acc.entry)
++    return entry_out(acc.entry, True)
+diff --git a/app/routers/pruefung.py b/app/routers/pruefung.py
+index 4cbbbed..a36430c 100644
+--- a/app/routers/pruefung.py
++++ b/app/routers/pruefung.py
+@@ -53,6 +53,9 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
+         raise errors.forbidden()
+     s = acc.session
+-    if s.state != "awaiting_speakers":
+-        raise errors.conflict("invalid_state", "invalid_state.speakers")
++    nachtraeglich = s.state == "awaiting_review"  # 0.4.10: Zuordnung ändern und Kapitel neu schreiben
++    if s.state != "awaiting_speakers" and not nachtraeglich:
++        raise errors.conflict("wrong_state", "wrong_state.speakers")
++    if nachtraeglich and not _hat_abschrift(db, s):
++        raise errors.conflict("transcript_missing")
+     stimmen = {sp.id: sp for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}
+     ids = [z.speaker_id for z in body]
+@@ -81,6 +84,34 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
+         sp.assigned_guest_name = gast.get(sp.id)
+     db.flush()
+-    stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
+-    queue.stimmen_vergessen(db, s)
++    if not nachtraeglich:  # nachträglich sind Hörproben und Abdrücke längst gelöscht
++        stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
++        queue.stimmen_vergessen(db, s)
++    queue.create_summarize_job(db, s)
++    db.commit()
++    return processing_status(db, s, sprache(request))
++
++
++def _hat_abschrift(db: Session, s: GameSession) -> bool:
++    from app.models import TranscriptSegment
++
++    return db.scalar(select(TranscriptSegment.id).where(TranscriptSegment.session_id == s.id).limit(1)) is not None
++
++
++@router.post("/sessions/{sessionId}/resummarize", tags=["Sessions"], status_code=202,
++             response_model=schemas.ProcessingStatusOut)
++def resummarize(sessionId: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    """0.4.10: Kapitel aus der vorhandenen Abschrift neu schreiben (nur SL, nur awaiting_review).
++
++    Recap, offene Fäden, Vorschläge und Prüfteil entstehen neu (Speichern ersetzt sie); Bearbeitungen am Entwurf und
++    Entscheidungen zu Vorschlägen fallen damit weg. SL-Notiz, Korrekturen, Stimmenzuordnung, Anwesenheit und
++    Kommentare bleiben. Kosten und Cloud-Freigabe wie bei jeder Zusammenfassung."""
++    acc = load_session(db, sessionId, user)
++    if not acc.is_gm:
++        raise errors.forbidden()
++    s = acc.session
++    if s.state != "awaiting_review":
++        raise errors.conflict("wrong_state", "wrong_state.resummarize")
++    if not _hat_abschrift(db, s):
++        raise errors.conflict("transcript_missing")
+     queue.create_summarize_job(db, s)
+     db.commit()
+diff --git a/app/routers/sessions.py b/app/routers/sessions.py
+index 87a6a6f..aba928c 100644
+--- a/app/routers/sessions.py
++++ b/app/routers/sessions.py
+@@ -138,13 +138,22 @@ def session_seen(sessionId: str, user: User = Depends(current_user), db: Session
+ 
+ # ---------- Stimmen ----------
+-@router.get("/sessions/{sessionId}/speakers", tags=["Stimmen"], response_model=list[schemas.SpeakerOut])
++BESTAETIGT = ("summarizing", "awaiting_review", "published", "failed")
++
++
++@router.get("/sessions/{sessionId}/speakers", tags=["Stimmen"], response_model=list[schemas.SpeakerOut],
++            response_model_exclude_unset=True)
+ def list_speakers(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    """Auch nach der Bestätigung (0.4.10): dann mit assignedMemberId; vorher fehlt das Feld."""
+     s = load_session_gm(db, sessionId, user).session
+-    return [
+-        schemas.SpeakerOut(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
+-                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
+-                           assigned_guest_name=sp.assigned_guest_name)
+-        for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position))
+-    ]
++    bestaetigt = s.state in BESTAETIGT
++    aus = []
++    for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position)):
++        daten = dict(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
++                     suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
++                     assigned_guest_name=sp.assigned_guest_name)
++        if bestaetigt:
++            daten["assigned_member_id"] = sp.assigned_member_id
++        aus.append(schemas.SpeakerOut(**daten))
++    return aus
+ 
+ 
+diff --git a/app/schemas.py b/app/schemas.py
+index f27ee8e..376d5be 100644
+--- a/app/schemas.py
++++ b/app/schemas.py
+@@ -70,4 +70,11 @@ class ServerInfoOut(ApiModel):
+ 
+ 
++class InvitePreviewOut(ApiModel):
++    """0.4.10: Vorschau einer Einladung ohne Anmeldung – nur, was /einladung/{code} ohnehin zeigt."""
++    campaign_title: str
++    seat_character_name: str | None = None
++    expires_at: datetime | None = None
++
++
+ class CloudProviderInfoOut(ApiModel):
+     """0.4.11: Wer Text (Zusammenfassung) bzw. Aufnahmen (Transkription) verarbeitet – ohne sprachabhängige Wörter."""
+@@ -249,5 +256,5 @@ class CampaignOut(CampaignSummaryOut):
+ class GmNoticeOut(ApiModel):
+     id: str
+-    code: Literal["hidden_entries_for_newcomer", "seat_claimed"]
++    code: Literal["hidden_entries_for_newcomer", "seat_claimed", "character_orphaned"]
+     member_id: str | None
+     entry_ids: list[str]
+@@ -471,4 +478,5 @@ class SpeakerOut(ApiModel):
+     source: Literal["intro_round", "voice_match", "discord_track", "none"]
+     assigned_guest_name: str | None = None  # 0.4.7
++    assigned_member_id: str | None = None  # 0.4.10: erst nach der Bestätigung, vorher weggelassen
+ 
+ 
+@@ -577,4 +585,10 @@ class EntryOut(ApiModel):
+     origin_entry_id: str | None = None
+     origin_version: int | None = None
++    former_holder_member_id: str | None = None  # 0.4.9: nur für die SL, sonst weggelassen
++
++
++class EntryAssignIn(ApiModel):
++    """0.4.9: Figur einem anderen Spieler geben."""
++    member_id: str = Field(max_length=36)
+ 
+ 
+diff --git a/app/services.py b/app/services.py
+index 4acd803..f8f775b 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -450,4 +450,5 @@ def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.En
+         daten["gm_notes"] = e.gm_notes
+         daten["hidden_from_member_ids"] = sorted(e.hidden_member_ids)
++        daten["former_holder_member_id"] = e.former_holder_member_id  # 0.4.9
+     if is_gm or (viewer_id is not None and viewer_id == e.origin_member_id):
+         daten.update(origin_character_id=e.origin_character_id, origin_entry_id=e.origin_entry_id,
+diff --git a/contract/session-chronik-api.yaml b/contract/session-chronik-api.yaml
+index e8dc989..5665367 100644
+--- a/contract/session-chronik-api.yaml
++++ b/contract/session-chronik-api.yaml
+@@ -2,10 +2,10 @@ openapi: 3.1.0
+ info:
+   title: Taleward API
+-  version: 0.4.8
++  version: 0.4.11
+   description: |
+     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
+ 
+     Grundregeln:
+-    - Alle Endpunkte außer /auth/login, /auth/register und /info erfordern ein Bearer-Token.
++    - Alle Endpunkte außer /auth/login, /auth/register, /info und /invites/{code} erfordern ein Bearer-Token.
+     - Rollen gelten pro Kampagne: `gm` (Spielleitung) oder `player`.
+     - Der SERVER setzt den Spoilerschutz durch: Einträge mit `visibility: gm_only`,
+@@ -39,8 +39,9 @@ info:
+       („Update im Play Store“). Beide mit demselben Schlüssel signiert. Kompatibilitätsfenster: Die App unterstützt
+       apiVersion ab einer festen Untergrenze (mindestens 12 Monate zurück); ältere Server gelten als „veraltet“.
+-    - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser unter `/app/` – zentral auf der Taleward-Website
+-      (`https://taleward.org/app/`) und optional auf jedem Server (`https://<server>/app/`). Sie spricht direkt mit
++    - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser – zentral unter eigener Adresse `https://app.taleward.org/`
++      (an der Wurzel; bis Oktober 2026 `https://taleward.org/app/`, das künftig dorthin umleitet) und optional auf
++      jedem Server (`https://<server>/app/`). Dieselbe Web-Fassung läuft an beiden Pfaden. Sie spricht direkt mit
+       den Vereinsservern, die Website sieht keine Inhalte. Server müssen dafür CORS erlauben: Herkunft der zentralen
+-      Website (Voreinstellung, in der Verwaltung abschaltbar) und die eigene; erlaubte Header mindestens Authorization,
++      Web-App (Voreinstellung, in der Verwaltung abschaltbar) und die eigene; erlaubte Header mindestens Authorization,
+       Content-Type, Accept-Language, X-Taleward-App, X-Chunk-SHA256; Methoden GET, POST, PUT, PATCH, DELETE.
+       Voraussetzung: HTTPS (Browser blockieren http-Server von einer https-Seite aus).
+@@ -146,4 +147,19 @@ info:
+     `seat_claimed`. characterId/characterVersion sehen nur noch die Person selbst und die SL. Transkripte,
+     Hörproben, Stimmprofile, Einwilligungen, Vorschläge und der Prüfteil des Recaps verlassen den Server nie.
++    Änderungen in 0.4.9 (Figuren ausgetretener Spieler, Begrenzung von Fehlversuchen): Die Figur einer Person, die
++    die Kampagne verlassen hat (oder deren Konto gelöscht ist), bleibt als Geschichte in der Kampagne. Die SL macht
++    daraus einen NSC (POST /entries/{id}/to-npc) oder gibt sie einem anderen Spieler (POST /entries/{id}/assign);
++    Hinweis an die SL beim Austritt: gmNotices `character_orphaned`; Entry.formerHolderMemberId (nur SL). Die Person
++    selbst (Hintergrund, Kommentare, Zustimmungen, characterId, Porträt) geht nicht mit. 429 `too_many_requests` auch
++    bei POST /auth/login und POST /campaigns/join. Einladungscodes ab Server 0.4.37 länger (WORT-12345678).
++    Änderungen in 0.4.10 (Kapitel neu schreiben, Stimmen nachträglich prüfen, Vorschau einer Einladung): Die SL lässt
++    ein Kapitel im Zustand awaiting_review aus der vorhandenen Abschrift neu schreiben (POST
++    /sessions/{id}/resummarize). Speaker.assignedMemberId zeigt die bestätigte Zuordnung; GET …/speakers geht auch nach
++    der Bestätigung, PUT …/speakers in awaiting_review ändert die Zuordnung und schreibt das Kapitel neu. GET
++    /invites/{code} nennt vor dem Beitritt ohne Anmeldung den Kampagnentitel (begrenzt wie der Beitritt).
++    Änderungen in 0.4.11 (Wer schreibt die Kapitel): ServerInfo.cloudSummaryInfo und
++    ServerInfo.externalTranscriptionInfo (CloudProviderInfo: Name, EU oder nicht, Land). Die App zeigt allen Mitgliedern
++    einer Kampagne mit allowCloudSummary bzw. allowExternalTranscription, wer die Kapitel schreibt bzw. transkribiert,
++    und nennt es im Einwilligungstext. Fehlen die Felder (ältere Server), zeigt die App nur die Kennung.
+ 
+ servers:
+@@ -177,4 +193,8 @@ paths:
+       tags: [Auth]
+       summary: Anmelden
++      description: |
++        Ab 0.4.9: Fehlversuche sind begrenzt (10 je Benutzername und 30 je Adresse in 15 Minuten) → 429
++        `too_many_requests` mit lesbarer message. Server 0.4.37 vor YAML 0.4.9 antwortet dafür noch mit 401 und
++        code `too_many_requests`; die App richtet sich nach dem code, nicht nach dem Status.
+       security: []
+       requestBody:
+@@ -201,4 +221,5 @@ paths:
+         "401": { $ref: "#/components/responses/Unauthorized" }
+         "400": { $ref: "#/components/responses/BadRequest" }
++        "429": { $ref: "#/components/responses/TooManyRequests" }
+ 
+   /info:
+@@ -319,7 +340,7 @@ paths:
+           schema: { type: string }
+           description: |
+-            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://taleward.org/app/#/auth`. Der Server
++            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://app.taleward.org/#/auth`. Der Server
+             hängt `?ticket=…&serverId=…` bzw. `?error=…` wörtlich an den Wert an (auch hinter `#/auth`). Erlaubt sind nur
+-            fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App; sonst Rückweg mit
++            fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App (`<Herkunft>/#/auth`); sonst Rückweg mit
+             error=return_to_not_allowed über taleward://auth.
+       responses:
+@@ -628,4 +649,7 @@ paths:
+       tags: [Kampagnen]
+       summary: Mit Einladungscode beitreten (Rolle player)
++      description: |
++        Ab 0.4.9: falsche Codes sind begrenzt (10 je Konto und 30 je Adresse in 15 Minuten) → 429 `too_many_requests`.
++        Server 0.4.37 vor YAML 0.4.9 antwortet dafür noch mit 409 und code `too_many_requests`.
+       requestBody:
+         required: true
+@@ -636,5 +660,8 @@ paths:
+               required: [code]
+               properties:
+-                code: { type: string, example: "RABE-4821" }
++                code:
++                  type: string
++                  example: "RABE-48213759"
++                  description: "Wort, Bindestrich, Ziffern. Ab Server 0.4.37 acht Ziffern, ältere Codes (vier Ziffern) gelten bis zum Ablauf."
+                 characterName: { type: string, description: "Freier Name ohne Sammlung (Gäste, ältere Apps)" }
+                 character:
+@@ -660,4 +687,31 @@ paths:
+         "401": { $ref: "#/components/responses/Unauthorized" }
+         "409": { $ref: "#/components/responses/Conflict" }
++        "429": { $ref: "#/components/responses/TooManyRequests" }
++
++  /invites/{code}:
++    parameters:
++      - name: code
++        in: path
++        required: true
++        schema: { type: string }
++        description: Einladungscode, Groß- und Kleinschreibung egal (wie bei POST /campaigns/join)
++    get:
++      tags: [Kampagnen]
++      summary: Vorschau einer Einladung, ohne Anmeldung (ab 0.4.10)
++      description: |
++        Damit die App vor dem Beitritt sagen kann, wohin es geht („Du trittst ‚Die leisen Wasser' bei“), auch wenn die
++        Person noch kein Konto auf diesem Server hat. Liefert nur, was die Einladungsseite /einladung/{code} ohnehin
++        zeigt: Kampagnentitel und – bei einer Platz-Einladung – den Namen der Figur. Keine Mitglieder, keine Inhalte.
++        Unbekannte, abgelaufene oder aufgebrauchte Codes → 404 mit code `invite_invalid`. Fehlversuche zählen zur selben Begrenzung wie
++        POST /campaigns/join (je Adresse) → 429 `too_many_requests`. Antwort mit `Cache-Control: no-store`.
++      security: []
++      responses:
++        "200":
++          description: Gültige Einladung
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/InvitePreview" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "429": { $ref: "#/components/responses/TooManyRequests" }
+ 
+   /campaigns/{campaignId}:
+@@ -1551,4 +1605,29 @@ paths:
+         "409": { $ref: "#/components/responses/Conflict" }
+ 
++  /sessions/{sessionId}/resummarize:
++    parameters: [{ $ref: "#/components/parameters/sessionId" }]
++    post:
++      tags: [Sessions]
++      summary: Kapitel aus der vorhandenen Abschrift neu schreiben (nur SL, ab 0.4.10)
++      description: |
++        Nur im Zustand `awaiting_review`. Schreibt Recap, offene Fäden, Vorschläge und Prüfteil neu – aus der
++        vorhandenen Abschrift mit den aktuellen Korrekturen und der aktuellen Stimmenzuordnung, mit dem Stand des
++        Servers von jetzt (z. B. nach einem Update). Kein neues Hochladen, das Audio wird nicht gebraucht.
++        Verworfen werden: Bearbeitungen am Recap-Entwurf und alle Entscheidungen zu Vorschlägen dieses Kapitels
++        (sie wirken ohnehin erst beim Veröffentlichen). Bleiben: SL-Notiz, Korrekturen, Stimmenzuordnung,
++        Anwesenheit, Kommentare. Die Session geht nach `summarizing`, danach wieder `awaiting_review`.
++        Kostet wie eine neue Zusammenfassung (Usage) und folgt der Cloud-Freigabe der Kampagne.
++        Andere Zustände → 409 `wrong_state`; Abschrift fehlt → 409 `transcript_missing`.
++      responses:
++        "202":
++          description: Neu eingereiht
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ProcessingStatus" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++
+   /sessions/{sessionId}/uploads:
+     parameters: [{ $ref: "#/components/parameters/sessionId" }]
+@@ -1691,5 +1770,8 @@ paths:
+       tags: [Stimmen]
+       summary: Erkannte Stimmen mit Zuordnungsvorschlag (nur SL)
+-      description: Bei source=discord sind alle Stimmen bereits zugeordnet, der Schritt entfällt.
++      description: |
++        Bei source=discord sind alle Stimmen bereits zugeordnet, der Schritt entfällt.
++        Ab 0.4.10 auch nach der Bestätigung (summarizing, awaiting_review, published), solange die Abschrift da ist;
++        dann mit assignedMemberId bzw. assignedGuestName.
+       responses:
+         "200":
+@@ -1706,4 +1788,8 @@ paths:
+       tags: [Stimmen]
+       summary: Zuordnung bestätigen, danach startet die Zusammenfassung
++      description: |
++        In `awaiting_speakers`. Ab 0.4.10 auch in `awaiting_review`: ändert die Zuordnung und schreibt das Kapitel neu
++        (wie POST …/resummarize, mit denselben Folgen für Recap-Bearbeitungen und Entscheidungen). Andere Zustände →
++        409 `wrong_state`.
+       requestBody:
+         required: true
+@@ -2471,4 +2557,64 @@ paths:
+         "404": { $ref: "#/components/responses/NotFound" }
+ 
++  /entries/{entryId}/to-npc:
++    parameters:
++      - { name: entryId, in: path, required: true, schema: { type: string } }
++    post:
++      tags: [Bibel, Charaktere]
++      summary: Figur eines ausgetretenen Spielers als NSC weiterführen (nur SL, ab 0.4.9)
++      description: |
++        Erlaubt für Einträge type pc, deren Halter die Kampagne verlassen hat (leftAt), dessen Konto gelöscht ist
++        (deletedAt) oder ohne Halter (holderMemberId null). Wirkung: type npc, holderMemberId null,
++        formerHolderMemberId = bisheriger Halter. Name, Kurzbeschreibung, Status, Sichtbarkeit, Erwähnungen und
++        Kapitel bleiben; danach ein normaler NSC (PATCH, DELETE wie immer). Das Porträt bleibt am ausgetretenen
++        Mitglied (Einträge haben keine Bilder). Halter noch aktiv → 409 `holder_active`; kein pc-Eintrag → 409
++        `not_a_character`. Spieler → 403, fremde Einträge → 404.
++      responses:
++        "200":
++          description: Jetzt ein NSC
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Entry" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++
++  /entries/{entryId}/assign:
++    parameters:
++      - { name: entryId, in: path, required: true, schema: { type: string } }
++    post:
++      tags: [Bibel, Charaktere]
++      summary: Figur einem anderen Spieler geben (nur SL, ab 0.4.9)
++      description: |
++        Erlaubt für npc-Einträge mit formerHolderMemberId (aus einer Spielerfigur entstanden) und für pc-Einträge ohne
++        aktiven Halter. Ziel: aktives Mitglied mit Rolle player ohne eigenen pc-Eintrag. Wirkung: type pc,
++        holderMemberId = Ziel; Member.characterName und characterSummary des Ziels werden aus dem Eintrag gesetzt.
++        characterId bleibt null, bis die Person die Figur in ihre Sammlung übernimmt (PUT …/members/me/character mit
++        neuer id, version 1); der Server verknüpft dann den vorhandenen pc-Eintrag, statt einen neuen anzulegen.
++        Alte Recaps bleiben unverändert, Erwähnungen wandern mit dem Eintrag. Fehler: Ziel hat schon einen pc-Eintrag →
++        409 `member_has_character`; Ziel kein aktiver Spieler → 409 `not_a_player`; Eintrag passt nicht → 409
++        `not_a_character`.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required: [memberId]
++              properties:
++                memberId: { type: string }
++      responses:
++        "200":
++          description: Figur übergeben
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Entry" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "403": { $ref: "#/components/responses/Forbidden" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++
+ components:
+   securitySchemes:
+@@ -2504,4 +2650,7 @@ components:
+       description: Datei oder Teil zu groß
+       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
++    TooManyRequests:
++      description: Zu viele Versuche (`too_many_requests`); message sagt, wie lange zu warten ist
++      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+ 
+   schemas:
+@@ -2574,4 +2723,31 @@ components:
+             den der Betreiber als Ersatz freigegeben hat. Nur dann zeigt die App der SL den Schalter
+             allowExternalTranscription und nennt den Anbieter im Hinweis.
++        cloudSummaryInfo:
++          description: |
++            Ab 0.4.11. Angaben zum Anbieter aus cloudSummary für die Anzeige am Tisch und im Einwilligungstext;
++            null, wenn cloudSummary null ist.
++          oneOf:
++            - $ref: "#/components/schemas/CloudProviderInfo"
++            - type: "null"
++        externalTranscriptionInfo:
++          description: Ab 0.4.11. Wie cloudSummaryInfo, für externalTranscription; null, wenn externalTranscription null ist.
++          oneOf:
++            - $ref: "#/components/schemas/CloudProviderInfo"
++            - type: "null"
++
++    CloudProviderInfo:
++      type: object
++      description: |
++        Ab 0.4.11. Wer Text (Zusammenfassung) bzw. Aufnahmen (Transkription) verarbeitet. Ohne sprachabhängige Wörter,
++        damit die App sie in jeder Sprache gleich zeigen kann; Land und „EU“ übersetzt die App.
++      required: [id, name, region]
++      properties:
++        id: { type: string, description: 'Kennung wie in cloudSummary bzw. externalTranscription', example: mistral }
++        name: { type: string, description: Anzeigename des Anbieters, example: Mistral AI }
++        region: { type: string, enum: [eu, non_eu], description: 'Verarbeitung in der EU (eu) oder außerhalb (non_eu)' }
++        country:
++          type: [string, "null"]
++          description: Land der Verarbeitung als ISO-3166-1-alpha-2-Code; null = unbekannt
++          example: FR
+ 
+     Organization:
+@@ -2930,4 +3106,20 @@ components:
+         source: { type: string, enum: [intro_round, voice_match, discord_track, none] }
+         assignedGuestName: { type: [string, "null"], description: "Ab 0.4.7: als Gast benannt (nach PUT)" }
++        assignedMemberId:
++          type: [string, "null"]
++          description: |
++            Ab 0.4.10: bestätigte Zuordnung nach PUT. Fehlt das Feld oder ist die Session noch in awaiting_speakers,
++            gibt es noch keine Bestätigung. null nach der Bestätigung = Gast (assignedGuestName) oder ignoriert.
++
++    InvitePreview:
++      type: object
++      description: Ab 0.4.10, Antwort von GET /invites/{code}
++      required: [campaignTitle]
++      properties:
++        campaignTitle: { type: string }
++        seatCharacterName:
++          type: [string, "null"]
++          description: Bei einer Platz-Einladung (POST …/members/{id}/invite) der Name der Figur auf diesem Platz
++        expiresAt: { type: [string, "null"], format: date-time }
+ 
+     Proposal:
+@@ -3155,4 +3347,9 @@ components:
+             originEntryId: { type: [string, "null"] }
+             originVersion: { type: [integer, "null"] }
++            formerHolderMemberId:
++              type: [string, "null"]
++              description: |
++                Ab 0.4.9: NSC, der aus der Figur dieses (ausgetretenen) Mitglieds entstanden ist (POST …/to-npc). Nur für
++                die SL, für Spieler weggelassen. Name über die Mitgliederliste (auch Ehemalige).
+ 
+     Character:
+@@ -3325,9 +3522,13 @@ components:
+         code:
+           type: string
+-          enum: [hidden_entries_for_newcomer, seat_claimed]
++          enum: [hidden_entries_for_newcomer, seat_claimed, character_orphaned]
+           description: |
+             hidden_entries_for_newcomer (ab 0.4.7): Neuzugang wurde in teilweise verborgene Einträge aufgenommen.
+             seat_claimed (ab 0.4.8): Jemand hat per Beitritt mit Charakter einen offenen Platz eingenommen (memberId);
+             erledigen per DELETE …/gm-notices/{id} oder Platz wieder freigeben (POST …/members/{id}/release).
++            character_orphaned (ab 0.4.9): Ein Spieler hat die Kampagne verlassen oder sein Konto gelöscht; entryIds =
++            seine pc-Einträge. Die App bietet an: als NSC weiterführen (…/to-npc), später einem anderen Spieler geben
++            (…/assign), verabschieden (Status) oder später. Erledigen per DELETE …/gm-notices/{id}; der Server löscht
++            den Hinweis selbst, wenn alle entryIds nicht mehr pc ohne Halter sind.
+         memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
+         entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
+diff --git a/docs/ARCHITEKTUR.md b/docs/ARCHITEKTUR.md
+index b94d92d..70f095d 100644
+--- a/docs/ARCHITEKTUR.md
++++ b/docs/ARCHITEKTUR.md
+@@ -87,4 +87,12 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
+   - Ab 0.4.8 sehen `characterId` und `characterVersion` nur die Person selbst und die SL – die Kennung ist der
+     Schlüssel zu einem offenen Platz.
++  - Ab 0.4.9 (`app/figuren.py`): Verlässt ein Spieler die Kampagne oder löscht sein Konto, bleibt seine Figur als
++    Geschichte stehen, und die SL bekommt einen Hinweis (`character_orphaned`). Sie macht daraus einen NSC oder gibt
++    die Figur einem anderen Spieler. Hintergrund, Kommentare, Zustimmungen, Kennung und Porträt der Person gehen nicht
++    mit. Wer die Figur früher gespielt hat, sieht nur die SL.
++- **Kapitel neu schreiben (ab 0.4.10):** Die SL lässt ein Kapitel in der Prüfung aus der vorhandenen Abschrift neu
++  schreiben, auch nach einer geänderten Stimmenzuordnung. Bearbeitungen am Entwurf und Entscheidungen zu Vorschlägen
++  fallen dabei weg; SL-Notiz, Korrekturen und Anwesenheit bleiben. Die Vorschau einer Einladung (`GET /invites/{code}`)
++  nennt ohne Anmeldung nur den Kampagnentitel und ist wie der Beitritt gegen Durchprobieren begrenzt.
+ - **Kampagnen-Umzug (ab 0.4.8, `app/umzug.py`, Dateiformat in [UMZUG.md](UMZUG.md)):**
+   - Server sprechen nie miteinander. Die SL packt die Kampagne als Datei und legt sie auf einem anderen Server wieder
+diff --git a/migrations/versions/c3d9e1f7a2b5_figuren_0_4_9.py b/migrations/versions/c3d9e1f7a2b5_figuren_0_4_9.py
+new file mode 100644
+index 0000000..df20267
+--- /dev/null
++++ b/migrations/versions/c3d9e1f7a2b5_figuren_0_4_9.py
+@@ -0,0 +1,27 @@
++"""Figuren ausgetretener Spieler (Schnittstelle 0.4.9): entries.former_holder_member_id
++
++Revision ID: c3d9e1f7a2b5
++Revises: b7e2c4f9a1d3
++Create Date: 2026-10-08 08:00:00
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision: str = 'c3d9e1f7a2b5'
++down_revision: Union[str, Sequence[str], None] = 'b7e2c4f9a1d3'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    with op.batch_alter_table('entries', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('former_holder_member_id', sa.String(length=36), nullable=True))
++
++
++def downgrade() -> None:
++    with op.batch_alter_table('entries', schema=None) as batch_op:
++        batch_op.drop_column('former_holder_member_id')
+diff --git a/pyproject.toml b/pyproject.toml
+index 3015a9b..fd0dd00 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.53"
++version = "0.4.54"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/contract.py b/tests/contract.py
+index 72a60ac..acf1a61 100644
+--- a/tests/contract.py
++++ b/tests/contract.py
+@@ -29,4 +29,6 @@ OPTIONAL_FIELDS = {"characterBackstory", "gmNotes", "hiddenFromMemberIds", "memb
+                    "characterId", "characterVersion",  # 0.4.8: nur für die Person selbst und die SL
+                    "missingChunks",  # 0.4.8: ImportStatus nur bei uploading
++                   "formerHolderMemberId",  # 0.4.9: nur für die SL
++                   "assignedMemberId",  # 0.4.10: erst nach der Bestätigung der Stimmen
+                    "user"}
+ 
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 90a00fd..6eeb095 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.53"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.54"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 1a95f80..0365e31 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.53"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.54"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_eingaben_pruefen.py b/tests/test_eingaben_pruefen.py
+index 562b56e..2cc0f41 100644
+--- a/tests/test_eingaben_pruefen.py
++++ b/tests/test_eingaben_pruefen.py
+@@ -204,5 +204,5 @@ def test_falsche_einladungscodes_werden_gebremst(client, world):
+         assert r.status_code == 404
+     r = client.post(f"{API}/campaigns/join", json={"code": "RABE-99999999"}, headers=w["out"])
+-    assert r.status_code == 409 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9
++    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"  # 0.4.9 (vorher 409)
+ 
+ 
+@@ -212,5 +212,5 @@ def test_falsche_passwoerter_werden_gebremst(client, make_user):
+         assert client.post(f"{API}/auth/login", json={"username": "dora", "password": "falsch"}).status_code == 401
+     r = client.post(f"{API}/auth/login", json={"username": "dora", "password": "geheim123"})
+-    assert r.status_code == 401 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9  # auch das richtige Passwort wartet, bis das Fenster abgelaufen ist
++    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"  # 0.4.9; auch das richtige Passwort wartet, bis das Fenster abgelaufen ist
+ 
+ 
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 9091cfb..3b0741b 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.53"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.54"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_schnittstelle_0410.py b/tests/test_schnittstelle_0410.py
+new file mode 100644
+index 0000000..aa82ea7
+--- /dev/null
++++ b/tests/test_schnittstelle_0410.py
+@@ -0,0 +1,193 @@
++"""Schnittstellen 0.4.9 und 0.4.10: Figuren ausgetretener Spieler, 429 bei Fehlversuchen, Kapitel neu schreiben,
++Stimmen nach der Bestätigung, Vorschau einer Einladung."""
++import pytest
++
++from tests.test_charaktere_047 import _char, _einladen, _pc
++from tests.test_pruefung_046 import _zur_pruefung
++from tests.test_step2a import API, status
++from tests.test_step2b import _kleine_teile, zusammenfassen  # noqa: F401 (Fixture)
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++def _hinweise(client, w):
++    return client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()["gmNotices"]
++
++
++def _mit_figur(client, w):
++    client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json=_char("Tharvok"))
++    return _pc(client, w)[0]
++
++
++# ---------------------------------------------------------------- 0.4.9 Figuren
++def test_figur_nach_austritt_als_nsc(client, world):
++    w = world
++    pc = _mit_figur(client, w)
++    url = f"{API}/entries/{pc['id']}/to-npc"
++    # solange Ben spielt: nicht möglich; Spieler dürfen gar nicht
++    assert client.post(url, headers=w["gm"]).json()["code"] == "holder_active"
++    assert client.post(url, headers=w["pl"]).status_code == 403
++    assert client.post(f"{API}/entries/gibt-es-nicht/to-npc", headers=w["gm"]).status_code == 404
++    # Ben verlässt die Kampagne → Hinweis an die SL
++    assert client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"]).status_code == 204
++    h = [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]
++    assert len(h) == 1 and h[0]["memberId"] == w["pl_member"] and h[0]["entryIds"] == [pc["id"]]
++    r = client.post(url, headers=w["gm"])
++    assert r.status_code == 200
++    e = r.json()
++    assert e["type"] == "npc" and e["holderMemberId"] is None and e["formerHolderMemberId"] == w["pl_member"]
++    assert e["name"] == "Tharvok" and e["visibility"] == "public"
++    assert not [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]  # räumt sich selbst ab
++    assert client.post(url, headers=w["gm"]).json()["code"] == "not_a_character"  # schon NSC
++
++
++def test_figur_einem_anderen_spieler_geben(client, world, make_user, login):
++    w = world
++    pc = _mit_figur(client, w)
++    make_user("dora")
++    dora = login("dora")
++    c = client.post(f"{API}/campaigns/join", headers=dora, json={"code": _einladen(client, w)}).json()
++    dora_id = next(m["id"] for m in c["members"] if m["displayName"] == "Dora")
++    url = f"{API}/entries/{pc['id']}/assign"
++    assert client.post(url, headers=w["gm"], json={"memberId": dora_id}).json()["code"] == "not_a_character"
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"])
++    # nicht an die SL, nicht an Unbekannte, nicht an Ehemalige
++    for ziel in (w["gm_member"], "unbekannt", w["pl_member"]):
++        assert client.post(url, headers=w["gm"], json={"memberId": ziel}).json()["code"] == "not_a_player"
++    assert client.post(url, headers=w["gm"], json={}).status_code == 400
++    r = client.post(url, headers=w["gm"], json={"memberId": dora_id})
++    assert r.status_code == 200
++    e = r.json()
++    assert e["type"] == "pc" and e["holderMemberId"] == dora_id and e["formerHolderMemberId"] is None
++    assert not [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]
++    ich = next(m for m in client.get(f"{API}/campaigns/{w['cid']}", headers=dora).json()["members"]
++               if m["id"] == dora_id)
++    assert ich["characterName"] == "Tharvok" and ich["characterSummary"].startswith("Tharvok") \
++        and ich["characterId"] is None
++    # Dora übernimmt die Figur in ihre Sammlung: derselbe Eintrag wird verknüpft, kein zweiter
++    neu = _char("Tharvok", summary="Tharvok, jetzt bei Dora.")
++    assert client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=dora, json=neu).status_code == 200
++    pcs = _pc(client, w)
++    assert [p["id"] for p in pcs] == [pc["id"]] and pcs[0]["summary"] == "Tharvok, jetzt bei Dora."
++    # Spieler sehen formerHolderMemberId nie
++    for x in client.get(f"{API}/campaigns/{w['cid']}/entries", headers=dora).json():
++        assert "formerHolderMemberId" not in x
++
++
++def test_nsc_aus_figur_spaeter_weitergeben_und_doppelte_figur(client, world, make_user, login):
++    w = world
++    pc = _mit_figur(client, w)
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"])
++    client.post(f"{API}/entries/{pc['id']}/to-npc", headers=w["gm"])
++    make_user("dora")
++    dora = login("dora")
++    ch = _char("Wilma")
++    c = client.post(f"{API}/campaigns/join", headers=dora, json={"code": _einladen(client, w), "character": ch}).json()
++    dora_id = next(m["id"] for m in c["members"] if m["displayName"] == "Dora")
++    r = client.post(f"{API}/entries/{pc['id']}/assign", headers=w["gm"], json={"memberId": dora_id})
++    assert r.json()["code"] == "member_has_character"  # Dora spielt schon Wilma
++
++
++def test_kontoloeschung_meldet_figur_und_wiederkehr_raeumt_ab(client, world, make_user, login):
++    w = world
++    pc = _mit_figur(client, w)
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"])
++    assert [n["entryIds"] for n in _hinweise(client, w) if n["code"] == "character_orphaned"] == [[pc["id"]]]
++    # Ben kommt mit neuer Einladung zurück → Figur hat ihren Halter wieder, Hinweis weg
++    client.post(f"{API}/campaigns/join", headers=w["pl"], json={"code": _einladen(client, w)})
++    assert not [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]
++    # Ben löscht sein Konto → wieder ein Hinweis (nur einer)
++    assert client.request("DELETE", f"{API}/me", headers=w["pl"], json={"password": "geheim123"}).status_code == 204
++    h = [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]
++    assert len(h) == 1 and h[0]["entryIds"] == [pc["id"]]
++    assert client.post(f"{API}/entries/{pc['id']}/to-npc", headers=w["gm"]).json()["formerHolderMemberId"] \
++        == w["pl_member"]
++
++
++def test_sl_verlassen_ohne_figurenhinweis(client, world, make_user, login):
++    """Hinweise nur für Spieler: eine zweite SL, die geht, löst keinen aus."""
++    w = world
++    client.patch(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["gm"], json={"role": "gm"})
++    client.delete(f"{API}/campaigns/{w['cid']}/members/{w['pl_member']}", headers=w["pl"])
++    assert not [n for n in _hinweise(client, w) if n["code"] == "character_orphaned"]
++
++
++def test_429_bei_anmelden_und_beitreten(client, world):
++    w = world
++    for _ in range(10):
++        client.post(f"{API}/auth/login", json={"username": "ben", "password": "falsch"})
++    r = client.post(f"{API}/auth/login", json={"username": "ben", "password": "falsch"})
++    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"
++    for _ in range(10):
++        client.post(f"{API}/campaigns/join", headers=w["out"], json={"code": "FALSCH-00000000"})
++    r = client.post(f"{API}/campaigns/join", headers=w["out"], json={"code": "FALSCH-00000000"})
++    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"
++
++
++# ---------------------------------------------------------------- 0.4.10
++def test_einladung_vorschau_ohne_anmeldung(client, world):
++    w = world
++    code = _einladen(client, w)
++    r = client.get(f"{API}/invites/{code.lower()}")
++    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
++    d = r.json()
++    assert d == {"campaignTitle": "Rabenfels", "seatCharacterName": None, "expiresAt": d["expiresAt"]}
++    assert d["expiresAt"]
++    r = client.get(f"{API}/invites/FALSCH-00000000")
++    assert r.status_code == 404 and r.json()["code"] == "invite_invalid"
++    for _ in range(29):
++        client.get(f"{API}/invites/FALSCH-00000000")
++    r = client.get(f"{API}/invites/{code}")
++    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"  # Begrenzung je Adresse wie beim Beitritt
++
++
++def test_stimmen_nach_bestaetigung_und_kapitel_neu_schreiben(client, world, dbs, tmp_path):
++    w = world
++    s = _zur_pruefung(client, w, dbs, tmp_path)
++    sid = s["id"]
++    sp = client.get(f"{API}/sessions/{sid}/speakers", headers=w["gm"]).json()
++    assert [x["assignedMemberId"] for x in sp] == [w["gm_member"], w["pl_member"]]
++    # SL bearbeitet den Entwurf und entscheidet einen Vorschlag – neu schreiben verwirft beides
++    client.put(f"{API}/sessions/{sid}/recap", headers=w["gm"], json={"text": "VON-HAND-GEAENDERT"})
++    vorschlaege = client.get(f"{API}/sessions/{sid}/proposals", headers=w["gm"]).json()
++    assert vorschlaege
++    client.patch(f"{API}/proposals/{vorschlaege[0]['id']}", headers=w["gm"], json={"decision": "accepted"})
++    client.put(f"{API}/sessions/{sid}/gm-note", headers=w["gm"], json={"text": "BLEIBT"})
++    assert client.post(f"{API}/sessions/{sid}/resummarize", headers=w["pl"]).status_code == 404
++    r = client.post(f"{API}/sessions/{sid}/resummarize", headers=w["gm"])
++    assert r.status_code == 202 and r.json()["state"] == "summarizing"
++    assert client.post(f"{API}/sessions/{sid}/resummarize", headers=w["gm"]).json()["code"] == "wrong_state"
++    assert zusammenfassen(dbs)
++    assert status(client, w["gm"], sid)["state"] == "awaiting_review"
++    assert "VON-HAND-GEAENDERT" not in client.get(f"{API}/sessions/{sid}/recap", headers=w["gm"]).json()["text"]
++    assert all(p["decision"] == "open" for p in client.get(f"{API}/sessions/{sid}/proposals", headers=w["gm"]).json())
++    assert client.get(f"{API}/sessions/{sid}/gm-note", headers=w["gm"]).json()["text"] == "BLEIBT"
++    # Stimmen nachträglich tauschen: Zuordnung ändert sich, Kapitel wird neu geschrieben
++    r = client.put(f"{API}/sessions/{sid}/speakers", headers=w["gm"],
++                   json=[{"speakerId": sp[0]["id"], "memberId": w["pl_member"]},
++                         {"speakerId": sp[1]["id"], "memberId": w["gm_member"]}])
++    assert r.status_code == 202 and r.json()["state"] == "summarizing"
++    sp2 = client.get(f"{API}/sessions/{sid}/speakers", headers=w["gm"]).json()
++    assert [x["assignedMemberId"] for x in sp2] == [w["pl_member"], w["gm_member"]]
++    zeilen = client.get(f"{API}/sessions/{sid}/transcript", headers=w["gm"]).json()
++    assert {z["memberId"] for z in zeilen} <= {w["pl_member"], w["gm_member"]}
++    # während des Schreibens: weder neu schreiben noch Stimmen ändern
++    assert client.put(f"{API}/sessions/{sid}/speakers", headers=w["gm"], json=[]).json()["code"] == "wrong_state"
++    assert zusammenfassen(dbs)
++    client.post(f"{API}/sessions/{sid}/publish", headers=w["gm"])
++    assert client.post(f"{API}/sessions/{sid}/resummarize", headers=w["gm"]).json()["code"] == "wrong_state"
++    # auch nach der Veröffentlichung abrufbar, mit Zuordnung
++    assert client.get(f"{API}/sessions/{sid}/speakers", headers=w["gm"]).json()[0]["assignedMemberId"] == w["pl_member"]
++
++
++def test_stimmen_vor_bestaetigung_ohne_zuordnung(client, world, dbs, tmp_path):
++    from tests.test_step2b import transkribiert
++
++    w = world
++    s = transkribiert(client, w, dbs, tmp_path)
++    for x in client.get(f"{API}/sessions/{s['id']}/speakers", headers=w["gm"]).json():
++        assert "assignedMemberId" not in x
++
++
++def test_info_meldet_schnittstelle_0411(client):
++    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.11"
+diff --git a/tests/test_step1b.py b/tests/test_step1b.py
+index c2e971a..3430143 100644
+--- a/tests/test_step1b.py
++++ b/tests/test_step1b.py
+@@ -23,5 +23,5 @@ def test_info_ist_oeffentlich(client):
+     assert r.status_code == 200
+     i = r.json()
+-    assert i["apiVersion"] == "0.4.8" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
++    assert i["apiVersion"] == "0.4.11" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+ 
+ 
+diff --git a/tests/test_step2b.py b/tests/test_step2b.py
+index 852d8fc..b35d4c9 100644
+--- a/tests/test_step2b.py
++++ b/tests/test_step2b.py
+@@ -184,5 +184,5 @@ def test_stimmen_pruefungen(client, world, dbs, tmp_path):
+     assert client.put(url, headers=w["gm"], json=[{"speakerId": sp[0]["id"], "memberId": None}]).status_code == 202
+     r = client.put(url, headers=w["gm"], json=[])
+-    assert r.status_code == 409 and r.json()["code"] == "invalid_state"
++    assert r.status_code == 409 and r.json()["code"] == "wrong_state"  # 0.4.10 (vorher invalid_state)
+ 
+ 
+diff --git a/tests/test_umzug_048.py b/tests/test_umzug_048.py
+index 1d13e2c..9113a3f 100644
+--- a/tests/test_umzug_048.py
++++ b/tests/test_umzug_048.py
+@@ -151,5 +151,5 @@ def test_export_inhalt_und_zugang(client, world, dbs, make_user, login):
+     alles = b"".join(z.read(n) for n in namen)
+     k = json.loads(z.read("kampagne.json"))
+-    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.8"
++    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.11"
+     # nie in der Datei
+     for verboten in (GEHEIM, PRUEF, "Anna", "Ben", "Dora", "anna", "HINTERGRUND-DORIN", "DORA-BOGEN",
+diff --git a/tests/test_verwaltung2.py b/tests/test_verwaltung2.py
+index 11baca6..50d1668 100644
+--- a/tests/test_verwaltung2.py
++++ b/tests/test_verwaltung2.py
+@@ -173,5 +173,5 @@ def test_mindestversion(client, world, admin):  # noqa: F811
+     info = client.get(f"{API}/info").json()  # /info bleibt immer erreichbar
+     assert info["minAppVersion"] == "0.9.0" and info["latestAppVersion"] == "0.9.1"
+-    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.8"
++    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.11"
+     url = f"{API}/campaigns"
+     r = client.get(url, headers=world["gm"])
+diff --git a/tests/test_webapp.py b/tests/test_webapp.py
+index a9beff0..22df570 100644
+--- a/tests/test_webapp.py
++++ b/tests/test_webapp.py
+@@ -107,5 +107,5 @@ def test_info_mit_pruefsumme(client, dbs):
+     info = client.get(f"{API}/info").json()
+     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
+-    assert info["apiVersion"] == "0.4.8"
++    assert info["apiVersion"] == "0.4.11"
+ 
+ 
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index c44ac2d..f57c494 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.53"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.54"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 750734d..d8c8182 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.53"
++version = "0.4.54"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
