@@ -13,7 +13,7 @@ from app.models import AuthMethod, Organization, OrgMember, User
 from app.security import create_token, verify_password
 from app.services import user_out
 
-API_VERSION = "0.4.8"
+API_VERSION = "0.4.11"
 
 router = APIRouter(tags=["Auth"])
 
@@ -66,8 +66,7 @@ def login(body: schemas.LoginRequest, request: Request, db: Session = Depends(ge
     adresse = request.client.host if request.client else "?"
     if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
             ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
-        # 401 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
-        raise errors.ApiError(401, "too_many_requests")
+        raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 401 mit demselben code)
     user = db.scalar(select(User).where(User.username == name))
     methode = None
     if user is not None:

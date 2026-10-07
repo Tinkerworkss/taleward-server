@@ -245,7 +245,11 @@ def entfernen(db: Session, u: User) -> None:
         _kampagne_loeschen(db, c)
     db.flush()
     jetzt = utcnow()
+    from app import figuren
+
     for m in db.scalars(select(Member).where(Member.user_id == u.id)):
+        if m.left_at is None:
+            figuren.verwaist_melden(db, m)  # 0.4.9: Hinweis an die SL, was aus der Figur wird
         set_recording_consent(db, m, False)  # Widerruf bleibt als Nachweis im Protokoll
         set_move_consent(db, m, False)  # 0.4.8
         bilder_loeschen(portrait_ordner(m.id))

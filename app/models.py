@@ -277,6 +277,8 @@ class Entry(Base):
     origin_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     origin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     origin_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 0.4.9: NSC aus der Figur eines ausgetretenen Mitglieds – nur die SL sieht, von wem
+    former_holder_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     mentions: Mapped[list["EntryMention"]] = relationship(cascade="all, delete-orphan")
     hidden_from: Mapped[list["EntryHidden"]] = relationship(cascade="all, delete-orphan")

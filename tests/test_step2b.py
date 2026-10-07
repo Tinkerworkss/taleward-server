@@ -183,7 +183,7 @@ def test_stimmen_pruefungen(client, world, dbs, tmp_path):
     # null = Gast/ignorieren
     assert client.put(url, headers=w["gm"], json=[{"speakerId": sp[0]["id"], "memberId": None}]).status_code == 202
     r = client.put(url, headers=w["gm"], json=[])
-    assert r.status_code == 409 and r.json()["code"] == "invalid_state"
+    assert r.status_code == 409 and r.json()["code"] == "wrong_state"  # 0.4.10 (vorher invalid_state)
 
 
 def test_vorschlag_und_recap_pruefungen(client, world, dbs, tmp_path):

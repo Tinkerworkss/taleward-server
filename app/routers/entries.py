@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import errors, schemas
+from app import errors, figuren, schemas
 from app.access import current_user, load_entry, require_gm, require_member
 from app.db import get_db
 from app.models import Entry, EntryMention, User
@@ -84,3 +84,29 @@ def delete_entry(entryId: str, user: User = Depends(current_user), db: Session =
     db.delete(acc.entry)
     db.commit()
     return Response(status_code=204)
+
+
+# ---------- Figuren ausgetretener Spieler (0.4.9) ----------
+@router.post("/entries/{entryId}/to-npc", tags=["Charaktere"], response_model=schemas.EntryOut,
+             response_model_exclude_unset=True)
+def entry_to_npc(entryId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Figur eines ausgetretenen Spielers als NSC weiterführen (nur SL)."""
+    acc = load_entry(db, entryId, user)
+    require_gm(acc.member)
+    figuren.zu_nsc(db, acc.entry)
+    db.commit()
+    db.refresh(acc.entry)
+    return entry_out(acc.entry, True)
+
+
+@router.post("/entries/{entryId}/assign", tags=["Charaktere"], response_model=schemas.EntryOut,
+             response_model_exclude_unset=True)
+def entry_assign(entryId: str, body: schemas.EntryAssignIn, user: User = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    """Figur einem anderen Spieler geben (nur SL)."""
+    acc = load_entry(db, entryId, user)
+    require_gm(acc.member)
+    figuren.geben(db, acc.entry, body.member_id)
+    db.commit()
+    db.refresh(acc.entry)
+    return entry_out(acc.entry, True)

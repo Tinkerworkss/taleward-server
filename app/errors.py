@@ -178,6 +178,24 @@ MESSAGES: dict[str, tuple[str, str]] = {
                              "Each Discord track needs a different attendee of this campaign."),
     "wrong_state": ("Korrigieren geht nur, solange das Kapitel zur Prüfung bereitliegt.",
                     "Corrections are only possible while the chapter is waiting for review."),
+    "wrong_state.speakers": ("Stimmen lassen sich nur zuordnen, solange das Kapitel auf „Stimmen zuordnen“ oder auf die "
+                             "Prüfung wartet.",
+                             "Voices can only be assigned while the chapter is waiting for voice assignment or review."),
+    "wrong_state.resummarize": ("Neu schreiben geht nur, solange das Kapitel zur Prüfung bereitliegt.",
+                                "A chapter can only be rewritten while it is waiting for review."),
+    "transcript_missing": ("Für dieses Kapitel gibt es keine Abschrift mehr. Bitte die Aufnahme neu hochladen.",
+                           "There is no transcript for this chapter any more. Please upload the recording again."),
+    # Figuren ausgetretener Spieler (0.4.9)
+    "holder_active": ("Diese Figur wird noch gespielt. Erst wenn die Person die Kampagne verlassen hat, kann sie ein "
+                      "NSC werden.",
+                      "This character is still being played. It can become an NPC once the person has left the "
+                      "campaign."),
+    "not_a_character": ("Dieser Eintrag ist keine Figur eines ausgetretenen Spielers.",
+                        "This entry is not the character of a player who has left."),
+    "member_has_character": ("Diese Person spielt schon eine Figur in dieser Kampagne.",
+                             "This person already plays a character in this campaign."),
+    "not_a_player": ("Die Figur kann nur einem aktiven Spieler dieser Kampagne gegeben werden.",
+                     "The character can only be given to an active player of this campaign."),
     "retranscribe_limit": ("Diese Aufnahme wurde schon zweimal neu transkribiert – mehr geht nicht.",
                            "This recording has already been transcribed again twice – no more attempts."),
     "audio_gone": ("Das Audio ist schon gelöscht. Bitte die Aufnahme neu hochladen.",

@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.8
+  version: 0.4.11
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
     Grundregeln:
-    - Alle Endpunkte außer /auth/login, /auth/register und /info erfordern ein Bearer-Token.
+    - Alle Endpunkte außer /auth/login, /auth/register, /info und /invites/{code} erfordern ein Bearer-Token.
     - Rollen gelten pro Kampagne: `gm` (Spielleitung) oder `player`.
     - Der SERVER setzt den Spoilerschutz durch: Einträge mit `visibility: gm_only`,
       offene Vorschläge, SL-Notizen und Transkripte werden an Spieler nie ausgeliefert
@@ -38,10 +38,11 @@ info:
       SHA-256 prüfen, Installationsdialog (REQUEST_INSTALL_PACKAGES, FileProvider); Play-Store-Fassung ohne Updater
       („Update im Play Store“). Beide mit demselben Schlüssel signiert. Kompatibilitätsfenster: Die App unterstützt
       apiVersion ab einer festen Untergrenze (mindestens 12 Monate zurück); ältere Server gelten als „veraltet“.
-    - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser unter `/app/` – zentral auf der Taleward-Website
-      (`https://taleward.org/app/`) und optional auf jedem Server (`https://<server>/app/`). Sie spricht direkt mit
+    - Web-Fassung (ab 0.4.2): Die App läuft auch im Browser – zentral unter eigener Adresse `https://app.taleward.org/`
+      (an der Wurzel; bis Oktober 2026 `https://taleward.org/app/`, das künftig dorthin umleitet) und optional auf
+      jedem Server (`https://<server>/app/`). Dieselbe Web-Fassung läuft an beiden Pfaden. Sie spricht direkt mit
       den Vereinsservern, die Website sieht keine Inhalte. Server müssen dafür CORS erlauben: Herkunft der zentralen
-      Website (Voreinstellung, in der Verwaltung abschaltbar) und die eigene; erlaubte Header mindestens Authorization,
+      Web-App (Voreinstellung, in der Verwaltung abschaltbar) und die eigene; erlaubte Header mindestens Authorization,
       Content-Type, Accept-Language, X-Taleward-App, X-Chunk-SHA256; Methoden GET, POST, PUT, PATCH, DELETE.
       Voraussetzung: HTTPS (Browser blockieren http-Server von einer https-Seite aus).
     - Anmelden mit einem Dienst (ab 0.4.0) – die App spricht nie selbst mit Google & Co.:
@@ -145,6 +146,21 @@ info:
     (POST …/members/{id}/invite), „Das bin ich“ für die SL (…/take), Platz freigeben (…/release); Hinweis an die SL
     `seat_claimed`. characterId/characterVersion sehen nur noch die Person selbst und die SL. Transkripte,
     Hörproben, Stimmprofile, Einwilligungen, Vorschläge und der Prüfteil des Recaps verlassen den Server nie.
+    Änderungen in 0.4.9 (Figuren ausgetretener Spieler, Begrenzung von Fehlversuchen): Die Figur einer Person, die
+    die Kampagne verlassen hat (oder deren Konto gelöscht ist), bleibt als Geschichte in der Kampagne. Die SL macht
+    daraus einen NSC (POST /entries/{id}/to-npc) oder gibt sie einem anderen Spieler (POST /entries/{id}/assign);
+    Hinweis an die SL beim Austritt: gmNotices `character_orphaned`; Entry.formerHolderMemberId (nur SL). Die Person
+    selbst (Hintergrund, Kommentare, Zustimmungen, characterId, Porträt) geht nicht mit. 429 `too_many_requests` auch
+    bei POST /auth/login und POST /campaigns/join. Einladungscodes ab Server 0.4.37 länger (WORT-12345678).
+    Änderungen in 0.4.10 (Kapitel neu schreiben, Stimmen nachträglich prüfen, Vorschau einer Einladung): Die SL lässt
+    ein Kapitel im Zustand awaiting_review aus der vorhandenen Abschrift neu schreiben (POST
+    /sessions/{id}/resummarize). Speaker.assignedMemberId zeigt die bestätigte Zuordnung; GET …/speakers geht auch nach
+    der Bestätigung, PUT …/speakers in awaiting_review ändert die Zuordnung und schreibt das Kapitel neu. GET
+    /invites/{code} nennt vor dem Beitritt ohne Anmeldung den Kampagnentitel (begrenzt wie der Beitritt).
+    Änderungen in 0.4.11 (Wer schreibt die Kapitel): ServerInfo.cloudSummaryInfo und
+    ServerInfo.externalTranscriptionInfo (CloudProviderInfo: Name, EU oder nicht, Land). Die App zeigt allen Mitgliedern
+    einer Kampagne mit allowCloudSummary bzw. allowExternalTranscription, wer die Kapitel schreibt bzw. transkribiert,
+    und nennt es im Einwilligungstext. Fehlen die Felder (ältere Server), zeigt die App nur die Kennung.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -176,6 +192,10 @@ paths:
     post:
       tags: [Auth]
       summary: Anmelden
+      description: |
+        Ab 0.4.9: Fehlversuche sind begrenzt (10 je Benutzername und 30 je Adresse in 15 Minuten) → 429
+        `too_many_requests` mit lesbarer message. Server 0.4.37 vor YAML 0.4.9 antwortet dafür noch mit 401 und
+        code `too_many_requests`; die App richtet sich nach dem code, nicht nach dem Status.
       security: []
       requestBody:
         required: true
@@ -200,6 +220,7 @@ paths:
                   user: { $ref: "#/components/schemas/User" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /info:
     get:
@@ -318,9 +339,9 @@ paths:
           in: query
           schema: { type: string }
           description: |
-            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://taleward.org/app/#/auth`. Der Server
+            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://app.taleward.org/#/auth`. Der Server
             hängt `?ticket=…&serverId=…` bzw. `?error=…` wörtlich an den Wert an (auch hinter `#/auth`). Erlaubt sind nur
-            fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App; sonst Rückweg mit
+            fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App (`<Herkunft>/#/auth`); sonst Rückweg mit
             error=return_to_not_allowed über taleward://auth.
       responses:
         "302": { description: Weiterleitung zum Dienst }
@@ -627,6 +648,9 @@ paths:
     post:
       tags: [Kampagnen]
       summary: Mit Einladungscode beitreten (Rolle player)
+      description: |
+        Ab 0.4.9: falsche Codes sind begrenzt (10 je Konto und 30 je Adresse in 15 Minuten) → 429 `too_many_requests`.
+        Server 0.4.37 vor YAML 0.4.9 antwortet dafür noch mit 409 und code `too_many_requests`.
       requestBody:
         required: true
         content:
@@ -635,7 +659,10 @@ paths:
               type: object
               required: [code]
               properties:
-                code: { type: string, example: "RABE-4821" }
+                code:
+                  type: string
+                  example: "RABE-48213759"
+                  description: "Wort, Bindestrich, Ziffern. Ab Server 0.4.37 acht Ziffern, ältere Codes (vier Ziffern) gelten bis zum Ablauf."
                 characterName: { type: string, description: "Freier Name ohne Sammlung (Gäste, ältere Apps)" }
                 character:
                   description: |
@@ -659,6 +686,33 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /invites/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        schema: { type: string }
+        description: Einladungscode, Groß- und Kleinschreibung egal (wie bei POST /campaigns/join)
+    get:
+      tags: [Kampagnen]
+      summary: Vorschau einer Einladung, ohne Anmeldung (ab 0.4.10)
+      description: |
+        Damit die App vor dem Beitritt sagen kann, wohin es geht („Du trittst ‚Die leisen Wasser' bei“), auch wenn die
+        Person noch kein Konto auf diesem Server hat. Liefert nur, was die Einladungsseite /einladung/{code} ohnehin
+        zeigt: Kampagnentitel und – bei einer Platz-Einladung – den Namen der Figur. Keine Mitglieder, keine Inhalte.
+        Unbekannte, abgelaufene oder aufgebrauchte Codes → 404 mit code `invite_invalid`. Fehlversuche zählen zur selben Begrenzung wie
+        POST /campaigns/join (je Adresse) → 429 `too_many_requests`. Antwort mit `Cache-Control: no-store`.
+      security: []
+      responses:
+        "200":
+          description: Gültige Einladung
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitePreview" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /campaigns/{campaignId}:
     parameters: [{ $ref: "#/components/parameters/campaignId" }]
@@ -1550,6 +1604,31 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /sessions/{sessionId}/resummarize:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Sessions]
+      summary: Kapitel aus der vorhandenen Abschrift neu schreiben (nur SL, ab 0.4.10)
+      description: |
+        Nur im Zustand `awaiting_review`. Schreibt Recap, offene Fäden, Vorschläge und Prüfteil neu – aus der
+        vorhandenen Abschrift mit den aktuellen Korrekturen und der aktuellen Stimmenzuordnung, mit dem Stand des
+        Servers von jetzt (z. B. nach einem Update). Kein neues Hochladen, das Audio wird nicht gebraucht.
+        Verworfen werden: Bearbeitungen am Recap-Entwurf und alle Entscheidungen zu Vorschlägen dieses Kapitels
+        (sie wirken ohnehin erst beim Veröffentlichen). Bleiben: SL-Notiz, Korrekturen, Stimmenzuordnung,
+        Anwesenheit, Kommentare. Die Session geht nach `summarizing`, danach wieder `awaiting_review`.
+        Kostet wie eine neue Zusammenfassung (Usage) und folgt der Cloud-Freigabe der Kampagne.
+        Andere Zustände → 409 `wrong_state`; Abschrift fehlt → 409 `transcript_missing`.
+      responses:
+        "202":
+          description: Neu eingereiht
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /sessions/{sessionId}/uploads:
     parameters: [{ $ref: "#/components/parameters/sessionId" }]
     post:
@@ -1690,7 +1769,10 @@ paths:
     get:
       tags: [Stimmen]
       summary: Erkannte Stimmen mit Zuordnungsvorschlag (nur SL)
-      description: Bei source=discord sind alle Stimmen bereits zugeordnet, der Schritt entfällt.
+      description: |
+        Bei source=discord sind alle Stimmen bereits zugeordnet, der Schritt entfällt.
+        Ab 0.4.10 auch nach der Bestätigung (summarizing, awaiting_review, published), solange die Abschrift da ist;
+        dann mit assignedMemberId bzw. assignedGuestName.
       responses:
         "200":
           description: OK
@@ -1705,6 +1787,10 @@ paths:
     put:
       tags: [Stimmen]
       summary: Zuordnung bestätigen, danach startet die Zusammenfassung
+      description: |
+        In `awaiting_speakers`. Ab 0.4.10 auch in `awaiting_review`: ändert die Zuordnung und schreibt das Kapitel neu
+        (wie POST …/resummarize, mit denselben Folgen für Recap-Bearbeitungen und Entscheidungen). Andere Zustände →
+        409 `wrong_state`.
       requestBody:
         required: true
         content:
@@ -2470,6 +2556,66 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /entries/{entryId}/to-npc:
+    parameters:
+      - { name: entryId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Bibel, Charaktere]
+      summary: Figur eines ausgetretenen Spielers als NSC weiterführen (nur SL, ab 0.4.9)
+      description: |
+        Erlaubt für Einträge type pc, deren Halter die Kampagne verlassen hat (leftAt), dessen Konto gelöscht ist
+        (deletedAt) oder ohne Halter (holderMemberId null). Wirkung: type npc, holderMemberId null,
+        formerHolderMemberId = bisheriger Halter. Name, Kurzbeschreibung, Status, Sichtbarkeit, Erwähnungen und
+        Kapitel bleiben; danach ein normaler NSC (PATCH, DELETE wie immer). Das Porträt bleibt am ausgetretenen
+        Mitglied (Einträge haben keine Bilder). Halter noch aktiv → 409 `holder_active`; kein pc-Eintrag → 409
+        `not_a_character`. Spieler → 403, fremde Einträge → 404.
+      responses:
+        "200":
+          description: Jetzt ein NSC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /entries/{entryId}/assign:
+    parameters:
+      - { name: entryId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Bibel, Charaktere]
+      summary: Figur einem anderen Spieler geben (nur SL, ab 0.4.9)
+      description: |
+        Erlaubt für npc-Einträge mit formerHolderMemberId (aus einer Spielerfigur entstanden) und für pc-Einträge ohne
+        aktiven Halter. Ziel: aktives Mitglied mit Rolle player ohne eigenen pc-Eintrag. Wirkung: type pc,
+        holderMemberId = Ziel; Member.characterName und characterSummary des Ziels werden aus dem Eintrag gesetzt.
+        characterId bleibt null, bis die Person die Figur in ihre Sammlung übernimmt (PUT …/members/me/character mit
+        neuer id, version 1); der Server verknüpft dann den vorhandenen pc-Eintrag, statt einen neuen anzulegen.
+        Alte Recaps bleiben unverändert, Erwähnungen wandern mit dem Eintrag. Fehler: Ziel hat schon einen pc-Eintrag →
+        409 `member_has_character`; Ziel kein aktiver Spieler → 409 `not_a_player`; Eintrag passt nicht → 409
+        `not_a_character`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [memberId]
+              properties:
+                memberId: { type: string }
+      responses:
+        "200":
+          description: Figur übergeben
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Entry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2502,6 +2648,9 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     PayloadTooLarge:
       description: Datei oder Teil zu groß
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    TooManyRequests:
+      description: Zu viele Versuche (`too_many_requests`); message sagt, wie lange zu warten ist
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   schemas:
@@ -2573,6 +2722,33 @@ components:
             null = dieser Server transkribiert nur selbst. Sonst Name des externen Anbieters (z. B. "mistral"),
             den der Betreiber als Ersatz freigegeben hat. Nur dann zeigt die App der SL den Schalter
             allowExternalTranscription und nennt den Anbieter im Hinweis.
+        cloudSummaryInfo:
+          description: |
+            Ab 0.4.11. Angaben zum Anbieter aus cloudSummary für die Anzeige am Tisch und im Einwilligungstext;
+            null, wenn cloudSummary null ist.
+          oneOf:
+            - $ref: "#/components/schemas/CloudProviderInfo"
+            - type: "null"
+        externalTranscriptionInfo:
+          description: Ab 0.4.11. Wie cloudSummaryInfo, für externalTranscription; null, wenn externalTranscription null ist.
+          oneOf:
+            - $ref: "#/components/schemas/CloudProviderInfo"
+            - type: "null"
+
+    CloudProviderInfo:
+      type: object
+      description: |
+        Ab 0.4.11. Wer Text (Zusammenfassung) bzw. Aufnahmen (Transkription) verarbeitet. Ohne sprachabhängige Wörter,
+        damit die App sie in jeder Sprache gleich zeigen kann; Land und „EU“ übersetzt die App.
+      required: [id, name, region]
+      properties:
+        id: { type: string, description: 'Kennung wie in cloudSummary bzw. externalTranscription', example: mistral }
+        name: { type: string, description: Anzeigename des Anbieters, example: Mistral AI }
+        region: { type: string, enum: [eu, non_eu], description: 'Verarbeitung in der EU (eu) oder außerhalb (non_eu)' }
+        country:
+          type: [string, "null"]
+          description: Land der Verarbeitung als ISO-3166-1-alpha-2-Code; null = unbekannt
+          example: FR
 
     Organization:
       type: object
@@ -2929,6 +3105,22 @@ components:
         confidence: { type: number, minimum: 0, maximum: 1 }
         source: { type: string, enum: [intro_round, voice_match, discord_track, none] }
         assignedGuestName: { type: [string, "null"], description: "Ab 0.4.7: als Gast benannt (nach PUT)" }
+        assignedMemberId:
+          type: [string, "null"]
+          description: |
+            Ab 0.4.10: bestätigte Zuordnung nach PUT. Fehlt das Feld oder ist die Session noch in awaiting_speakers,
+            gibt es noch keine Bestätigung. null nach der Bestätigung = Gast (assignedGuestName) oder ignoriert.
+
+    InvitePreview:
+      type: object
+      description: Ab 0.4.10, Antwort von GET /invites/{code}
+      required: [campaignTitle]
+      properties:
+        campaignTitle: { type: string }
+        seatCharacterName:
+          type: [string, "null"]
+          description: Bei einer Platz-Einladung (POST …/members/{id}/invite) der Name der Figur auf diesem Platz
+        expiresAt: { type: [string, "null"], format: date-time }
 
     Proposal:
       type: object
@@ -3154,6 +3346,11 @@ components:
             originCharacterId: { type: [string, "null"], description: "Ab 0.4.7: mitgebrachter Eintrag – nur für SL und Urheberin, sonst weggelassen" }
             originEntryId: { type: [string, "null"] }
             originVersion: { type: [integer, "null"] }
+            formerHolderMemberId:
+              type: [string, "null"]
+              description: |
+                Ab 0.4.9: NSC, der aus der Figur dieses (ausgetretenen) Mitglieds entstanden ist (POST …/to-npc). Nur für
+                die SL, für Spieler weggelassen. Name über die Mitgliederliste (auch Ehemalige).
 
     Character:
       type: object
@@ -3324,11 +3521,15 @@ components:
         id: { type: string }
         code:
           type: string
-          enum: [hidden_entries_for_newcomer, seat_claimed]
+          enum: [hidden_entries_for_newcomer, seat_claimed, character_orphaned]
           description: |
             hidden_entries_for_newcomer (ab 0.4.7): Neuzugang wurde in teilweise verborgene Einträge aufgenommen.
             seat_claimed (ab 0.4.8): Jemand hat per Beitritt mit Charakter einen offenen Platz eingenommen (memberId);
             erledigen per DELETE …/gm-notices/{id} oder Platz wieder freigeben (POST …/members/{id}/release).
+            character_orphaned (ab 0.4.9): Ein Spieler hat die Kampagne verlassen oder sein Konto gelöscht; entryIds =
+            seine pc-Einträge. Die App bietet an: als NSC weiterführen (…/to-npc), später einem anderen Spieler geben
+            (…/assign), verabschieden (Status) oder später. Erledigen per DELETE …/gm-notices/{id}; der Server löscht
+            den Hinweis selbst, wenn alle entryIds nicht mehr pc ohne Halter sind.
         memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
         entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
         createdAt: { type: string, format: date-time }

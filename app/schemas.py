@@ -69,6 +69,13 @@ class ServerInfoOut(ApiModel):
     audio_retention: "AudioRetentionOut | None" = None
 
 
+class InvitePreviewOut(ApiModel):
+    """0.4.10: Vorschau einer Einladung ohne Anmeldung – nur, was /einladung/{code} ohnehin zeigt."""
+    campaign_title: str
+    seat_character_name: str | None = None
+    expires_at: datetime | None = None
+
+
 class CloudProviderInfoOut(ApiModel):
     """0.4.11: Wer Text (Zusammenfassung) bzw. Aufnahmen (Transkription) verarbeitet – ohne sprachabhängige Wörter."""
     id: str
@@ -248,7 +255,7 @@ class CampaignOut(CampaignSummaryOut):
 
 class GmNoticeOut(ApiModel):
     id: str
-    code: Literal["hidden_entries_for_newcomer", "seat_claimed"]
+    code: Literal["hidden_entries_for_newcomer", "seat_claimed", "character_orphaned"]
     member_id: str | None
     entry_ids: list[str]
     created_at: datetime
@@ -470,6 +477,7 @@ class SpeakerOut(ApiModel):
     confidence: float
     source: Literal["intro_round", "voice_match", "discord_track", "none"]
     assigned_guest_name: str | None = None  # 0.4.7
+    assigned_member_id: str | None = None  # 0.4.10: erst nach der Bestätigung, vorher weggelassen
 
 
 class SpeakerAssignIn(ApiModel):
@@ -576,6 +584,12 @@ class EntryOut(ApiModel):
     origin_character_id: str | None = None  # 0.4.7: nur für SL und Urheberin, sonst weggelassen
     origin_entry_id: str | None = None
     origin_version: int | None = None
+    former_holder_member_id: str | None = None  # 0.4.9: nur für die SL, sonst weggelassen
+
+
+class EntryAssignIn(ApiModel):
+    """0.4.9: Figur einem anderen Spieler geben."""
+    member_id: str = Field(max_length=36)
 
 
 # ---------- Kommentare ----------

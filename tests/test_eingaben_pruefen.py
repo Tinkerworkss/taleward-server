@@ -203,7 +203,7 @@ def test_falsche_einladungscodes_werden_gebremst(client, world):
         r = client.post(f"{API}/campaigns/join", json={"code": f"RABE-{i:08d}"}, headers=w["out"])
         assert r.status_code == 404
     r = client.post(f"{API}/campaigns/join", json={"code": "RABE-99999999"}, headers=w["out"])
-    assert r.status_code == 409 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9
+    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"  # 0.4.9 (vorher 409)
 
 
 def test_falsche_passwoerter_werden_gebremst(client, make_user):
@@ -211,7 +211,7 @@ def test_falsche_passwoerter_werden_gebremst(client, make_user):
     for _ in range(10):
         assert client.post(f"{API}/auth/login", json={"username": "dora", "password": "falsch"}).status_code == 401
     r = client.post(f"{API}/auth/login", json={"username": "dora", "password": "geheim123"})
-    assert r.status_code == 401 and r.json()["code"] == "too_many_requests"  # 429 erst mit YAML 0.4.9  # auch das richtige Passwort wartet, bis das Fenster abgelaufen ist
+    assert r.status_code == 429 and r.json()["code"] == "too_many_requests"  # 0.4.9; auch das richtige Passwort wartet, bis das Fenster abgelaufen ist
 
 
 def test_versuchszaehler_wachsen_nicht_unbegrenzt(monkeypatch):

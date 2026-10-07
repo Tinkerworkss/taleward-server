@@ -28,6 +28,8 @@ OPTIONAL_FIELDS = {"characterBackstory", "gmNotes", "hiddenFromMemberIds", "memb
                    "details",  # 0.4.7: Error.details nur bei manchen Fehlercodes
                    "characterId", "characterVersion",  # 0.4.8: nur für die Person selbst und die SL
                    "missingChunks",  # 0.4.8: ImportStatus nur bei uploading
+                   "formerHolderMemberId",  # 0.4.9: nur für die SL
+                   "assignedMemberId",  # 0.4.10: erst nach der Bestätigung der Stimmen
                    "user"}
 
 # Statuscodes, die in der YAML fehlen, aber fachlich nötig sind – für den nächsten Änderungswunsch notiert.

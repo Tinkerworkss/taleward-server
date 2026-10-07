@@ -52,8 +52,11 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
     if not acc.is_gm:
         raise errors.forbidden()
     s = acc.session
-    if s.state != "awaiting_speakers":
-        raise errors.conflict("invalid_state", "invalid_state.speakers")
+    nachtraeglich = s.state == "awaiting_review"  # 0.4.10: Zuordnung ändern und Kapitel neu schreiben
+    if s.state != "awaiting_speakers" and not nachtraeglich:
+        raise errors.conflict("wrong_state", "wrong_state.speakers")
+    if nachtraeglich and not _hat_abschrift(db, s):
+        raise errors.conflict("transcript_missing")
     stimmen = {sp.id: sp for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}
     ids = [z.speaker_id for z in body]
     if len(ids) != len(set(ids)):
@@ -80,8 +83,36 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
         sp.assigned_member_id = angegeben[sp.id] if sp.id in angegeben else sp.suggested_member_id
         sp.assigned_guest_name = gast.get(sp.id)
     db.flush()
-    stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
-    queue.stimmen_vergessen(db, s)
+    if not nachtraeglich:  # nachträglich sind Hörproben und Abdrücke längst gelöscht
+        stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
+        queue.stimmen_vergessen(db, s)
+    queue.create_summarize_job(db, s)
+    db.commit()
+    return processing_status(db, s, sprache(request))
+
+
+def _hat_abschrift(db: Session, s: GameSession) -> bool:
+    from app.models import TranscriptSegment
+
+    return db.scalar(select(TranscriptSegment.id).where(TranscriptSegment.session_id == s.id).limit(1)) is not None
+
+
+@router.post("/sessions/{sessionId}/resummarize", tags=["Sessions"], status_code=202,
+             response_model=schemas.ProcessingStatusOut)
+def resummarize(sessionId: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """0.4.10: Kapitel aus der vorhandenen Abschrift neu schreiben (nur SL, nur awaiting_review).
+
+    Recap, offene Fäden, Vorschläge und Prüfteil entstehen neu (Speichern ersetzt sie); Bearbeitungen am Entwurf und
+    Entscheidungen zu Vorschlägen fallen damit weg. SL-Notiz, Korrekturen, Stimmenzuordnung, Anwesenheit und
+    Kommentare bleiben. Kosten und Cloud-Freigabe wie bei jeder Zusammenfassung."""
+    acc = load_session(db, sessionId, user)
+    if not acc.is_gm:
+        raise errors.forbidden()
+    s = acc.session
+    if s.state != "awaiting_review":
+        raise errors.conflict("wrong_state", "wrong_state.resummarize")
+    if not _hat_abschrift(db, s):
+        raise errors.conflict("transcript_missing")
     queue.create_summarize_job(db, s)
     db.commit()
     return processing_status(db, s, sprache(request))

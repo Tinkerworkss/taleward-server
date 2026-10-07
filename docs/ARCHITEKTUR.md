@@ -86,6 +86,14 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
   - Die Chronik enthält nur, was die Person ohnehin sehen darf, und keine Namen anderer Personen.
   - Ab 0.4.8 sehen `characterId` und `characterVersion` nur die Person selbst und die SL – die Kennung ist der
     Schlüssel zu einem offenen Platz.
+  - Ab 0.4.9 (`app/figuren.py`): Verlässt ein Spieler die Kampagne oder löscht sein Konto, bleibt seine Figur als
+    Geschichte stehen, und die SL bekommt einen Hinweis (`character_orphaned`). Sie macht daraus einen NSC oder gibt
+    die Figur einem anderen Spieler. Hintergrund, Kommentare, Zustimmungen, Kennung und Porträt der Person gehen nicht
+    mit. Wer die Figur früher gespielt hat, sieht nur die SL.
+- **Kapitel neu schreiben (ab 0.4.10):** Die SL lässt ein Kapitel in der Prüfung aus der vorhandenen Abschrift neu
+  schreiben, auch nach einer geänderten Stimmenzuordnung. Bearbeitungen am Entwurf und Entscheidungen zu Vorschlägen
+  fallen dabei weg; SL-Notiz, Korrekturen und Anwesenheit bleiben. Die Vorschau einer Einladung (`GET /invites/{code}`)
+  nennt ohne Anmeldung nur den Kampagnentitel und ist wie der Beitritt gegen Durchprobieren begrenzt.
 - **Kampagnen-Umzug (ab 0.4.8, `app/umzug.py`, Dateiformat in [UMZUG.md](UMZUG.md)):**
   - Server sprechen nie miteinander. Die SL packt die Kampagne als Datei und legt sie auf einem anderen Server wieder
     an. Packen und Anlegen laufen im Server selbst, ohne Worker und ohne Sprachmodell.

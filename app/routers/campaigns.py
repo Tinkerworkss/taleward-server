@@ -60,6 +60,26 @@ JOIN_FENSTER = 15 * 60
 JOIN_JE_KONTO, JOIN_JE_ADRESSE = 10, 30  # falsche Codes im Fenster
 
 
+@router.get("/invites/{code}", response_model=schemas.InvitePreviewOut)
+def invite_preview(code: str, request: Request, response: Response, db: Session = Depends(get_db)):
+    """0.4.10: Vorschau ohne Anmeldung – Kampagnentitel und bei Platz-Einladungen der Name der Figur. Mehr nicht.
+    Fehlversuche zählen je Adresse wie beim Beitritt."""
+    from app.begrenzung import ZAEHLER
+
+    response.headers["Cache-Control"] = "no-store"
+    adresse = request.client.host if request.client else "?"
+    if ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
+        raise errors.ApiError(429, "too_many_requests")
+    inv = db.get(Invite, normalize_invite_code(code[:64]))
+    c = db.get(Campaign, inv.campaign_id) if inv is not None else None
+    platz = db.get(Member, inv.member_id) if inv is not None and inv.member_id else None
+    if inv is None or c is None or inv.expires_at <= utcnow() or (inv.member_id and (platz is None or not platz.open_seat)):
+        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
+        raise errors.ApiError(404, "invite_invalid")
+    return schemas.InvitePreviewOut(campaign_title=c.title, expires_at=inv.expires_at,
+                                    seat_character_name=platz.character_name if platz else None)
+
+
 @router.post("/campaigns/join", response_model=schemas.CampaignOut, response_model_exclude_unset=True)
 def join(body: schemas.JoinRequest, request: Request, user: User = Depends(current_user),
          db: Session = Depends(get_db)):
@@ -68,8 +88,7 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
     adresse = request.client.host if request.client else "?"
     if ZAEHLER.voll(f"join-konto:{user.id}", JOIN_JE_KONTO, JOIN_FENSTER) or \
             ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
-        # 409 statt 429, solange die Schnittstelle 429 hier nicht vorsieht (YAML 0.4.8); Code und Text sagen es
-        raise errors.ApiError(409, "too_many_requests")
+        raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 409 mit demselben code)
     inv = db.get(Invite, normalize_invite_code(body.code))
     if inv is None or inv.expires_at <= utcnow():
         ZAEHLER.zaehlen(f"join-konto:{user.id}", JOIN_FENSTER)
@@ -105,6 +124,9 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
         elif frueher is not None:  # verlassen oder entfernt: mit neuer Einladung wieder aktiv (0.4.5), als Spieler
             me = frueher
             me.left_at, me.role, me.joined_at = None, "player", utcnow()
+            from app import figuren
+
+            figuren.aufraeumen(db, c.id)  # 0.4.9: die Figur hat ihren Halter wieder
             me.chronicle_seen_at = me.bible_seen_at = None
             if body.character is not None and me.character_id not in (None, body.character.id.lower()):
                 charaktere.loesen(db, me)  # mit einem anderen Charakter zurück
@@ -261,6 +283,9 @@ def remove_member(campaignId: str, memberId: str, user: User = Depends(current_u
     set_move_consent(db, target, False)  # 0.4.8
     target.character_backstory = None
     target.left_at = utcnow()
+    from app import figuren
+
+    figuren.verwaist_melden(db, target)  # 0.4.9: Hinweis an die SL, was aus der Figur wird
     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))
     db.execute(DateVote.__table__.delete().where(DateVote.member_id == target.id))
     db.commit()

@@ -449,6 +449,7 @@ def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.En
     if is_gm:
         daten["gm_notes"] = e.gm_notes
         daten["hidden_from_member_ids"] = sorted(e.hidden_member_ids)
+        daten["former_holder_member_id"] = e.former_holder_member_id  # 0.4.9
     if is_gm or (viewer_id is not None and viewer_id == e.origin_member_id):
         daten.update(origin_character_id=e.origin_character_id, origin_entry_id=e.origin_entry_id,
                      origin_version=e.origin_version)

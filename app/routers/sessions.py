@@ -137,15 +137,24 @@ def session_seen(sessionId: str, user: User = Depends(current_user), db: Session
 
 
 # ---------- Stimmen ----------
-@router.get("/sessions/{sessionId}/speakers", tags=["Stimmen"], response_model=list[schemas.SpeakerOut])
+BESTAETIGT = ("summarizing", "awaiting_review", "published", "failed")
+
+
+@router.get("/sessions/{sessionId}/speakers", tags=["Stimmen"], response_model=list[schemas.SpeakerOut],
+            response_model_exclude_unset=True)
 def list_speakers(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Auch nach der Bestätigung (0.4.10): dann mit assignedMemberId; vorher fehlt das Feld."""
     s = load_session_gm(db, sessionId, user).session
-    return [
-        schemas.SpeakerOut(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
-                           suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
-                           assigned_guest_name=sp.assigned_guest_name)
-        for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position))
-    ]
+    bestaetigt = s.state in BESTAETIGT
+    aus = []
+    for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id).order_by(Speaker.position)):
+        daten = dict(id=sp.id, label=sp.label, speaking_seconds=sp.speaking_seconds, sample_text=sp.sample_text,
+                     suggested_member_id=sp.suggested_member_id, confidence=sp.confidence, source=sp.source,
+                     assigned_guest_name=sp.assigned_guest_name)
+        if bestaetigt:
+            daten["assigned_member_id"] = sp.assigned_member_id
+        aus.append(schemas.SpeakerOut(**daten))
+    return aus
 
 
 @router.get("/sessions/{sessionId}/speakers/{speakerId}/sample", tags=["Stimmen"])
