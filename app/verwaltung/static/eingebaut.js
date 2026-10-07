@@ -16,3 +16,24 @@
   regler.addEventListener("input", zeigen);
   zeigen();
 })();
+
+// Verwaltung → Zusammenfassung: Anbieter-Auswahl zeigt den passenden Hinweis, trägt Adresse und empfohlenes Modell
+// ein und blendet die Bestätigung nur ein, wenn sie nötig ist. Ohne JavaScript bleiben alle Hinweise aufklappbar.
+(function () {
+  var wahl = document.getElementById("anbieter-wahl");
+  if (!wahl) return;
+  var url = document.getElementById("anbieter-url");
+  var modell = document.getElementById("anbieter-modell");
+  var bestaetigung = document.getElementById("anbieter-bestaetigung");
+  var infos = document.querySelectorAll(".anbieter-info");
+  var vorher = wahl.value;
+  function zeigen(gewechselt) {
+    var o = wahl.options[wahl.selectedIndex];
+    for (var i = 0; i < infos.length; i++) { infos[i].open = infos[i].dataset.anbieter === wahl.value; }
+    if (url) { url.disabled = wahl.value !== "andere"; if (gewechselt && wahl.value !== "andere") url.value = ""; }
+    if (modell && gewechselt && o.dataset.modell) modell.value = o.dataset.modell;
+    if (bestaetigung) bestaetigung.hidden = o.dataset.eu === "1";
+  }
+  wahl.addEventListener("change", function () { zeigen(wahl.value !== vorher); vorher = wahl.value; });
+  zeigen(false);
+})();

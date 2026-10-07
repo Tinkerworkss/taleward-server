@@ -109,11 +109,12 @@ du unter **Zusammenfassung** fest:
 
 | Wahl | Wie | Gut zu wissen |
 |---|---|---|
-| **Cloud-API** | Mistral Large (EU) oder ein anderer OpenAI-kompatibler Anbieter | Etwa 6 Cent pro 4-Stunden-Session. Der Text der Session geht an den Anbieter – Vertrag zur Auftragsverarbeitung nötig. Die Spielleitung muss es je Kampagne erlauben. |
+| **Cloud-API** | Mistral (EU) oder ein anderer Anbieter mit OpenAI-kompatibler Schnittstelle – die Verwaltung kennt Voreinstellungen für Mistral, IONOS, STACKIT, Scaleway, OVHcloud, OpenAI, Google, Anthropic und DeepSeek und zeigt je Anbieter Standort, Umgang mit Trainingsdaten und den Weg zum Schlüssel | Etwa 6 Cent pro 4-Stunden-Session bei Mistral. Der Text der Session geht an den Anbieter – Vertrag zur Auftragsverarbeitung nötig; außerhalb der EU verlangt die Verwaltung eine Bestätigung. Die Spielleitung muss es je Kampagne erlauben. „Verbindung prüfen“ zeigt, ob Schlüssel und Modell passen. |
 | **Lokales Modell** | Ollama auf einem Worker (Worker-App: „Recaps auch auf diesem PC schreiben“; Docker: [Ollama-Container](../INSTALLATION.md#recaps-auf-eigener-hardware-ollama)) | Nichts verlässt den Verein. Ein Recap dauert etwa 10–20 Minuten; kleinere Modelle schreiben schwächer. |
 | **Testmodus** | Platzhaltertext | Zum Ausprobieren ohne Sprachmodell. |
 
-Bei Mistral kann der Schlüssel der externen Transkription mitgenutzt werden. Ein **Kostenlimit** pro Monat
+Bei Mistral kann der Schlüssel der externen Transkription mitgenutzt werden. Im kostenlosen Mistral-Tarif dürfen
+Daten zum Training genutzt werden; die Verwaltung beschreibt, wo sich das abschalten lässt. Ein **Kostenlimit** pro Monat
 (Einstellungen → Kosten) gilt für Cloud-Transkription und Cloud-Zusammenfassung zusammen; ist es erreicht, warten die
 Aufträge bis zum nächsten Monat.
 

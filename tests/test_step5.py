@@ -350,6 +350,65 @@ def test_verwaltung_zusammenfassung(client, dbs, admin):  # noqa: F811
     assert "Noch kein Worker mit Ollama" in client.get("/verwaltung/zusammenfassung").text
 
 
+def test_verwaltung_cloud_anbieter(client, dbs, admin, monkeypatch):  # noqa: F811
+    """Voreinstellungen je Anbieter, Bestätigung außerhalb der EU, „Verbindung prüfen“ mit Modellliste."""
+    from app import cloudanbieter
+    from app.einstellungen import llm_konfig
+    from app.verwaltung import router as vr
+
+    url = "/verwaltung/zusammenfassung"
+    seite = client.get(url).text
+    for a in cloudanbieter.ANBIETER:  # jeder Anbieter mit Standort, Training und Schlüsselweg, Stand-Datum
+        assert a.name in seite and a.training in seite and a.anmeldung in seite
+    assert cloudanbieter.STAND in seite and "ohne Gewähr" in seite
+    basis = {"csrf": admin, "art": "api", "api_modell": "x", "lokal_modell": "auto", "lokal_kontext": "12288",
+             "api_key": "sk-abcdefghijklmnop1234"}
+    # EU-Anbieter: Adresse kommt aus der Tabelle, keine Bestätigung nötig
+    r = client.post(url, data={**basis, "anbieter": "ionos", "api_url": "https://boese.example/v1"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    k = llm_konfig(dbs)
+    assert k.api_url == "https://openai.inference.de-txl.ionos.com/v1" and k.anbieter_id == "ionos"
+    # außerhalb der EU und „Anderer“: nur mit Bestätigung
+    r = client.post(url, data={**basis, "anbieter": "openai"})
+    assert r.status_code == 400 and "außerhalb der EU" in r.text
+    r = client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1"})
+    assert r.status_code == 400
+    r = client.post(url, data={**basis, "anbieter": "openai", "ausserhalb_eu": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and llm_konfig(dbs).api_url == "https://api.openai.com/v1"
+    assert client.post(url, data={**basis, "anbieter": "unbekannt"}).status_code == 400
+    # Lokal oder Testmodus brauchen keine Bestätigung, auch wenn der Anbieter außerhalb der EU steht
+    assert client.post(url, data={**basis, "art": "attrappe", "anbieter": "openai"}, follow_redirects=False).status_code == 303
+    client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1", "ausserhalb_eu": "1"})
+    assert llm_konfig(dbs).anbieter_id == "andere"
+    seite = client.get(url).text
+    assert 'value="https://llm.verein.example/v1"' in seite and "Verbindung prüfen" in seite
+
+    # Verbindung prüfen: nachgebauter Anbieter
+    aufrufe = []
+
+    def anbieter(req: httpx.Request) -> httpx.Response:
+        aufrufe.append((req.method, req.url.path, req.headers.get("authorization")))
+        if req.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "x"}, {"id": "gross"}]})
+        if "falsch" in (req.headers.get("authorization") or ""):
+            return httpx.Response(401, json={"message": "nein"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": true}'}}],
+                                         "usage": {"prompt_tokens": 20, "completion_tokens": 5}})
+
+    echt = httpx.Client
+    monkeypatch.setattr(vr.httpx, "Client", lambda **kw: echt(transport=httpx.MockTransport(anbieter)))
+    r = client.post(url + "/pruefen", data={"csrf": admin})
+    assert r.status_code == 200 and "Verbindung steht" in r.text and "gross, x" in r.text
+    assert aufrufe[0][1] == "/v1/models" and aufrufe[1][1] == "/v1/chat/completions"
+    assert all(a[2] == "Bearer sk-abcdefghijklmnop1234" for a in aufrufe)
+    client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1",
+                           "ausserhalb_eu": "1", "api_key": "sk-falsch-abcdefghijklmnop"})
+    r = client.post(url + "/pruefen", data={"csrf": admin})
+    assert "Prüfung fehlgeschlagen" in r.text and "lehnt den API-Schlüssel ab" in r.text
+    assert client.post(url + "/pruefen", data={}).status_code == 403  # CSRF
+
+
 def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
     from typer.testing import CliRunner
 

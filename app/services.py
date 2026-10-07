@@ -27,14 +27,18 @@ def _utc(dt: datetime | None) -> datetime | None:
 
 # ---------- Konten & Organisation ----------
 def cloud_anbieter(k) -> str:
-    """Kennung des Cloud-Anbieters für ServerInfo.cloudSummary."""
+    """Kennung des Cloud-Anbieters für ServerInfo.cloudSummary: bekannte Anbieter mit ihrer Kennung
+    (app/cloudanbieter.py), sonst der Host der eingestellten Adresse."""
     from urllib.parse import urlsplit
 
-    return "mistral" if k.ist_mistral else (urlsplit(k.api_url).hostname or "api")
+    a = k.anbieter
+    return a.id if a else (urlsplit(k.api_url).hostname or "api")
 
 
 def cloud_anbieter_name(k) -> str:
-    return "Mistral" if k.ist_mistral else cloud_anbieter(k)
+    """Lesbarer Name für Hinweise an Nutzer („… über Mistral (EU)“)."""
+    a = k.anbieter
+    return a.name if a else cloud_anbieter(k)
 
 
 def user_out(u: User) -> schemas.UserOut:

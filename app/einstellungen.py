@@ -162,6 +162,18 @@ class LlmKonfig:
         return "api.mistral.ai" in self.api_url
 
     @property
+    def anbieter(self):
+        """Bekannter Cloud-Anbieter zur Adresse (app/cloudanbieter.py) oder None bei eigener Adresse."""
+        from app import cloudanbieter
+
+        return cloudanbieter.erkennen(self.api_url)
+
+    @property
+    def anbieter_id(self) -> str:
+        a = self.anbieter
+        return a.id if a else "andere"
+
+    @property
     def bereit(self) -> bool:
         """Kann die Zentrale selbst zusammenfassen (Attrappe oder API mit Schlüssel)?"""
         return self.art == "attrappe" or (self.art == "api" and bool(self.api_key))

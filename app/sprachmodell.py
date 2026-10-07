@@ -109,6 +109,35 @@ class OpenAIKlient:
         ein, aus = self.cent_pro_mio
         return round((tokens_in * ein + tokens_out * aus) / 1_000_000)
 
+    def modelle(self) -> list[str] | None:
+        """GET {url}/models – welche Modelle der Schlüssel nutzen darf. None, wenn der Anbieter das nicht anbietet."""
+        try:
+            r = self.client.get(f"{self.url}/models", headers=self.headers, timeout=30.0)
+        except httpx.HTTPError:
+            return None
+        if r.status_code in (401, 403):
+            raise SprachmodellFehler("Der Anbieter lehnt den API-Schlüssel ab.", erneut=False)
+        if r.status_code >= 400:
+            return None
+        try:
+            daten = r.json().get("data") or []
+            namen = sorted(str(m.get("id")) for m in daten if isinstance(m, dict) and m.get("id"))
+        except (ValueError, AttributeError):
+            return None
+        return namen
+
+    def pruefen(self) -> dict:
+        """Kleiner Probeaufruf: erreichbar, Schlüssel gültig, Modell vorhanden, JSON kommt an.
+
+        Liefert {"json": bool, "tokens": int, "modelle": list | None}; Fehler als SprachmodellFehler."""
+        modelle = self.modelle()
+        a = self.chat('Antworte nur mit dem JSON-Objekt {"ok": true}.', 'Bitte {"ok": true} zurückgeben.')
+        try:
+            json_ok = bool(json.loads(a.text).get("ok"))
+        except (ValueError, AttributeError):
+            json_ok = False
+        return {"json": json_ok, "tokens": a.tokens_in + a.tokens_out, "modelle": modelle}
+
 
 class OllamaKlient:
     """Ollama auf dem lokalen Server (native Schnittstelle, weil nur sie die Kontextgröße einstellen lässt).

@@ -26,6 +26,9 @@ def ui_texte() -> set[str]:
     texte |= set(re.findall(r'Punkt\("\w+", "([^"]+)"', e))
     m = re.search(r"MELDUNGEN = \{(.*?)\n\}", r, re.S)
     texte |= set(re.findall(r':\s*"((?:[^"\\]|\\.)*)"', m.group(1)))
+    from app import cloudanbieter
+
+    texte |= cloudanbieter.texte()
     return texte
 
 

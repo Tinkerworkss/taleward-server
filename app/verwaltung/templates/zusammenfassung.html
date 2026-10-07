@@ -35,22 +35,37 @@
     <fieldset>
       <legend>{{ _("Cloud-API") }}</legend>
       <label>{{ _("Anbieter") }}
-        <select name="anbieter">
-          <option value="mistral" {% if llm.mistral %}selected{% endif %}>Mistral (EU)</option>
-          <option value="andere" {% if not llm.mistral %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
+        <select name="anbieter" id="anbieter-wahl">
+          {% for a in llm.anbieter %}<option value="{{ a.id }}" data-url="{{ a.url }}" data-modell="{{ a.modell }}" data-eu="{{ 1 if a.eu else 0 }}" {% if llm.gewaehlt == a.id %}selected{% endif %}>{{ a.name }}</option>
+          {% endfor %}<option value="andere" data-url="" data-modell="" data-eu="0" {% if llm.gewaehlt == "andere" %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
         </select></label>
+      {% for a in llm.anbieter %}
+      <details class="anbieter-info" data-anbieter="{{ a.id }}"{% if llm.gewaehlt == a.id %} open{% endif %}>
+        <summary>{{ a.name }}: {{ _("Standort, Training, Schlüssel") }}</summary>
+        <p class="hilfe"><strong>{{ _("Verarbeitung:") }}</strong> {{ _(a.sitz) }}{% if not a.eu %} – {{ _("außerhalb der EU") }}{% endif %}</p>
+        <p class="hilfe"><strong>{{ _("Training mit euren Daten:") }}</strong> {{ _(a.training) }}</p>
+        <p class="hilfe"><strong>{{ _("Schlüssel holen:") }}</strong> {{ _(a.anmeldung) }}</p>
+        {% if a.hinweis %}<p class="hilfe">{{ _(a.hinweis) }}</p>{% endif %}
+        <p class="hilfe">{{ _("Angaben des Anbieters, Stand {datum}, ohne Gewähr – bitte selbst prüfen.", datum=llm.stand) }}{% if a.hilfe %} <a href="{{ a.hilfe }}" rel="noopener noreferrer" target="_blank">{{ _("Dokumentation des Anbieters") }}</a>{% endif %}</p>
+      </details>
+      {% endfor %}
+      <details class="anbieter-info" data-anbieter="andere"{% if llm.gewaehlt == "andere" %} open{% endif %}>
+        <summary>{{ _("Anderer Anbieter: was zu beachten ist") }}</summary>
+        <p class="hilfe">{{ _("Jeder Anbieter mit OpenAI-kompatibler Schnittstelle (Adresse endet meist auf /v1). Wo er verarbeitet und ob er mit euren Daten trainiert, müsst ihr selbst nachlesen. Sammeldienste, die Anfragen an wechselnde Rechenzentren verteilen, lassen sich dabei nicht einschätzen.") }}</p>
+      </details>
       <label>{{ _("Adresse (nur bei „Anderer“)") }}
-        <input type="url" name="api_url" value="{{ '' if llm.mistral else k.api_url }}" placeholder="https://…/v1" maxlength="300"></label>
-      <label>{{ _("Modell") }} <input type="text" name="api_modell" value="{{ k.api_modell }}" maxlength="100" required>
-        <span class="hilfe">{{ _("Empfohlen: mistral-large-latest (gute Recaps, etwa 6 Cent pro Session).") }}</span></label>
+        <input type="url" name="api_url" id="anbieter-url" value="{{ k.api_url if llm.gewaehlt == "andere" else '' }}" placeholder="https://…/v1" maxlength="300"></label>
+      <label>{{ _("Modell") }} <input type="text" name="api_modell" id="anbieter-modell" value="{{ k.api_modell }}" maxlength="100" required>
+        <span class="hilfe">{{ _("Beim Wechsel des Anbieters wird das empfohlene Modell eingetragen; „Verbindung prüfen“ zeigt, welche Modelle der Schlüssel nutzen darf.") }}</span></label>
       <label>{{ _("API-Schlüssel") }}
-        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('von console.mistral.ai') }}">
+        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
         <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
       {% if k.eigener_key %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
       <label>{{ _("Preis je 1 Mio. Tokens in Cent (ein / aus)") }}
         <span class="zeile"><input type="text" name="cent_ein" value="{{ '%g'|format(k.cent_ein) if k.cent_ein is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[0]) if llm.preis else '' }}">
         <input type="text" name="cent_aus" value="{{ '%g'|format(k.cent_aus) if k.cent_aus is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[1]) if llm.preis else '' }}"></span>
-        <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle.") }}</span></label>
+        <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle; bei anderen Anbietern bitte von deren Preisseite übernehmen.") }}</span></label>
+      <label class="haken" id="anbieter-bestaetigung"><input type="checkbox" name="ausserhalb_eu" value="1"> {{ _("Ich weiß, dass dieser Anbieter außerhalb der EU verarbeitet oder hier nicht beschrieben ist, und schließe den Vertrag zur Auftragsverarbeitung selbst ab.") }}</label>
     </fieldset>
 
     <fieldset>
@@ -72,6 +87,20 @@
     </fieldset>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
   </form>
+  <script src="/verwaltung/static/eingebaut.js" defer></script>
+  {% if k.art == "api" %}
+  <form method="post" action="/verwaltung/zusammenfassung/pruefen" class="formular">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div><button class="tw-btn" type="submit">{{ _("Verbindung prüfen") }}</button>
+      <span class="hilfe">{{ _("Ein kleiner Aufruf mit den gespeicherten Einstellungen (kostet einen Bruchteil eines Cents).") }}</span></div>
+  </form>
+  {% if pruefung %}
+  <div class="meldung{% if not pruefung.ok %} meldung--fehler{% endif %}" role="status">{{ pruefung.text }}
+    {% if pruefung.modelle %}<details><summary>{{ _("Modelle, die der Schlüssel nutzen darf ({n})", n=pruefung.modelle|length) }}</summary>
+      <p class="hilfe">{{ pruefung.modelle|join(", ") }}</p></details>{% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
   <p class="hilfe">{{ _("Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.") }}</p>
 </div>
 

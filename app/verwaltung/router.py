@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+import httpx
 import jwt
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -476,13 +477,13 @@ def _knechte(db: Session) -> list[dict]:
 
 
 def _extern_anzeige(db: Session) -> dict:
-    from app import extern
+    from app import cloudanbieter, extern
     from app.einstellungen import extern_konfig
 
     k = extern_konfig(db)
     return {"anbieter": k.anbieter, "anbieter_name": extern.ANBIETER.get(k.anbieter or ""), "gewaehlt": k.gewaehlt,
             "key_ende": (k.api_key or "")[-4:] if k.api_key else None, "stunden": k.stunden,
-            "cent": k.cent_pro_minute, "quelle": k.quelle,
+            "cent": k.cent_pro_minute, "quelle": k.quelle, "stand": cloudanbieter.STAND,
             "kampagnen": db.scalar(select(func.count()).select_from(Campaign)
                                    .where(Campaign.allow_external_transcription.is_(True)))}
 
@@ -681,14 +682,13 @@ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str = 
 
 
 # ---------------------------------------------------------------- Zusammenfassung (Sprachmodell)
-MISTRAL_URL = "https://api.mistral.ai/v1"
 TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-Aufruf zusammen
 
 
 def _llm_anzeige(db: Session) -> dict:
     from app.einstellungen import extern_konfig, llm_konfig
     from app.sprachmodell import PREISE
-    from app import woerterbuch
+    from app import cloudanbieter, woerterbuch
     from app.zusammenfassung import gegenpruefen_an
 
     k = llm_konfig(db)
@@ -701,16 +701,49 @@ def _llm_anzeige(db: Session) -> dict:
             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
                                   for kn in worker), "gegenpruefen": gegenpruefen_an(db),
-             "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")}}
+             "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")},
+             "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND}
 
 
 @router.get("/zusammenfassung", response_class=HTMLResponse)
 def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db),
-                          fehler: str = ""):
+                          fehler: str = "", pruefung: dict | None = None):
     from app import kapitelprobe as probelauf
 
     return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
-                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10])
+                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10], pruefung=pruefung)
+
+
+@router.post("/zusammenfassung/pruefen", dependencies=[Depends(csrf_pruefen)])
+def zusammenfassung_pruefen(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    """Verbindung prüfen: ein kleiner Aufruf mit den gespeicherten Einstellungen – erreichbar, Schlüssel, Modell,
+    JSON. Zeigt auch die Modelle, die der Schlüssel nutzen darf (wenn der Anbieter das verrät)."""
+    from app.einstellungen import llm_konfig
+    from app.sprachmodell import OpenAIKlient, SprachmodellFehler
+
+    _ = tr(request)
+    k = llm_konfig(db)
+    if not k.api_key:
+        ergebnis = {"ok": False, "text": _("Es fehlt der API-Schlüssel – bitte erst speichern.")}
+    else:
+        klient = OpenAIKlient(k.api_url, k.api_key, k.api_modell,
+                              client=httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0)))
+        try:
+            e = klient.pruefen()
+            if e["json"]:
+                text = _("Verbindung steht: {modell} antwortet und liefert JSON.", modell=k.api_modell)
+            else:
+                text = _("{modell} antwortet, aber nicht im JSON-Modus – das kann zu Wiederholungen führen.",
+                         modell=k.api_modell)
+            ergebnis = {"ok": e["json"], "text": text, "modelle": e["modelle"]}
+        except SprachmodellFehler as f:
+            ergebnis = {"ok": False, "text": _("Prüfung fehlgeschlagen: {grund}", grund=str(f))}
+            try:  # Modellliste hilft oft weiter, wenn nur der Modellname nicht stimmt
+                ergebnis["modelle"] = klient.modelle()
+            except SprachmodellFehler:
+                pass
+    antwort = zusammenfassung_seite(request, user, db, pruefung=ergebnis)
+    return antwort
 
 
 def _runden_mit_abschrift(db: Session) -> list[dict]:
@@ -786,8 +819,10 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
+                              ausserhalb_eu: str = Form(""),
                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
     """Wer Recap und Vorschläge schreibt. Überschreibt die .env; der Schlüssel wird nie angezeigt."""
+    from app import cloudanbieter
     from app.einstellungen import LLM_ARTEN, llm_konfig
 
     _ = tr(request)
@@ -797,11 +832,14 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
         antwort.status_code = 400
         return antwort
 
-    if art not in LLM_ARTEN or anbieter not in ("mistral", "andere"):
+    bekannt = cloudanbieter.finden(anbieter)
+    if art not in LLM_ARTEN or (bekannt is None and anbieter != "andere"):
         return fehler(_("Unbekannte Auswahl."))
-    url = MISTRAL_URL if anbieter == "mistral" else api_url.strip().rstrip("/")
+    url = bekannt.url if bekannt else api_url.strip().rstrip("/")
     if not url.startswith("https://") and not url.startswith("http://localhost"):
         return fehler(_("Die Adresse muss mit https:// beginnen."))
+    if art == "api" and (bekannt is None or not bekannt.eu) and not ausserhalb_eu:
+        return fehler(_("Bitte bestätigen, dass die Verarbeitung außerhalb der EU bzw. bei einem nicht beschriebenen Anbieter gewollt ist und der Vertrag zur Auftragsverarbeitung geschlossen wird."))  # noqa: E501
     modell, lokal = api_modell.strip(), lokal_modell.strip()
     if not modell or not lokal or len(modell) > 100 or len(lokal) > 100:
         return fehler(_("Bitte die Modellnamen angeben."))
@@ -899,7 +937,6 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
 
     limit = kosten.limit_cent(db)
     from app import webapp
-    from app.config import get_settings
 
     from app import aufbewahrung
 
