@@ -1,0 +1,720 @@
+From fe090c33403ca1e3708261d5c3b801c2297f4deb Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:42:32 +0200
+Subject: [PATCH] Verwaltung: Cloud-Anbieter mit Voreinstellungen, Hinweisen
+ und Verbindungspruefung (Server 0.4.52)
+
+Die Cloud-Zusammenfassung kennt jetzt neun Anbieter mit OpenAI-kompatibler Schnittstelle (Mistral, IONOS, STACKIT,
+Scaleway, OVHcloud, OpenAI, Google, Anthropic, DeepSeek) plus "Anderer": Adresse und empfohlenes Modell werden
+vorbelegt; je Anbieter stehen Standort der Verarbeitung, Umgang mit Trainingsdaten (inkl. Abschaltweg) und der Weg
+zum Schluessel in der Verwaltung, mit Datum der Angaben und ohne Gewaehr. Verarbeitung ausserhalb der EU oder bei
+einem nicht beschriebenen Anbieter verlangt eine Bestaetigung. "Verbindung pruefen" macht einen kleinen Aufruf
+(Schluessel, Modell, JSON-Modus) und zeigt die Modelle, die der Schluessel nutzen darf. ServerInfo.cloudSummary
+nennt bekannte Anbieter mit ihrer Kennung, Hinweise an Nutzer mit dem Namen. Transkriptionsseite: Hinweis zum
+Training im kostenlosen Mistral-Tarif.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/cloudanbieter.py                          | 126 ++++++++++++++++++
+ app/einstellungen.py                          |  12 ++
+ app/services.py                               |  10 +-
+ app/sprachmodell.py                           |  29 ++++
+ app/verwaltung/i18n.py                        |  57 ++++++++
+ app/verwaltung/router.py                      |  57 ++++++--
+ app/verwaltung/static/eingebaut.js            |  21 +++
+ app/verwaltung/static/verwaltung.css          |   1 +
+ app/verwaltung/templates/transkription.html   |   1 +
+ app/verwaltung/templates/zusammenfassung.html |  45 +++++--
+ docs/BETRIEB.md                               |   5 +-
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_step5.py                           |  59 ++++++++
+ tests/test_verwaltung2.py                     |   3 +
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 19 files changed, 409 insertions(+), 29 deletions(-)
+ create mode 100644 app/cloudanbieter.py
+
+diff --git a/app/cloudanbieter.py b/app/cloudanbieter.py
+new file mode 100644
+index 0000000..5cd92bf
+--- /dev/null
++++ b/app/cloudanbieter.py
+@@ -0,0 +1,126 @@
++"""Bekannte Cloud-Anbieter für die Zusammenfassung (OpenAI-kompatible Schnittstelle).
++
++Die Tabelle ist eine Hilfe für die Verwaltung: Adresse, empfohlenes Modell, Standort der Verarbeitung, was der
++Anbieter zum Training mit Kundendaten sagt, und wie man an einen Schlüssel kommt. Die Angaben stammen von den
++Seiten der Anbieter (Datum in STAND) und sind ohne Gewähr – Betreiber prüfen sie selbst und schließen den Vertrag zur
++Auftragsverarbeitung selbst ab. Wer hier nicht steht, lässt sich als „Anderer“ mit eigener Adresse eintragen.
++
++Texte sind Deutsch; die englischen Fassungen stehen in app/verwaltung/i18n.py (Test: jeder Text ist übersetzt).
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from urllib.parse import urlsplit
++
++STAND = "2026-10-07"  # Datum, an dem die Angaben zuletzt geprüft wurden – in der Verwaltung sichtbar
++
++
++@dataclass(frozen=True)
++class Anbieter:
++    id: str
++    name: str
++    url: str  # OpenAI-kompatible Basisadresse (…/v1)
++    modell: str  # empfohlenes Modell
++    eu: bool  # Verarbeitung in der EU
++    sitz: str  # wo verarbeitet wird (Text für die Verwaltung)
++    training: str  # was der Anbieter zum Training mit Kundendaten sagt
++    anmeldung: str  # Klickpfad zum Schlüssel
++    hinweis: str = ""  # Besonderheiten (Schnittstelle, Modelle)
++    hilfe: str = ""  # Adresse der Anbieter-Dokumentation
++
++
++ANBIETER: tuple[Anbieter, ...] = (
++    Anbieter("mistral", "Mistral (EU)", "https://api.mistral.ai/v1", "mistral-large-latest", True,
++             "Frankreich / EU",
++             "Im kostenlosen Tarif („Experiment“) darf Mistral Ein- und Ausgaben zum Training nutzen; im bezahlten Tarif "
++             "lässt es sich abschalten. Abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Der "
++             "Schalter für Vibe ist ein eigener und zählt hier nicht.",
++             "console.mistral.ai → Konto anlegen → Workspace → „API Keys“ → „Create new key“ → Schlüssel kopieren. Für "
++             "den bezahlten Tarif unter „Billing“ eine Zahlungsart hinterlegen.",
++             "Preise der Mistral-Modelle sind hinterlegt; der Schlüssel der externen Transkription gilt auch hier.",
++             "https://docs.mistral.ai"),
++    Anbieter("ionos", "IONOS AI Model Hub (DE)", "https://openai.inference.de-txl.ionos.com/v1",
++             "openai/gpt-oss-120b", True, "Deutschland (Berlin)",
++             "Laut IONOS werden Kundendaten nie zum Training genutzt und nicht gespeichert; Vertrag zur "
++             "Auftragsverarbeitung ist Teil des Vertrags.",
++             "cloud.ionos.de → Konto anlegen → im Data Center Designer ein Zugriffs-Token erzeugen → Token kopieren. Den genauen "
++             "Weg beschreibt die IONOS-Dokumentation (Link unten).",
++             "Offene Modelle (gpt-oss, Llama, Qwen). Die genauen Modellnamen zeigt „Verbindung prüfen“.",
++             "https://docs.ionos.com/cloud/ai/ai-model-hub"),
++    Anbieter("stackit", "STACKIT AI Model Serving (DE)",
++             "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1", "openai/gpt-oss-120b", True,
++             "Deutschland (Neckarsulm)",
++             "Laut STACKIT kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung über das Kundenkonto.",
++             "portal.stackit.cloud → Konto und Projekt anlegen → „AI Model Serving“ → Token erzeugen → Token kopieren. Den genauen "
++             "Weg beschreibt die STACKIT-Dokumentation (Link unten).",
++             "Offene Modelle (gpt-oss, Llama, Qwen, Gemma). Die genauen Modellnamen zeigt „Verbindung prüfen“.",
++             "https://docs.stackit.cloud"),
++    Anbieter("scaleway", "Scaleway Generative APIs (FR)", "https://api.scaleway.ai/v1", "gpt-oss-120b", True,
++             "Frankreich (Paris)",
++             "Laut Scaleway kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung in den AGB.",
++             "console.scaleway.com → Konto anlegen → „IAM“ → „API keys“ → „Generate API key“ → Secret key kopieren.",
++             "Offene Modelle. Die genauen Modellnamen zeigt „Verbindung prüfen“.",
++             "https://www.scaleway.com/en/docs/generative-apis"),
++    Anbieter("ovh", "OVHcloud AI Endpoints (FR)", "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
++             "Meta-Llama-3_3-70B-Instruct", True, "Frankreich",
++             "Laut OVHcloud kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung in den AGB.",
++             "ovhcloud.com → Kundenkonto → „Public Cloud“ → „AI Endpoints“ → Schlüssel erzeugen und kopieren. Den genauen Weg "
++             "beschreibt die OVHcloud-Dokumentation (Link unten).",
++             "Offene Modelle; Modellnamen sind hier groß-/kleinschreibungsempfindlich. Die genauen Namen zeigt "
++             "„Verbindung prüfen“.",
++             "https://endpoints.ai.cloud.ovh.net"),
++    Anbieter("openai", "OpenAI (US)", "https://api.openai.com/v1", "gpt-5-mini", False,
++             "USA (EU-Datenresidenz gegen Aufpreis wählbar)",
++             "Laut OpenAI werden Daten aus der API standardmäßig nicht zum Training genutzt.",
++             "platform.openai.com → Konto anlegen → „Billing“ Guthaben aufladen → „API keys“ → „Create new secret key“ "
++             "→ Schlüssel kopieren.",
++             "", "https://platform.openai.com/docs"),
++    Anbieter("google", "Google Gemini (US)", "https://generativelanguage.googleapis.com/v1beta/openai",
++             "gemini-flash-latest", False, "USA",
++             "Im kostenlosen Tarif nutzt Google die Inhalte zur Verbesserung seiner Produkte, im bezahlten Tarif laut "
++             "Google nicht. Für Taleward also nur mit eingerichteter Abrechnung.",
++             "aistudio.google.com → Konto → „Get API key“ → Projekt mit Abrechnung wählen oder anlegen → Schlüssel "
++             "kopieren.",
++             "OpenAI-kompatible Schnittstelle von Google ist als Beta gekennzeichnet.",
++             "https://ai.google.dev/gemini-api/docs/openai"),
++    Anbieter("anthropic", "Anthropic Claude (US)", "https://api.anthropic.com/v1", "claude-sonnet-4-6", False,
++             "USA",
++             "Laut Anthropic werden Daten aus der API standardmäßig nicht zum Training genutzt.",
++             "platform.claude.com → Konto anlegen → Guthaben aufladen → „API Keys“ → „Create Key“ → Schlüssel kopieren. "
++             "Ein Claude-Abo (Pro/Max) lässt sich nicht nutzen; Anthropic untersagt das für fremde Programme.",
++             "Anthropic bezeichnet seine OpenAI-kompatible Schnittstelle als Testzugang; sie ignoriert den JSON-Modus. "
++             "Taleward fängt das ab, es kann aber häufiger zu Wiederholungen kommen.",
++             "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk"),
++    Anbieter("deepseek", "DeepSeek (CN)", "https://api.deepseek.com/v1", "deepseek-flash", False,
++             "China",
++             "Daten werden laut DeepSeek auf Servern in China verarbeitet; Training lässt sich nur in den "
++             "Kontoeinstellungen abwählen. Mehrere EU-Datenschutzbehörden prüfen den Anbieter.",
++             "platform.deepseek.com → Konto anlegen → Guthaben aufladen → „API keys“ → „Create new API key“ → Schlüssel "
++             "kopieren.",
++             "", "https://api-docs.deepseek.com"),
++)
++
++_NACH_ID = {a.id: a for a in ANBIETER}
++
++
++def finden(anbieter_id: str | None) -> Anbieter | None:
++    return _NACH_ID.get(anbieter_id or "")
++
++
++def erkennen(url: str | None) -> Anbieter | None:
++    """Anbieter zur eingestellten Adresse – über den Host, damit auch ältere Einstellungen zugeordnet werden."""
++    host = urlsplit(url or "").hostname or ""
++    for a in ANBIETER:
++        if host and host == urlsplit(a.url).hostname:
++            return a
++    return None
++
++
++def texte() -> set[str]:
++    """Alle Texte, die in der Verwaltung angezeigt werden (für die Übersetzungsprüfung)."""
++    aus: set[str] = set()
++    for a in ANBIETER:
++        aus |= {a.sitz, a.training, a.anmeldung}
++        if a.hinweis:
++            aus.add(a.hinweis)
++    return aus
+diff --git a/app/einstellungen.py b/app/einstellungen.py
+index ba54be3..a203f5e 100644
+--- a/app/einstellungen.py
++++ b/app/einstellungen.py
+@@ -162,4 +162,16 @@ class LlmKonfig:
+         return "api.mistral.ai" in self.api_url
+ 
++    @property
++    def anbieter(self):
++        """Bekannter Cloud-Anbieter zur Adresse (app/cloudanbieter.py) oder None bei eigener Adresse."""
++        from app import cloudanbieter
++
++        return cloudanbieter.erkennen(self.api_url)
++
++    @property
++    def anbieter_id(self) -> str:
++        a = self.anbieter
++        return a.id if a else "andere"
++
+     @property
+     def bereit(self) -> bool:
+diff --git a/app/services.py b/app/services.py
+index 3c46970..4acd803 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -28,12 +28,16 @@ def _utc(dt: datetime | None) -> datetime | None:
+ # ---------- Konten & Organisation ----------
+ def cloud_anbieter(k) -> str:
+-    """Kennung des Cloud-Anbieters für ServerInfo.cloudSummary."""
++    """Kennung des Cloud-Anbieters für ServerInfo.cloudSummary: bekannte Anbieter mit ihrer Kennung
++    (app/cloudanbieter.py), sonst der Host der eingestellten Adresse."""
+     from urllib.parse import urlsplit
+ 
+-    return "mistral" if k.ist_mistral else (urlsplit(k.api_url).hostname or "api")
++    a = k.anbieter
++    return a.id if a else (urlsplit(k.api_url).hostname or "api")
+ 
+ 
+ def cloud_anbieter_name(k) -> str:
+-    return "Mistral" if k.ist_mistral else cloud_anbieter(k)
++    """Lesbarer Name für Hinweise an Nutzer („… über Mistral (EU)“)."""
++    a = k.anbieter
++    return a.name if a else cloud_anbieter(k)
+ 
+ 
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 8ed5f38..887da21 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -110,4 +110,33 @@ class OpenAIKlient:
+         return round((tokens_in * ein + tokens_out * aus) / 1_000_000)
+ 
++    def modelle(self) -> list[str] | None:
++        """GET {url}/models – welche Modelle der Schlüssel nutzen darf. None, wenn der Anbieter das nicht anbietet."""
++        try:
++            r = self.client.get(f"{self.url}/models", headers=self.headers, timeout=30.0)
++        except httpx.HTTPError:
++            return None
++        if r.status_code in (401, 403):
++            raise SprachmodellFehler("Der Anbieter lehnt den API-Schlüssel ab.", erneut=False)
++        if r.status_code >= 400:
++            return None
++        try:
++            daten = r.json().get("data") or []
++            namen = sorted(str(m.get("id")) for m in daten if isinstance(m, dict) and m.get("id"))
++        except (ValueError, AttributeError):
++            return None
++        return namen
++
++    def pruefen(self) -> dict:
++        """Kleiner Probeaufruf: erreichbar, Schlüssel gültig, Modell vorhanden, JSON kommt an.
++
++        Liefert {"json": bool, "tokens": int, "modelle": list | None}; Fehler als SprachmodellFehler."""
++        modelle = self.modelle()
++        a = self.chat('Antworte nur mit dem JSON-Objekt {"ok": true}.', 'Bitte {"ok": true} zurückgeben.')
++        try:
++            json_ok = bool(json.loads(a.text).get("ok"))
++        except (ValueError, AttributeError):
++            json_ok = False
++        return {"json": json_ok, "tokens": a.tokens_in + a.tokens_out, "modelle": modelle}
++
+ 
+ class OllamaKlient:
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 39e27b2..f4bf14f 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -731,4 +731,61 @@ EN: dict[str, str] = {
+     'Unter „Keys“ einen Schlüssel mit „Sign in with Apple“ erzeugen und die .p8-Datei laden.': 'Under “Keys”, create a key with “Sign in with Apple” and download the .p8 file.',
+     'Services ID (als Client-ID), Team-ID, Key-ID und den Inhalt der .p8-Datei hier eintragen.': 'Enter the Services ID (as client ID), team ID, key ID and the content of the .p8 file here.',
++
++    # Cloud-Anbieter (0.4.52)
++    'Anderer Anbieter: was zu beachten ist': 'Other provider: what to keep in mind',
++    'Angaben des Anbieters, Stand {datum}, ohne Gewähr – bitte selbst prüfen.': "Provider's own statements as of {datum}, without warranty – please verify yourself.",
++    'Anthropic bezeichnet seine OpenAI-kompatible Schnittstelle als Testzugang; sie ignoriert den JSON-Modus. Taleward fängt das ab, es kann aber häufiger zu Wiederholungen kommen.': 'Anthropic calls its OpenAI-compatible interface a testing access; it ignores JSON mode. Taleward copes with that, but retries may happen more often.',
++    'Beim Wechsel des Anbieters wird das empfohlene Modell eingetragen; „Verbindung prüfen“ zeigt, welche Modelle der Schlüssel nutzen darf.': 'Switching the provider fills in the recommended model; “Check connection” shows which models the key may use.',
++    'Bitte bestätigen, dass die Verarbeitung außerhalb der EU bzw. bei einem nicht beschriebenen Anbieter gewollt ist und der Vertrag zur Auftragsverarbeitung geschlossen wird.': 'Please confirm that processing outside the EU or with a provider not described here is intended and that the data processing agreement will be concluded.',
++    'China': 'China',
++    'Daten werden laut DeepSeek auf Servern in China verarbeitet; Training lässt sich nur in den Kontoeinstellungen abwählen. Mehrere EU-Datenschutzbehörden prüfen den Anbieter.': 'According to DeepSeek, data is processed on servers in China; training can only be opted out of in the account settings. Several EU data protection authorities are examining the provider.',
++    'Deutschland (Berlin)': 'Germany (Berlin)',
++    'Deutschland (Neckarsulm)': 'Germany (Neckarsulm)',
++    'Dokumentation des Anbieters': 'Provider documentation',
++    'Ein kleiner Aufruf mit den gespeicherten Einstellungen (kostet einen Bruchteil eines Cents).': 'A small call with the saved settings (costs a fraction of a cent).',
++    'Es fehlt der API-Schlüssel – bitte erst speichern.': 'The API key is missing – please save first.',
++    'Frankreich': 'France',
++    'Frankreich (Paris)': 'France (Paris)',
++    'Frankreich / EU': 'France / EU',
++    'Ich weiß, dass dieser Anbieter außerhalb der EU verarbeitet oder hier nicht beschrieben ist, und schließe den Vertrag zur Auftragsverarbeitung selbst ab.': 'I know that this provider processes outside the EU or is not described here, and I will conclude the data processing agreement myself.',
++    'Im kostenlosen Tarif („Experiment“) darf Mistral Ein- und Ausgaben zum Training nutzen; im bezahlten Tarif lässt es sich abschalten. Abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Der Schalter für Vibe ist ein eigener und zählt hier nicht.': 'On the free tier (“Experiment”) Mistral may use inputs and outputs for training; on the paid tier it can be switched off. To switch off: admin.mistral.ai → Privacy → “Anonymous improvement data” off. The Vibe switch is a separate one and does not count here.',
++    'Im kostenlosen Tarif nutzt Google die Inhalte zur Verbesserung seiner Produkte, im bezahlten Tarif laut Google nicht. Für Taleward also nur mit eingerichteter Abrechnung.': 'On the free tier Google uses the content to improve its products; on the paid tier, according to Google, it does not. So for Taleward only with billing set up.',
++    'Jeder Anbieter mit OpenAI-kompatibler Schnittstelle (Adresse endet meist auf /v1). Wo er verarbeitet und ob er mit euren Daten trainiert, müsst ihr selbst nachlesen. Sammeldienste, die Anfragen an wechselnde Rechenzentren verteilen, lassen sich dabei nicht einschätzen.': 'Any provider with an OpenAI-compatible interface (address usually ends in /v1). Where it processes and whether it trains on your data is for you to look up. Aggregators that spread requests across changing data centres cannot be assessed.',
++    'Laut Anthropic werden Daten aus der API standardmäßig nicht zum Training genutzt.': 'According to Anthropic, API data is not used for training by default.',
++    'Laut IONOS werden Kundendaten nie zum Training genutzt und nicht gespeichert; Vertrag zur Auftragsverarbeitung ist Teil des Vertrags.': 'According to IONOS, customer data is never used for training and not stored; the data processing agreement is part of the contract.',
++    'Laut OVHcloud kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung in den AGB.': 'According to OVHcloud, no training on customer data; data processing agreement in the terms.',
++    'Laut OpenAI werden Daten aus der API standardmäßig nicht zum Training genutzt.': 'According to OpenAI, API data is not used for training by default.',
++    'Laut STACKIT kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung über das Kundenkonto.': 'According to STACKIT, no training on customer data; data processing agreement via the customer account.',
++    'Laut Scaleway kein Training mit Kundendaten; Vertrag zur Auftragsverarbeitung in den AGB.': 'According to Scaleway, no training on customer data; data processing agreement in the terms.',
++    'Mistral verarbeitet in der EU. Im kostenlosen Tarif darf Mistral Aufnahmen und Abschriften zum Training nutzen, im bezahlten Tarif lässt sich das abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Schlüssel: console.mistral.ai → „API Keys“ → „Create new key“. Angaben des Anbieters, Stand {datum}, ohne Gewähr.': "Mistral processes in the EU. On the free tier Mistral may use recordings and transcripts for training; on the paid tier this can be switched off: admin.mistral.ai → Privacy → “Anonymous improvement data” off. Key: console.mistral.ai → “API Keys” → “Create new key”. Provider's own statements as of {datum}, without warranty.",
++    'Modelle, die der Schlüssel nutzen darf ({n})': 'Models this key may use ({n})',
++    'Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle; bei anderen Anbietern bitte von deren Preisseite übernehmen.': 'Only for the usage display. Empty = known prices of the Mistral models; for other providers please copy from their pricing page.',
++    'Offene Modelle (gpt-oss, Llama, Qwen). Die genauen Modellnamen zeigt „Verbindung prüfen“.': 'Open models (gpt-oss, Llama, Qwen). “Check connection” shows the exact model names.',
++    'Offene Modelle (gpt-oss, Llama, Qwen, Gemma). Die genauen Modellnamen zeigt „Verbindung prüfen“.': 'Open models (gpt-oss, Llama, Qwen, Gemma). “Check connection” shows the exact model names.',
++    'Offene Modelle. Die genauen Modellnamen zeigt „Verbindung prüfen“.': 'Open models. “Check connection” shows the exact model names.',
++    'Offene Modelle; Modellnamen sind hier groß-/kleinschreibungsempfindlich. Die genauen Namen zeigt „Verbindung prüfen“.': 'Open models; model names are case-sensitive here. “Check connection” shows the exact names.',
++    'OpenAI-kompatible Schnittstelle von Google ist als Beta gekennzeichnet.': 'Google marks its OpenAI-compatible interface as beta.',
++    'Preise der Mistral-Modelle sind hinterlegt; der Schlüssel der externen Transkription gilt auch hier.': 'Prices of the Mistral models are built in; the key of the external transcription also works here.',
++    'Prüfung fehlgeschlagen: {grund}': 'Check failed: {grund}',
++    'Schlüssel des Anbieters': "the provider's key",
++    'Schlüssel holen:': 'Get a key:',
++    'Standort, Training, Schlüssel': 'location, training, key',
++    'Training mit euren Daten:': 'Training on your data:',
++    'USA': 'USA',
++    'USA (EU-Datenresidenz gegen Aufpreis wählbar)': 'USA (EU data residency available at a surcharge)',
++    'Verarbeitung:': 'Processing:',
++    'Verbindung prüfen': 'Check connection',
++    'Verbindung steht: {modell} antwortet und liefert JSON.': 'Connected: {modell} answers and returns JSON.',
++    'aistudio.google.com → Konto → „Get API key“ → Projekt mit Abrechnung wählen oder anlegen → Schlüssel kopieren.': 'aistudio.google.com → account → “Get API key” → choose or create a project with billing → copy the key.',
++    'außerhalb der EU': 'outside the EU',
++    'cloud.ionos.de → Konto anlegen → im Data Center Designer ein Zugriffs-Token erzeugen → Token kopieren. Den genauen Weg beschreibt die IONOS-Dokumentation (Link unten).': 'cloud.ionos.de → create an account → create an access token in the Data Center Designer → copy the token. The IONOS documentation (link below) describes the exact path.',
++    'console.mistral.ai → Konto anlegen → Workspace → „API Keys“ → „Create new key“ → Schlüssel kopieren. Für den bezahlten Tarif unter „Billing“ eine Zahlungsart hinterlegen.': 'console.mistral.ai → create an account → workspace → “API Keys” → “Create new key” → copy the key. For the paid tier add a payment method under “Billing”.',
++    'console.scaleway.com → Konto anlegen → „IAM“ → „API keys“ → „Generate API key“ → Secret key kopieren.': 'console.scaleway.com → create an account → “IAM” → “API keys” → “Generate API key” → copy the secret key.',
++    'ovhcloud.com → Kundenkonto → „Public Cloud“ → „AI Endpoints“ → Schlüssel erzeugen und kopieren. Den genauen Weg beschreibt die OVHcloud-Dokumentation (Link unten).': 'ovhcloud.com → customer account → “Public Cloud” → “AI Endpoints” → create and copy a key. The OVHcloud documentation (link below) describes the exact path.',
++    'platform.claude.com → Konto anlegen → Guthaben aufladen → „API Keys“ → „Create Key“ → Schlüssel kopieren. Ein Claude-Abo (Pro/Max) lässt sich nicht nutzen; Anthropic untersagt das für fremde Programme.': 'platform.claude.com → create an account → add credit → “API Keys” → “Create Key” → copy the key. A Claude subscription (Pro/Max) cannot be used; Anthropic forbids that for third-party programs.',
++    'platform.deepseek.com → Konto anlegen → Guthaben aufladen → „API keys“ → „Create new API key“ → Schlüssel kopieren.': 'platform.deepseek.com → create an account → add credit → “API keys” → “Create new API key” → copy the key.',
++    'platform.openai.com → Konto anlegen → „Billing“ Guthaben aufladen → „API keys“ → „Create new secret key“ → Schlüssel kopieren.': 'platform.openai.com → create an account → add credit under “Billing” → “API keys” → “Create new secret key” → copy the key.',
++    'portal.stackit.cloud → Konto und Projekt anlegen → „AI Model Serving“ → Token erzeugen → Token kopieren. Den genauen Weg beschreibt die STACKIT-Dokumentation (Link unten).': 'portal.stackit.cloud → create an account and project → “AI Model Serving” → create a token → copy the token. The STACKIT documentation (link below) describes the exact path.',
++    '{modell} antwortet, aber nicht im JSON-Modus – das kann zu Wiederholungen führen.': '{modell} answers, but not in JSON mode – this can lead to retries.',
+ }
+ 
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 060b4ff..3c2ff43 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -20,4 +20,5 @@ from urllib.parse import urlsplit
+ from zoneinfo import ZoneInfo
+ 
++import httpx
+ import jwt
+ from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
+@@ -477,5 +478,5 @@ def _knechte(db: Session) -> list[dict]:
+ 
+ def _extern_anzeige(db: Session) -> dict:
+-    from app import extern
++    from app import cloudanbieter, extern
+     from app.einstellungen import extern_konfig
+ 
+@@ -483,5 +484,5 @@ def _extern_anzeige(db: Session) -> dict:
+     return {"anbieter": k.anbieter, "anbieter_name": extern.ANBIETER.get(k.anbieter or ""), "gewaehlt": k.gewaehlt,
+             "key_ende": (k.api_key or "")[-4:] if k.api_key else None, "stunden": k.stunden,
+-            "cent": k.cent_pro_minute, "quelle": k.quelle,
++            "cent": k.cent_pro_minute, "quelle": k.quelle, "stand": cloudanbieter.STAND,
+             "kampagnen": db.scalar(select(func.count()).select_from(Campaign)
+                                    .where(Campaign.allow_external_transcription.is_(True)))}
+@@ -682,5 +683,4 @@ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str =
+ 
+ # ---------------------------------------------------------------- Zusammenfassung (Sprachmodell)
+-MISTRAL_URL = "https://api.mistral.ai/v1"
+ TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-Aufruf zusammen
+ 
+@@ -689,5 +689,5 @@ def _llm_anzeige(db: Session) -> dict:
+     from app.einstellungen import extern_konfig, llm_konfig
+     from app.sprachmodell import PREISE
+-    from app import woerterbuch
++    from app import cloudanbieter, woerterbuch
+     from app.zusammenfassung import gegenpruefen_an
+ 
+@@ -702,14 +702,47 @@ def _llm_anzeige(db: Session) -> dict:
+              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
+                                   for kn in worker), "gegenpruefen": gegenpruefen_an(db),
+-             "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")}}
++             "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")},
++             "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND}
+ 
+ 
+ @router.get("/zusammenfassung", response_class=HTMLResponse)
+ def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db),
+-                          fehler: str = ""):
++                          fehler: str = "", pruefung: dict | None = None):
+     from app import kapitelprobe as probelauf
+ 
+     return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
+-                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10])
++                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10], pruefung=pruefung)
++
++
++@router.post("/zusammenfassung/pruefen", dependencies=[Depends(csrf_pruefen)])
++def zusammenfassung_pruefen(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db)):
++    """Verbindung prüfen: ein kleiner Aufruf mit den gespeicherten Einstellungen – erreichbar, Schlüssel, Modell,
++    JSON. Zeigt auch die Modelle, die der Schlüssel nutzen darf (wenn der Anbieter das verrät)."""
++    from app.einstellungen import llm_konfig
++    from app.sprachmodell import OpenAIKlient, SprachmodellFehler
++
++    _ = tr(request)
++    k = llm_konfig(db)
++    if not k.api_key:
++        ergebnis = {"ok": False, "text": _("Es fehlt der API-Schlüssel – bitte erst speichern.")}
++    else:
++        klient = OpenAIKlient(k.api_url, k.api_key, k.api_modell,
++                              client=httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0)))
++        try:
++            e = klient.pruefen()
++            if e["json"]:
++                text = _("Verbindung steht: {modell} antwortet und liefert JSON.", modell=k.api_modell)
++            else:
++                text = _("{modell} antwortet, aber nicht im JSON-Modus – das kann zu Wiederholungen führen.",
++                         modell=k.api_modell)
++            ergebnis = {"ok": e["json"], "text": text, "modelle": e["modelle"]}
++        except SprachmodellFehler as f:
++            ergebnis = {"ok": False, "text": _("Prüfung fehlgeschlagen: {grund}", grund=str(f))}
++            try:  # Modellliste hilft oft weiter, wenn nur der Modellname nicht stimmt
++                ergebnis["modelle"] = klient.modelle()
++            except SprachmodellFehler:
++                pass
++    antwort = zusammenfassung_seite(request, user, db, pruefung=ergebnis)
++    return antwort
+ 
+ 
+@@ -787,6 +820,8 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
+                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
++                              ausserhalb_eu: str = Form(""),
+                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
+     """Wer Recap und Vorschläge schreibt. Überschreibt die .env; der Schlüssel wird nie angezeigt."""
++    from app import cloudanbieter
+     from app.einstellungen import LLM_ARTEN, llm_konfig
+ 
+@@ -798,9 +833,12 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+         return antwort
+ 
+-    if art not in LLM_ARTEN or anbieter not in ("mistral", "andere"):
++    bekannt = cloudanbieter.finden(anbieter)
++    if art not in LLM_ARTEN or (bekannt is None and anbieter != "andere"):
+         return fehler(_("Unbekannte Auswahl."))
+-    url = MISTRAL_URL if anbieter == "mistral" else api_url.strip().rstrip("/")
++    url = bekannt.url if bekannt else api_url.strip().rstrip("/")
+     if not url.startswith("https://") and not url.startswith("http://localhost"):
+         return fehler(_("Die Adresse muss mit https:// beginnen."))
++    if art == "api" and (bekannt is None or not bekannt.eu) and not ausserhalb_eu:
++        return fehler(_("Bitte bestätigen, dass die Verarbeitung außerhalb der EU bzw. bei einem nicht beschriebenen Anbieter gewollt ist und der Vertrag zur Auftragsverarbeitung geschlossen wird."))  # noqa: E501
+     modell, lokal = api_modell.strip(), lokal_modell.strip()
+     if not modell or not lokal or len(modell) > 100 or len(lokal) > 100:
+@@ -900,5 +938,4 @@ def einstellungen(request: Request, user: User = Depends(verwalter), db: Session
+     limit = kosten.limit_cent(db)
+     from app import webapp
+-    from app.config import get_settings
+ 
+     from app import aufbewahrung
+diff --git a/app/verwaltung/static/eingebaut.js b/app/verwaltung/static/eingebaut.js
+index a67b03f..4085b55 100644
+--- a/app/verwaltung/static/eingebaut.js
++++ b/app/verwaltung/static/eingebaut.js
+@@ -17,2 +17,23 @@
+   zeigen();
+ })();
++
++// Verwaltung → Zusammenfassung: Anbieter-Auswahl zeigt den passenden Hinweis, trägt Adresse und empfohlenes Modell
++// ein und blendet die Bestätigung nur ein, wenn sie nötig ist. Ohne JavaScript bleiben alle Hinweise aufklappbar.
++(function () {
++  var wahl = document.getElementById("anbieter-wahl");
++  if (!wahl) return;
++  var url = document.getElementById("anbieter-url");
++  var modell = document.getElementById("anbieter-modell");
++  var bestaetigung = document.getElementById("anbieter-bestaetigung");
++  var infos = document.querySelectorAll(".anbieter-info");
++  var vorher = wahl.value;
++  function zeigen(gewechselt) {
++    var o = wahl.options[wahl.selectedIndex];
++    for (var i = 0; i < infos.length; i++) { infos[i].open = infos[i].dataset.anbieter === wahl.value; }
++    if (url) { url.disabled = wahl.value !== "andere"; if (gewechselt && wahl.value !== "andere") url.value = ""; }
++    if (modell && gewechselt && o.dataset.modell) modell.value = o.dataset.modell;
++    if (bestaetigung) bestaetigung.hidden = o.dataset.eu === "1";
++  }
++  wahl.addEventListener("change", function () { zeigen(wahl.value !== vorher); vorher = wahl.value; });
++  zeigen(false);
++})();
+diff --git a/app/verwaltung/static/verwaltung.css b/app/verwaltung/static/verwaltung.css
+index b99db26..cb96dd0 100644
+--- a/app/verwaltung/static/verwaltung.css
++++ b/app/verwaltung/static/verwaltung.css
+@@ -145,4 +145,5 @@ form + .hilfe, .formular + .hilfe, .formular--zeile + .hilfe { margin-top:var(--
+ label { display:grid; gap:var(--space-1); font:500 14px/20px var(--font-sans); }
+ label.haken { display:flex; gap:var(--space-2); align-items:center; font-weight:400; }
++[hidden] { display:none !important; }
+ input[type=text], input[type=password], input[type=url], input[type=number], input[type=email], input[type=date], select, textarea {
+   font:400 16px/24px var(--font-sans); color:var(--ink); background:var(--paper); border:1.5px solid var(--line-strong);
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 50fc3a9..01f3caf 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -254,4 +254,5 @@
+   </form>
+   <p class="hilfe">{{ _("Das Audio geht dann an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis.") }}</p>
++  <p class="hilfe">{{ _("Mistral verarbeitet in der EU. Im kostenlosen Tarif darf Mistral Aufnahmen und Abschriften zum Training nutzen, im bezahlten Tarif lässt sich das abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Schlüssel: console.mistral.ai → „API Keys“ → „Create new key“. Angaben des Anbieters, Stand {datum}, ohne Gewähr.", datum=ext.stand) }}</p>
+ </div>
+ {% endblock %}
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index b10d913..ff31660 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -36,14 +36,28 @@
+       <legend>{{ _("Cloud-API") }}</legend>
+       <label>{{ _("Anbieter") }}
+-        <select name="anbieter">
+-          <option value="mistral" {% if llm.mistral %}selected{% endif %}>Mistral (EU)</option>
+-          <option value="andere" {% if not llm.mistral %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
++        <select name="anbieter" id="anbieter-wahl">
++          {% for a in llm.anbieter %}<option value="{{ a.id }}" data-url="{{ a.url }}" data-modell="{{ a.modell }}" data-eu="{{ 1 if a.eu else 0 }}" {% if llm.gewaehlt == a.id %}selected{% endif %}>{{ a.name }}</option>
++          {% endfor %}<option value="andere" data-url="" data-modell="" data-eu="0" {% if llm.gewaehlt == "andere" %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
+         </select></label>
++      {% for a in llm.anbieter %}
++      <details class="anbieter-info" data-anbieter="{{ a.id }}"{% if llm.gewaehlt == a.id %} open{% endif %}>
++        <summary>{{ a.name }}: {{ _("Standort, Training, Schlüssel") }}</summary>
++        <p class="hilfe"><strong>{{ _("Verarbeitung:") }}</strong> {{ _(a.sitz) }}{% if not a.eu %} – {{ _("außerhalb der EU") }}{% endif %}</p>
++        <p class="hilfe"><strong>{{ _("Training mit euren Daten:") }}</strong> {{ _(a.training) }}</p>
++        <p class="hilfe"><strong>{{ _("Schlüssel holen:") }}</strong> {{ _(a.anmeldung) }}</p>
++        {% if a.hinweis %}<p class="hilfe">{{ _(a.hinweis) }}</p>{% endif %}
++        <p class="hilfe">{{ _("Angaben des Anbieters, Stand {datum}, ohne Gewähr – bitte selbst prüfen.", datum=llm.stand) }}{% if a.hilfe %} <a href="{{ a.hilfe }}" rel="noopener noreferrer" target="_blank">{{ _("Dokumentation des Anbieters") }}</a>{% endif %}</p>
++      </details>
++      {% endfor %}
++      <details class="anbieter-info" data-anbieter="andere"{% if llm.gewaehlt == "andere" %} open{% endif %}>
++        <summary>{{ _("Anderer Anbieter: was zu beachten ist") }}</summary>
++        <p class="hilfe">{{ _("Jeder Anbieter mit OpenAI-kompatibler Schnittstelle (Adresse endet meist auf /v1). Wo er verarbeitet und ob er mit euren Daten trainiert, müsst ihr selbst nachlesen. Sammeldienste, die Anfragen an wechselnde Rechenzentren verteilen, lassen sich dabei nicht einschätzen.") }}</p>
++      </details>
+       <label>{{ _("Adresse (nur bei „Anderer“)") }}
+-        <input type="url" name="api_url" value="{{ '' if llm.mistral else k.api_url }}" placeholder="https://…/v1" maxlength="300"></label>
+-      <label>{{ _("Modell") }} <input type="text" name="api_modell" value="{{ k.api_modell }}" maxlength="100" required>
+-        <span class="hilfe">{{ _("Empfohlen: mistral-large-latest (gute Recaps, etwa 6 Cent pro Session).") }}</span></label>
++        <input type="url" name="api_url" id="anbieter-url" value="{{ k.api_url if llm.gewaehlt == "andere" else '' }}" placeholder="https://…/v1" maxlength="300"></label>
++      <label>{{ _("Modell") }} <input type="text" name="api_modell" id="anbieter-modell" value="{{ k.api_modell }}" maxlength="100" required>
++        <span class="hilfe">{{ _("Beim Wechsel des Anbieters wird das empfohlene Modell eingetragen; „Verbindung prüfen“ zeigt, welche Modelle der Schlüssel nutzen darf.") }}</span></label>
+       <label>{{ _("API-Schlüssel") }}
+-        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('von console.mistral.ai') }}">
++        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
+         <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
+       {% if k.eigener_key %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
+@@ -51,5 +65,6 @@
+         <span class="zeile"><input type="text" name="cent_ein" value="{{ '%g'|format(k.cent_ein) if k.cent_ein is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[0]) if llm.preis else '' }}">
+         <input type="text" name="cent_aus" value="{{ '%g'|format(k.cent_aus) if k.cent_aus is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[1]) if llm.preis else '' }}"></span>
+-        <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle.") }}</span></label>
++        <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle; bei anderen Anbietern bitte von deren Preisseite übernehmen.") }}</span></label>
++      <label class="haken" id="anbieter-bestaetigung"><input type="checkbox" name="ausserhalb_eu" value="1"> {{ _("Ich weiß, dass dieser Anbieter außerhalb der EU verarbeitet oder hier nicht beschrieben ist, und schließe den Vertrag zur Auftragsverarbeitung selbst ab.") }}</label>
+     </fieldset>
+ 
+@@ -73,4 +88,18 @@
+     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>
+   </form>
++  <script src="/verwaltung/static/eingebaut.js" defer></script>
++  {% if k.art == "api" %}
++  <form method="post" action="/verwaltung/zusammenfassung/pruefen" class="formular">
++    <input type="hidden" name="csrf" value="{{ csrf }}">
++    <div><button class="tw-btn" type="submit">{{ _("Verbindung prüfen") }}</button>
++      <span class="hilfe">{{ _("Ein kleiner Aufruf mit den gespeicherten Einstellungen (kostet einen Bruchteil eines Cents).") }}</span></div>
++  </form>
++  {% if pruefung %}
++  <div class="meldung{% if not pruefung.ok %} meldung--fehler{% endif %}" role="status">{{ pruefung.text }}
++    {% if pruefung.modelle %}<details><summary>{{ _("Modelle, die der Schlüssel nutzen darf ({n})", n=pruefung.modelle|length) }}</summary>
++      <p class="hilfe">{{ pruefung.modelle|join(", ") }}</p></details>{% endif %}
++  </div>
++  {% endif %}
++  {% endif %}
+   <p class="hilfe">{{ _("Cloud-API: Das Transkript geht an den Anbieter. Dafür braucht es einen Vertrag zur Auftragsverarbeitung und einen Absatz im Datenschutzhinweis. Lokales Modell: Die Daten bleiben in eurer eigenen Infrastruktur, kleinere Modelle liefern aber schwächere Recaps.") }}</p>
+ </div>
+diff --git a/docs/BETRIEB.md b/docs/BETRIEB.md
+index dd9a203..e0521a5 100644
+--- a/docs/BETRIEB.md
++++ b/docs/BETRIEB.md
+@@ -110,9 +110,10 @@ du unter **Zusammenfassung** fest:
+ | Wahl | Wie | Gut zu wissen |
+ |---|---|---|
+-| **Cloud-API** | Mistral Large (EU) oder ein anderer OpenAI-kompatibler Anbieter | Etwa 6 Cent pro 4-Stunden-Session. Der Text der Session geht an den Anbieter – Vertrag zur Auftragsverarbeitung nötig. Die Spielleitung muss es je Kampagne erlauben. |
++| **Cloud-API** | Mistral (EU) oder ein anderer Anbieter mit OpenAI-kompatibler Schnittstelle – die Verwaltung kennt Voreinstellungen für Mistral, IONOS, STACKIT, Scaleway, OVHcloud, OpenAI, Google, Anthropic und DeepSeek und zeigt je Anbieter Standort, Umgang mit Trainingsdaten und den Weg zum Schlüssel | Etwa 6 Cent pro 4-Stunden-Session bei Mistral. Der Text der Session geht an den Anbieter – Vertrag zur Auftragsverarbeitung nötig; außerhalb der EU verlangt die Verwaltung eine Bestätigung. Die Spielleitung muss es je Kampagne erlauben. „Verbindung prüfen“ zeigt, ob Schlüssel und Modell passen. |
+ | **Lokales Modell** | Ollama auf einem Worker (Worker-App: „Recaps auch auf diesem PC schreiben“; Docker: [Ollama-Container](../INSTALLATION.md#recaps-auf-eigener-hardware-ollama)) | Nichts verlässt den Verein. Ein Recap dauert etwa 10–20 Minuten; kleinere Modelle schreiben schwächer. |
+ | **Testmodus** | Platzhaltertext | Zum Ausprobieren ohne Sprachmodell. |
+ 
+-Bei Mistral kann der Schlüssel der externen Transkription mitgenutzt werden. Ein **Kostenlimit** pro Monat
++Bei Mistral kann der Schlüssel der externen Transkription mitgenutzt werden. Im kostenlosen Mistral-Tarif dürfen
++Daten zum Training genutzt werden; die Verwaltung beschreibt, wo sich das abschalten lässt. Ein **Kostenlimit** pro Monat
+ (Einstellungen → Kosten) gilt für Cloud-Transkription und Cloud-Zusammenfassung zusammen; ist es erreicht, warten die
+ Aufträge bis zum nächsten Monat.
+diff --git a/pyproject.toml b/pyproject.toml
+index 52d7484..4235c86 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.51"
++version = "0.4.52"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 7ea9d6b..58e70ed 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.51"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.52"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 4faa42e..42e9ce2 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.51"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.52"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index afcd3af..8a90717 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.51"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.52"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_step5.py b/tests/test_step5.py
+index 11d4353..c53a980 100644
+--- a/tests/test_step5.py
++++ b/tests/test_step5.py
+@@ -351,4 +351,63 @@ def test_verwaltung_zusammenfassung(client, dbs, admin):  # noqa: F811
+ 
+ 
++def test_verwaltung_cloud_anbieter(client, dbs, admin, monkeypatch):  # noqa: F811
++    """Voreinstellungen je Anbieter, Bestätigung außerhalb der EU, „Verbindung prüfen“ mit Modellliste."""
++    from app import cloudanbieter
++    from app.einstellungen import llm_konfig
++    from app.verwaltung import router as vr
++
++    url = "/verwaltung/zusammenfassung"
++    seite = client.get(url).text
++    for a in cloudanbieter.ANBIETER:  # jeder Anbieter mit Standort, Training und Schlüsselweg, Stand-Datum
++        assert a.name in seite and a.training in seite and a.anmeldung in seite
++    assert cloudanbieter.STAND in seite and "ohne Gewähr" in seite
++    basis = {"csrf": admin, "art": "api", "api_modell": "x", "lokal_modell": "auto", "lokal_kontext": "12288",
++             "api_key": "sk-abcdefghijklmnop1234"}
++    # EU-Anbieter: Adresse kommt aus der Tabelle, keine Bestätigung nötig
++    r = client.post(url, data={**basis, "anbieter": "ionos", "api_url": "https://boese.example/v1"},
++                    follow_redirects=False)
++    assert r.status_code == 303
++    k = llm_konfig(dbs)
++    assert k.api_url == "https://openai.inference.de-txl.ionos.com/v1" and k.anbieter_id == "ionos"
++    # außerhalb der EU und „Anderer“: nur mit Bestätigung
++    r = client.post(url, data={**basis, "anbieter": "openai"})
++    assert r.status_code == 400 and "außerhalb der EU" in r.text
++    r = client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1"})
++    assert r.status_code == 400
++    r = client.post(url, data={**basis, "anbieter": "openai", "ausserhalb_eu": "1"}, follow_redirects=False)
++    assert r.status_code == 303 and llm_konfig(dbs).api_url == "https://api.openai.com/v1"
++    assert client.post(url, data={**basis, "anbieter": "unbekannt"}).status_code == 400
++    # Lokal oder Testmodus brauchen keine Bestätigung, auch wenn der Anbieter außerhalb der EU steht
++    assert client.post(url, data={**basis, "art": "attrappe", "anbieter": "openai"}, follow_redirects=False).status_code == 303
++    client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1", "ausserhalb_eu": "1"})
++    assert llm_konfig(dbs).anbieter_id == "andere"
++    seite = client.get(url).text
++    assert 'value="https://llm.verein.example/v1"' in seite and "Verbindung prüfen" in seite
++
++    # Verbindung prüfen: nachgebauter Anbieter
++    aufrufe = []
++
++    def anbieter(req: httpx.Request) -> httpx.Response:
++        aufrufe.append((req.method, req.url.path, req.headers.get("authorization")))
++        if req.url.path.endswith("/models"):
++            return httpx.Response(200, json={"data": [{"id": "x"}, {"id": "gross"}]})
++        if "falsch" in (req.headers.get("authorization") or ""):
++            return httpx.Response(401, json={"message": "nein"})
++        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": true}'}}],
++                                         "usage": {"prompt_tokens": 20, "completion_tokens": 5}})
++
++    echt = httpx.Client
++    monkeypatch.setattr(vr.httpx, "Client", lambda **kw: echt(transport=httpx.MockTransport(anbieter)))
++    r = client.post(url + "/pruefen", data={"csrf": admin})
++    assert r.status_code == 200 and "Verbindung steht" in r.text and "gross, x" in r.text
++    assert aufrufe[0][1] == "/v1/models" and aufrufe[1][1] == "/v1/chat/completions"
++    assert all(a[2] == "Bearer sk-abcdefghijklmnop1234" for a in aufrufe)
++    client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1",
++                           "ausserhalb_eu": "1", "api_key": "sk-falsch-abcdefghijklmnop"})
++    r = client.post(url + "/pruefen", data={"csrf": admin})
++    assert "Prüfung fehlgeschlagen" in r.text and "lehnt den API-Schlüssel ab" in r.text
++    assert client.post(url + "/pruefen", data={}).status_code == 403  # CSRF
++
++
+ def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
+     from typer.testing import CliRunner
+diff --git a/tests/test_verwaltung2.py b/tests/test_verwaltung2.py
+index bf1be67..4a90e72 100644
+--- a/tests/test_verwaltung2.py
++++ b/tests/test_verwaltung2.py
+@@ -27,4 +27,7 @@ def ui_texte() -> set[str]:
+     m = re.search(r"MELDUNGEN = \{(.*?)\n\}", r, re.S)
+     texte |= set(re.findall(r':\s*"((?:[^"\\]|\\.)*)"', m.group(1)))
++    from app import cloudanbieter
++
++    texte |= cloudanbieter.texte()
+     return texte
+ 
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 2d2c228..1d213ce 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.51"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.52"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 8d02db5..725f710 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.51"
++version = "0.4.52"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
