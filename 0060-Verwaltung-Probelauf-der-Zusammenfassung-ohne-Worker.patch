@@ -1,0 +1,680 @@
+From f64c252f89b9db2f208b5204d4729045e932fe23 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 07:22:34 +0200
+Subject: [PATCH] Verwaltung: Probelauf der Zusammenfassung ohne Worker (Server
+ 0.4.50)
+
+Unter Verwaltung -> Zusammenfassung gibt es einen Probelauf: Kapitel und Vorschlaege fuer eine Runde
+mit Abschrift neu schreiben lassen, ohne die Runde zu veraendern - zum Vergleichen von Modellen und
+Fassungen, auch unterwegs ohne Worker. Rechnet direkt auf dem Server mit der eingestellten Cloud-API
+oder dem Testmodus; bei lokalem Modell gibt es einen verstaendlichen Hinweis. Wahlweise ersetzt eine
+hochgeladene Textdatei ("[h:mm:ss] Sprecher: Text") die Abschrift der Runde, Mitglieder und Bibel
+bleiben - fuer selbst geschriebene Test-Abschriften.
+
+Ergebnis (Kapitel, offene Faeden, Vorschlaege, Pruefung, Aufrufe, Token, Kosten, Dauer, Warnungen) als
+Seite mit Dateien zum Herunterladen; Ablage unter data/proben/<id>/, hoechstens 50, loeschbar. Kosten
+stehen im Verbrauchsprotokoll (Art "probe") und zaehlen zum Monatslimit des Betreibers, aber nicht zu
+den Kosten der Kampagne.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/kapitelprobe.py                           | 244 ++++++++++++++++++
+ app/routers/campaigns.py                      |   3 +-
+ app/verwaltung/i18n.py                        |  36 +++
+ app/verwaltung/router.py                      |  80 +++++-
+ app/verwaltung/templates/probelauf.html       |  46 ++++
+ app/verwaltung/templates/zusammenfassung.html |  33 +++
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_step5.py                           |  66 +++++
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 13 files changed, 511 insertions(+), 9 deletions(-)
+ create mode 100644 app/kapitelprobe.py
+ create mode 100644 app/verwaltung/templates/probelauf.html
+
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+new file mode 100644
+index 0000000..728f3fb
+--- /dev/null
++++ b/app/kapitelprobe.py
+@@ -0,0 +1,244 @@
++"""Probelauf der Zusammenfassung (Verwaltung, Modul kapitelprobe – app.probelauf ist der Transkriptions-Probelauf): Kapitel und
++Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern – zum Vergleichen von Modellen und Fassungen, auch unterwegs ohne Worker.
++
++Grundlage ist die Abschrift einer Runde auf diesem Server; wahlweise ersetzt eine hochgeladene Textdatei (Zeilen
++„[h:mm:ss] Sprecher: Text“, wie `transkript.txt` des Modellvergleichs) die Abschrift, die Kampagne liefert dann nur
++Mitglieder und Bibel. Es rechnet, was unter „Zusammenfassung“ eingestellt ist (Cloud-API oder Testmodus); ein lokales
++Modell braucht einen Worker und steht hier nicht zur Verfügung. Kosten landen im Verbrauchsprotokoll (Art „probe“).
++
++Ergebnisse liegen als Dateien unter <data_dir>/proben/<id>/ und bleiben bis zum Löschen; der Zustand eines laufenden
++Probelaufs steht in stand.json, damit die Seite ihn nach einem Neustart nicht verliert.
++"""
++from __future__ import annotations
++
++import json
++import logging
++import re
++import threading
++import time
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from sqlalchemy.orm import Session
++
++from app.config import get_settings
++from app.db import session_factory, utcnow
++from app.models import GameSession, UsageLog, new_id
++
++log = logging.getLogger("taleward.kapitelprobe")
++
++_ZEILE = re.compile(r"^\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]\s*([^:]{1,80}):\s*(.+)$")
++HOECHSTENS_PROBEN = 50  # ältere werden beim Anlegen gelöscht
++
++
++@dataclass
++class Probe:
++    id: str
++    session_id: str
++    kampagne: str
++    kapitel: int
++    quelle: str  # „Runde“ oder Dateiname
++    zeilen: int
++    modell: str
++    gestartet: str
++    zustand: str = "läuft"  # läuft | fertig | fehler
++    schritt: str = ""
++    fehler: str | None = None
++    dauer_s: float = 0.0
++    aufrufe: int = 0
++    tokens_ein: int = 0
++    tokens_aus: int = 0
++    kosten_cent: int = 0
++    titel: str = ""
++    text: str = ""
++    offene_faeden: list[str] = field(default_factory=list)
++    vorschlaege: list[dict] = field(default_factory=list)
++    pruefung: dict = field(default_factory=dict)
++    warnungen: list[dict] = field(default_factory=list)
++    beendet: str | None = None
++
++
++def ordner(probe_id: str | None = None) -> Path:
++    p = get_settings().data_dir / "proben"
++    return p / probe_id if probe_id else p
++
++
++def _speichern(p: Probe) -> None:
++    from app import storage
++
++    o = ordner(p.id)
++    o.mkdir(parents=True, exist_ok=True)
++    # atomar: die Seite liest, während der Hintergrund schreibt
++    storage.write_atomic(o / "stand.json", json.dumps(p.__dict__, ensure_ascii=False, indent=2).encode("utf-8"))
++
++
++def lesen(probe_id: str) -> Probe | None:
++    if not re.fullmatch(r"[0-9a-f-]{36}", probe_id or ""):
++        return None
++    try:
++        d = json.loads((ordner(probe_id) / "stand.json").read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return None
++    try:
++        return Probe(**d)
++    except TypeError:
++        return None
++
++
++def alle() -> list[Probe]:
++    aus = []
++    if ordner().is_dir():
++        for o in ordner().iterdir():
++            p = lesen(o.name)
++            if p is not None:
++                aus.append(p)
++    return sorted(aus, key=lambda p: p.gestartet, reverse=True)
++
++
++def loeschen(probe_id: str) -> bool:
++    import shutil
++
++    if lesen(probe_id) is None:
++        return False
++    shutil.rmtree(ordner(probe_id), ignore_errors=True)
++    return True
++
++
++def datei(probe_id: str, name: str) -> Path | None:
++    """Eine Ergebnisdatei zum Herunterladen – nur bekannte Namen, kein Pfad."""
++    if name not in DATEIEN or lesen(probe_id) is None:
++        return None
++    p = ordner(probe_id) / name
++    return p if p.is_file() else None
++
++
++DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "transkript.txt", "ergebnis.json")
++
++
++def abschrift_lesen(text: str) -> list[dict]:
++    """Textdatei → Transkriptzeilen {start, sprecher, member_id, text}. Zeilen ohne Zeitmarke hängen an der vorigen."""
++    zeilen: list[dict] = []
++    for roh in text.splitlines():
++        roh = roh.strip()
++        if not roh:
++            continue
++        m = _ZEILE.match(roh)
++        if m is None:
++            if zeilen:
++                zeilen[-1]["text"] += " " + roh
++            continue
++        h, mi, s, sprecher, inhalt = m.groups()
++        start = int(h) * 3600 + int(mi) * 60 + int(s or 0) if s is not None else int(h) * 60 + int(mi)
++        zeilen.append({"start": float(start), "sprecher": sprecher.strip(), "member_id": None, "text": inhalt.strip()})
++    return zeilen
++
++
++def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname: str | None = None) -> Probe:
++    """Legt die Probe an und rechnet im Hintergrund. Wirft ValueError mit verständlicher Meldung, wenn nichts zu tun ist."""
++    from app.einstellungen import llm_konfig
++    from app.models import Campaign
++    from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
++
++    k = llm_konfig(db)
++    if k.art == "lokal":
++        raise ValueError("lokal")
++    if k.art == "aus" or (k.art == "api" and not k.api_key):
++        raise ValueError("aus")
++    basis = eingabe_bauen(db, s)
++    recap_ein, vorschlag_ein = recap_eingabe(basis), vorschlag_eingabe(db, s, basis)
++    quelle = "Runde"
++    if abschrift is not None:
++        zeilen = abschrift_lesen(abschrift)
++        if len(zeilen) < 5:
++            raise ValueError("datei")
++        recap_ein["transkript"] = zeilen
++        vorschlag_ein["transkript"] = zeilen
++        quelle = (dateiname or "Abschrift")[:80]
++    if not recap_ein["transkript"]:
++        raise ValueError("leer")
++    c = db.get(Campaign, s.campaign_id)
++    p = Probe(id=new_id(), session_id=s.id, kampagne=c.title if c else "?", kapitel=s.number, quelle=quelle,
++              zeilen=len(recap_ein["transkript"]), modell=(k.api_modell if k.art == "api" else "Testmodus"),
++              gestartet=utcnow().isoformat().replace("+00:00", "Z"))
++    _aufraeumen()
++    _speichern(p)
++    if abschrift is not None:
++        (ordner(p.id) / "transkript.txt").write_text(abschrift, encoding="utf-8")
++    threading.Thread(target=_rechnen, args=(p, k, recap_ein, vorschlag_ein, s.campaign_id, s.id),
++                     name=f"probelauf-{p.id[:8]}", daemon=True).start()
++    return p
++
++
++def _aufraeumen() -> None:
++    import shutil
++
++    for alt in alle()[HOECHSTENS_PROBEN - 1:]:
++        shutil.rmtree(ordner(alt.id), ignore_errors=True)
++
++
++def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
++    from app.sprachmodell import Ablauf, SprachmodellFehler
++    from app.zusammenfassung import api_klient, attrappe, gegenpruefen_an
++
++    t0 = time.monotonic()
++    try:
++        if k.art == "attrappe":
++            from app.zusammenfassung import eingabe_bauen
++
++            with session_factory()() as db:
++                erg = attrappe(eingabe_bauen(db, db.get(GameSession, session_id)))
++            p.titel, p.text, p.offene_faeden = erg.titel, erg.text, list(erg.offene_faeden)
++            p.vorschlaege = [v.__dict__ for v in erg.vorschlaege]
++            p.aufrufe = 0
++        else:
++            klient = api_klient(k)
++
++            def schritt(name: str) -> None:
++                p.schritt = name
++                _speichern(p)
++
++            ablauf = Ablauf(klient, schritt=schritt)
++            with session_factory()() as db:
++                gegen = gegenpruefen_an(db)
++            d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
++            p.titel, p.text, p.offene_faeden = d["title"], d["text"], list(d["openThreads"])
++            p.vorschlaege = d["proposals"]
++            p.pruefung = d.get("review") or {}
++            p.aufrufe = ablauf.zaehler.aufrufe
++            p.tokens_ein, p.tokens_aus = d["tokensIn"], d["tokensOut"]
++            p.kosten_cent = klient.kosten_cent(d["tokensIn"], d["tokensOut"])
++            p.warnungen = list(getattr(ablauf, "warnungen", []) or [])
++            with session_factory()() as db:
++                db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
++                                model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
++                                cost_cents=p.kosten_cent, compute_seconds=time.monotonic() - t0))
++                db.commit()
++        p.zustand = "fertig"
++    except SprachmodellFehler as e:
++        p.zustand, p.fehler = "fehler", str(e)
++    except Exception as e:  # noqa: BLE001 – ein Probelauf darf nie etwas anderes mitreißen
++        log.exception("Probelauf %s fehlgeschlagen", p.id)
++        p.zustand, p.fehler = "fehler", f"{type(e).__name__}: {e}"
++    finally:
++        p.dauer_s = time.monotonic() - t0
++        p.schritt = ""
++        p.beendet = utcnow().isoformat().replace("+00:00", "Z")
++        _speichern(p)
++        _dateien_schreiben(p)
++
++
++def _dateien_schreiben(p: Probe) -> None:
++    o = ordner(p.id)
++    try:
++        if p.zustand == "fertig":
++            text = f"{p.titel}\n\n{p.text}\n"
++            if p.offene_faeden:
++                text += "\nOffene Fäden:\n" + "\n".join(f"- {f}" for f in p.offene_faeden) + "\n"
++            (o / "recap.txt").write_text(text, encoding="utf-8")
++            (o / "vorschlaege.json").write_text(json.dumps(p.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
++            (o / "pruefung.json").write_text(json.dumps(p.pruefung, ensure_ascii=False, indent=2), encoding="utf-8")
++        (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
++                                                      if k not in ("text", "vorschlaege", "pruefung")},
++                                                     ensure_ascii=False, indent=2), encoding="utf-8")
++    except OSError:
++        log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index 4616aef..086418c 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -311,5 +311,6 @@ def usage(
+         month=month, sessions=len(sessions),
+         audio_seconds=int(round(sum(z.audio_seconds for z in zeilen if z.kind == "transcription"))),
+-        documents=len(documents), cost_estimate_cents=sum(z.cost_cents for z in zeilen), billed_to="gm",
++        documents=len(documents), billed_to="gm",
++        cost_estimate_cents=sum(z.cost_cents for z in zeilen if z.kind != "probe"),  # Probeläufe zahlt der Betreiber
+     )
+ 
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index b89bac4..39e27b2 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -18,4 +18,40 @@ COOKIE = "tw_sprache"
+ 
+ EN: dict[str, str] = {
++    "Probelauf": "Trial run",
++    "Kapitel und Vorschläge für eine Runde mit Abschrift neu schreiben lassen, ohne die Runde zu verändern – zum Vergleichen von Modellen und Fassungen. Rechnet mit der Einstellung oben (Cloud-API oder Testmodus) direkt auf dem Server, auch ohne Worker. Kosten zählen zum Monatslimit, nicht zur Kampagne.": "Have chapter and suggestions written again for a session that has a transcript, without changing the session – to compare models and versions. Runs with the setting above (cloud API or test mode) directly on the server, no worker needed. Costs count towards the monthly limit, not the campaign.",
++    "Runde": "Session",
++    "{n} Zeilen": "{n} lines",
++    "Abschrift aus Datei (optional)": "Transcript from file (optional)",
++    "Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.": "Replaces the session's transcript; members and bible stay. Lines like “[1:02:03] Name: text” – for example the transkript.txt of a model comparison or a transcript you wrote yourself.",
++    "Probelauf starten": "Start trial run",
++    "Noch keine Runde mit Abschrift auf diesem Server.": "No session with a transcript on this server yet.",
++    "Gestartet": "Started",
++    "{cent} Cent": "{cent} cents",
++    "Zurück zur Zusammenfassung": "Back to summary",
++    "Grundlage": "Basis",
++    "Abschrift der Runde": "Session transcript",
++    "gestartet": "started",
++    "Schritt": "Step",
++    "Die Seite lädt alle 10 Sekunden neu. Ein Kapitel aus einer langen Runde braucht einige Minuten.": "The page reloads every 10 seconds. A chapter from a long session takes a few minutes.",
++    "{n} Aufrufe": "{n} calls",
++    "{ein} Tokens ein, {aus} aus": "{ein} tokens in, {aus} out",
++    "etwa {cent} Cent": "about {cent} cents",
++    "Hinweis": "Note",
++    "Dateien": "Files",
++    "Offene Fäden": "Open threads",
++    "Vorschläge": "Suggestions",
++    "Keine Vorschläge.": "No suggestions.",
++    "Absatz {n}": "Paragraph {n}",
++    "Probelauf löschen": "Delete trial run",
++    "Entfernt Ergebnis und Dateien dieses Probelaufs. Die Runde selbst ist davon nicht betroffen.": "Removes the result and files of this trial run. The session itself is not affected.",
++    "Szenennotizen": "Scene notes",
++    "Kapitel": "Chapter",
++    "Nachbesserung": "Revision",
++    "Bitte eine Runde mit Abschrift wählen.": "Please choose a session with a transcript.",
++    "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.": "The transcript file is too large (5 MB at most) or contains no lines “[h:mm:ss] Speaker: text”.",
++    "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.": "The trial run runs on the server; “Who summarizes?” must be set to the cloud API or test mode for that.",
++    "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.": "Summary is off or has no API key – please set it up first.",
++    "Diese Runde hat keine Abschrift.": "This session has no transcript.",
++    "Probelauf gelöscht.": "Trial run deleted.",
+     "Automatisch aktualisieren": "Update automatically",
+     "nachts zwischen 3 und 5 Uhr, mit Sicherung vorher. Startet die neue Fassung nicht, geht der Server von selbst auf die alte Fassung und die Daten von vorher zurück.": "at night between 3 and 5 am, with a backup first. If the new version doesn't start, the server goes back to the old version and the data from before by itself.",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 6698a2c..3b25c8e 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -21,5 +21,5 @@ from zoneinfo import ZoneInfo
+ 
+ import jwt
+-from fastapi import APIRouter, Depends, FastAPI, Form, Request
++from fastapi import APIRouter, Depends, FastAPI, File, Form, Request, UploadFile
+ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+ from fastapi.staticfiles import StaticFiles
+@@ -74,4 +74,10 @@ def tr(request: Request):
+ # Meldungen nach einer Aktion (?ok=…) – der Text ist zugleich der Übersetzungsschlüssel
+ MELDUNGEN = {
++    "probe_runde": "Bitte eine Runde mit Abschrift wählen.",
++    "probe_datei": "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.",
++    "probe_lokal": "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.",
++    "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",
++    "probe_leer": "Diese Runde hat keine Abschrift.",
++    "probe_geloescht": "Probelauf gelöscht.",
+     "konto_angelegt": "Konto angelegt.",
+     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
+@@ -702,5 +708,75 @@ def _llm_anzeige(db: Session) -> dict:
+ def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db),
+                           fehler: str = ""):
+-    return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler)
++    from app import kapitelprobe as probelauf
++
++    return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
++                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10])
++
++
++def _runden_mit_abschrift(db: Session) -> list[dict]:
++    from app.models import Campaign, GameSession, TranscriptSegment
++
++    zeilen = db.execute(select(GameSession, Campaign.title, func.count(TranscriptSegment.id))
++                        .join(Campaign, Campaign.id == GameSession.campaign_id)
++                        .join(TranscriptSegment, TranscriptSegment.session_id == GameSession.id)
++                        .group_by(GameSession.id).order_by(GameSession.created_at.desc()).limit(30)).all()
++    return [{"id": s.id, "kampagne": titel, "kapitel": s.number, "titel": s.title, "zeilen": n} for s, titel, n in zeilen]
++
++
++# ---------- Probelauf der Zusammenfassung ----------
++@router.post("/probelauf", dependencies=[Depends(csrf_pruefen)])
++async def probelauf_starten(request: Request, session: str = Form(""), abschrift: UploadFile | None = File(None),
++                            user: User = Depends(verwalter), db: Session = Depends(get_db)):
++    """Kapitel und Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern."""
++    from app import kapitelprobe as probelauf
++    from app.models import GameSession
++
++    _ = tr(request)
++    s = db.get(GameSession, session.strip()) if session.strip() else None
++    if s is None:
++        return _zurueck("/verwaltung/zusammenfassung", "probe_runde")
++    text, name = None, None
++    if abschrift is not None and abschrift.filename:
++        roh = await abschrift.read()
++        if len(roh) > 5_000_000:
++            return _zurueck("/verwaltung/zusammenfassung", "probe_datei")
++        text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
++    try:
++        p = probelauf.starten(db, s, text, name)
++    except ValueError as e:
++        return _zurueck("/verwaltung/zusammenfassung", f"probe_{e}")
++    return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)
++
++
++@router.get("/probelauf/{probe_id}", response_class=HTMLResponse)
++def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
++    from app import kapitelprobe as probelauf
++
++    p = probelauf.lesen(probe_id)
++    if p is None:
++        raise errors.not_found()
++    schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
++                "proposals": "Vorschläge"}
++    return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
++                  dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
++
++
++@router.get("/probelauf/{probe_id}/{name}")
++def probelauf_datei(probe_id: str, name: str, user: User = Depends(verwalter)):
++    from app import kapitelprobe as probelauf
++
++    pfad = probelauf.datei(probe_id, name)
++    if pfad is None:
++        raise errors.not_found()
++    return FileResponse(pfad, filename=f"probe-{probe_id[:8]}-{name}",
++                        media_type="application/json" if name.endswith(".json") else "text/plain; charset=utf-8")
++
++
++@router.post("/probelauf/{probe_id}/loeschen", dependencies=[Depends(csrf_pruefen)])
++def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter)):
++    from app import kapitelprobe as probelauf
++
++    probelauf.loeschen(probe_id)
++    return _zurueck("/verwaltung/zusammenfassung", "probe_geloescht")
+ 
+ 
+diff --git a/app/verwaltung/templates/probelauf.html b/app/verwaltung/templates/probelauf.html
+new file mode 100644
+index 0000000..144f522
+--- /dev/null
++++ b/app/verwaltung/templates/probelauf.html
+@@ -0,0 +1,46 @@
++{% extends "basis.html" %}
++{% block titel %}{{ _("Probelauf") }}{% endblock %}
++{% block kopfzeilen %}{% if p.zustand == "läuft" %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
++{% block inhalt %}
++<h1>{{ _("Probelauf") }}</h1>
++<p class="leise"><a href="/verwaltung/zusammenfassung">{{ _("Zurück zur Zusammenfassung") }}</a></p>
++<div class="karte">
++  <h2>{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}</h2>
++  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
++  {% if p.zustand == "läuft" %}
++    <p><span class="marke-status marke-status--warten">{{ _("läuft") }}</span> {% if schritt %}{{ _("Schritt") }}: {{ _(schritt) }}{% endif %} · <span class="leise">{{ _("Die Seite lädt alle 10 Sekunden neu. Ein Kapitel aus einer langen Runde braucht einige Minuten.") }}</span></p>
++  {% elif p.zustand == "fehler" %}
++    <p><span class="marke-status marke-status--fehler">{{ _("fehlgeschlagen") }}</span> {{ p.fehler }}</p>
++  {% else %}
++    <p><span class="marke-status marke-status--gut">{{ _("fertig") }}</span> {{ _("{n} Aufrufe", n=p.aufrufe) }} · {{ _("{ein} Tokens ein, {aus} aus", ein=p.tokens_ein, aus=p.tokens_aus) }} · {{ _("etwa {cent} Cent", cent=p.kosten_cent) }} · {{ (p.dauer_s // 60)|int }} min {{ (p.dauer_s % 60)|int }} s</p>
++    {% for w in p.warnungen %}<p class="hilfe">{{ _("Hinweis") }} ({{ w.schritt }}): {{ w.fehler }}</p>{% endfor %}
++    {% if dateien %}<p>{{ _("Dateien") }}: {% for n in dateien %}<a href="/verwaltung/probelauf/{{ p.id }}/{{ n }}">{{ n }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
++  {% endif %}
++</div>
++{% if p.zustand == "fertig" %}
++<div class="karte">
++  <h2>{{ p.titel }}</h2>
++  {% for absatz in p.text.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
++  {% if p.offene_faeden %}<h3>{{ _("Offene Fäden") }}</h3><ul>{% for f in p.offene_faeden %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
++</div>
++<div class="karte">
++  <h2>{{ _("Vorschläge") }} ({{ p.vorschlaege|length }})</h2>
++  {% for v in p.vorschlaege %}
++    <p><strong>{{ v.title }}</strong> <span class="leise">({{ v.entryType or v.entry_type }} · {{ v.action }} · {{ v.suggestedVisibility or v.suggested_visibility }})</span><br>{{ v.detail }}</p>
++  {% else %}<p class="leise">{{ _("Keine Vorschläge.") }}</p>{% endfor %}
++</div>
++{% if p.pruefung and p.pruefung.paragraphs %}
++<div class="karte">
++  <h2>{{ _("Prüfung") }}</h2>
++  {% for a in p.pruefung.paragraphs %}<p><span class="leise">{{ _("Absatz {n}", n=a.index + 1) }}:</span> {{ a.verdict }}{% if a.note %} – {{ a.note }}{% endif %}</p>{% endfor %}
++</div>
++{% endif %}
++{% endif %}
++<details><summary>{{ _("Probelauf löschen") }}</summary>
++  <p class="hilfe">{{ _("Entfernt Ergebnis und Dateien dieses Probelaufs. Die Runde selbst ist davon nicht betroffen.") }}</p>
++  <form method="post" action="/verwaltung/probelauf/{{ p.id }}/loeschen">
++    <input type="hidden" name="csrf" value="{{ csrf }}">
++    <button class="tw-btn tw-btn--danger tw-btn--klein" type="submit">{{ _("Endgültig löschen") }}</button>
++  </form>
++</details>
++{% endblock %}
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index 9d2a5be..b10d913 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -76,4 +76,37 @@
+ </div>
+ 
++<div class="karte">
++  <h2>{{ _("Probelauf") }}</h2>
++  <p class="hilfe">{{ _("Kapitel und Vorschläge für eine Runde mit Abschrift neu schreiben lassen, ohne die Runde zu verändern – zum Vergleichen von Modellen und Fassungen. Rechnet mit der Einstellung oben (Cloud-API oder Testmodus) direkt auf dem Server, auch ohne Worker. Kosten zählen zum Monatslimit, nicht zur Kampagne.") }}</p>
++  {% if runden %}
++  <form class="formular" method="post" action="/verwaltung/probelauf" enctype="multipart/form-data">
++    <input type="hidden" name="csrf" value="{{ csrf }}">
++    <label>{{ _("Runde") }}
++      <select name="session" required>
++        {% for r in runden %}<option value="{{ r.id }}">{{ r.kampagne }} · {{ _("Kapitel {n}", n=r.kapitel) }}{% if r.titel %} · {{ r.titel }}{% endif %} · {{ _("{n} Zeilen", n=r.zeilen) }}</option>{% endfor %}
++      </select></label>
++    <label>{{ _("Abschrift aus Datei (optional)") }} <input type="file" name="abschrift" accept=".txt,text/plain">
++      <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
++    <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
++  </form>
++  {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift auf diesem Server.") }}</p>{% endif %}
++  {% if proben %}
++  <table>
++    <thead><tr><th>{{ _("Gestartet") }}</th><th>{{ _("Runde") }}</th><th>{{ _("Modell") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Kosten") }}</th></tr></thead>
++    <tbody>
++    {% for p in proben %}
++      <tr>
++        <td data-label="{{ _('Gestartet') }}"><a href="/verwaltung/probelauf/{{ p.id }}">{{ p.gestartet[:16]|replace("T", " ") }}</a></td>
++        <td data-label="{{ _('Runde') }}">{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}{% if p.quelle != "Runde" %}<br><span class="leise">{{ p.quelle }}</span>{% endif %}</td>
++        <td data-label="{{ _('Modell') }}" class="leise">{{ p.modell }}</td>
++        <td data-label="{{ _('Zustand') }}">{% if p.zustand == "fertig" %}<span class="marke-status marke-status--gut">{{ _("fertig") }}</span>{% elif p.zustand == "läuft" %}<span class="marke-status marke-status--warten">{{ _("läuft") }}</span>{% else %}<span class="marke-status marke-status--fehler">{{ _("fehlgeschlagen") }}</span>{% endif %}</td>
++        <td data-label="{{ _('Kosten') }}" class="leise">{{ _("{cent} Cent", cent=p.kosten_cent) if p.zustand == "fertig" else "–" }}</td>
++      </tr>
++    {% endfor %}
++    </tbody>
++  </table>
++  {% endif %}
++</div>
++
+ <div class="karte tabelle-huelle">
+   <h2>{{ _("Worker mit Sprachmodell") }}</h2>
+diff --git a/pyproject.toml b/pyproject.toml
+index b8dbc6c..a881651 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.49"
++version = "0.4.50"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index e85d2c4..0b1b1c2 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.49"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.50"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 6247f19..b6b0150 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.49"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.50"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index dc872e6..461a9c6 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.49"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.50"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_step5.py b/tests/test_step5.py
+index 352609a..11d4353 100644
+--- a/tests/test_step5.py
++++ b/tests/test_step5.py
+@@ -368,2 +368,68 @@ def test_recap_probe_speichert_nichts(client, world, dbs, tmp_path, api):
+     assert api.aufrufe[0]["body"]["model"] == "mistral-small-latest"
+     assert dbs.query(Recap).count() == 0
++
++
++def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa: F811
++    """Probelauf: Kapitel und Vorschläge für eine Runde mit Abschrift, ohne die Runde zu ändern; Kosten im
++    Verbrauchsprotokoll, aber nicht bei der Kampagne; wahlweise mit hochgeladener Abschrift."""
++    import time as _time
++
++    from app import kapitelprobe as probelauf
++    from app.models import GameSession, UsageLog
++
++    w = world
++    s = transkribiert(client, w, dbs, tmp_path)
++    url = "/verwaltung/zusammenfassung"
++    basis = {"csrf": admin, "art": "api", "anbieter": "mistral", "api_modell": "mistral-large-latest",
++             "lokal_modell": "auto", "lokal_kontext": "12288", "api_key": "sk-abcdefghijklmnop1234"}
++    assert client.post(url, data=basis, follow_redirects=False).status_code == 303
++    seite = client.get(url).text
++    assert "Probelauf starten" in seite and s["id"] in seite
++    # ohne Runde → Hinweis
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": ""}, follow_redirects=False)
++    assert r.status_code == 303 and "ok=probe_runde" in r.headers["location"]
++    # mit Runde → läuft im Hintergrund, Seite zeigt den Stand
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
++    assert r.status_code == 303 and r.headers["location"].startswith("/verwaltung/probelauf/")
++    pid = r.headers["location"].rsplit("/", 1)[1]
++    for _ in range(100):
++        p = probelauf.lesen(pid)
++        if p.zustand != "läuft":
++            break
++        _time.sleep(0.1)
++    assert p.zustand == "fertig", p.fehler
++    assert p.text and isinstance(p.vorschlaege, list) and p.aufrufe >= 2 and p.kosten_cent >= 0 and p.quelle == "Runde"
++    seite = client.get(f"/verwaltung/probelauf/{pid}").text
++    assert p.titel in seite and "fertig" in seite and "recap.txt" in seite
++    assert client.get(f"/verwaltung/probelauf/{pid}/recap.txt").text.startswith(p.titel)
++    assert client.get(f"/verwaltung/probelauf/{pid}/../stand.json").status_code in (404, 400)
++    assert client.get(f"/verwaltung/probelauf/{pid}/stand.json").status_code == 404  # nur bekannte Dateien
++    # Runde unverändert, Kosten beim Betreiber, nicht bei der Kampagne
++    dbs.expire_all()
++    assert dbs.get(GameSession, s["id"]).state == "awaiting_speakers"
++    log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="probe").one()
++    assert log.engine == "external" and log.model == "mistral-large-latest"
++    nutzung = client.get(f"{API}/campaigns/{w['cid']}/usage", headers=w["gm"]).json()
++    assert nutzung["costEstimateCents"] == 0
++    # Abschrift aus Datei ersetzt die Abschrift der Runde
++    datei = "[0:00:05] Spielleitung: Ihr steht vor dem Tor von Rabenfels.\n[0:00:12] Mira: Ich klopfe.\n" * 3
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]},
++                    files={"abschrift": ("eigene.txt", datei.encode(), "text/plain")}, follow_redirects=False)
++    pid2 = r.headers["location"].rsplit("/", 1)[1]
++    for _ in range(100):
++        p2 = probelauf.lesen(pid2)
++        if p2.zustand != "läuft":
++            break
++        _time.sleep(0.1)
++    assert p2.zustand == "fertig" and p2.quelle == "eigene.txt" and p2.zeilen == 6
++    assert client.get(f"/verwaltung/probelauf/{pid2}/transkript.txt").text == datei
++    # Übersicht listet beide, Löschen räumt auf
++    seite = client.get(url).text
++    assert seite.count("/verwaltung/probelauf/") >= 2 and "eigene.txt" in seite
++    r = client.post(f"/verwaltung/probelauf/{pid2}/loeschen", data={"csrf": admin}, follow_redirects=False)
++    assert r.status_code == 303 and probelauf.lesen(pid2) is None
++    assert client.get(f"/verwaltung/probelauf/{pid2}").status_code == 404
++    # lokales Modell eingestellt → verständlicher Hinweis statt Lauf
++    client.post(url, data={**basis, "art": "lokal"})
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
++    assert "ok=probe_lokal" in r.headers["location"]
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index c2a105e..ea27e3f 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.49"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.50"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 4feff21..66c3db4 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.49"
++version = "0.4.50"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
