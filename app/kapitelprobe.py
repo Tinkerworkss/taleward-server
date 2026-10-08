@@ -124,6 +124,25 @@ def kampagne_entfernt(campaign_id: str) -> None:
             loeschen(p.id)
 
 
+def rechte_pruefen(db: Session, user_id: str | None = None) -> int:
+    """0.4.62: Probeläufe löschen, deren Konto in der Kampagne keine Spielleitung mehr ist – oder die gar keinem Konto
+    gehören (ältere Fassungen). Laufende bleiben bis zum Ende stehen und gehen beim nächsten Mal. user_id: nur dessen."""
+    weg = 0
+    for p in alle():
+        if (user_id and p.besitzer != user_id) or p.zustand == "läuft":
+            continue
+        if not p.besitzer or not p.campaign_id or not ist_sl(db, p.besitzer, p.campaign_id):
+            weg += bool(loeschen(p.id))
+    return weg
+
+
+def konto_entfernt(user_id: str) -> None:
+    """Beim Löschen eines Kontos: seine Probeläufe entfernen."""
+    for p in alle():
+        if p.besitzer == user_id and p.zustand != "läuft":
+            loeschen(p.id)
+
+
 def alle() -> list[Probe]:
     aus = []
     if ordner().is_dir():
@@ -274,7 +293,8 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
                 p.schritt = name
                 _speichern(p)
 
-            ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k))
+            ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
+                            nachbesserung=k.art != "api")  # 0.4.62: wie im echten Ablauf
             with session_factory()() as db:
                 gegen = gegenpruefen_an(db)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)

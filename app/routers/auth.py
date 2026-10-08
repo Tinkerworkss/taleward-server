@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import errors, schemas
+from app import begrenzung, errors, schemas
 from app.access import current_user
 from app.einstellungen import angaben, mail_adresse
 from app.extern import anbieter
@@ -63,18 +63,19 @@ def login(body: schemas.LoginRequest, request: Request, db: Session = Depends(ge
     from app.begrenzung import ZAEHLER
 
     name = body.username.strip().lower()
-    adresse = request.client.host if request.client else "?"
-    if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
-            ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
+    adresse = begrenzung.adresse(request)
+    # 0.4.62: vor dem Passwortvergleich zählen (Adresse vor Name), bei Erfolg zurücknehmen
+    versuch = ZAEHLER.reservieren([(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER),
+                                   (f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER)])
+    if versuch is None:
         raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 401 mit demselben code)
     user = db.scalar(select(User).where(User.username == name))
     methode = None
     if user is not None:
         methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id, AuthMethod.kind == "password"))
     if not verify_password(body.password, methode.secret if methode else None):
-        ZAEHLER.zaehlen(f"login-adr:{adresse}", LOGIN_FENSTER)
-        ZAEHLER.zaehlen(f"login-name:{name}", LOGIN_FENSTER)
         raise errors.BAD_CREDENTIALS
+    ZAEHLER.freigeben(versuch)
     if user.setup_account:  # admin/admin: nur für die Ersteinrichtung in der Verwaltung
         raise errors.ApiError(401, "setup_account_only")
     methode.last_used_at = utcnow()
@@ -88,7 +89,7 @@ def register(body: schemas.RegisterRequest, request: Request, db: Session = Depe
     """Konto mit Einladungscode anlegen und gleich anmelden. Beitreten macht die App danach mit /campaigns/join."""
     from app.konto import registrieren
 
-    adresse = request.client.host if request.client else "?"
+    adresse = begrenzung.adresse(request)
     if body.registration_token is not None:  # 0.4.0: nach Anmeldung mit einem Dienst
         from app.routers.anmeldung import registrieren_mit_dienst
 

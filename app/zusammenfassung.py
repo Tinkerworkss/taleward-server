@@ -310,8 +310,10 @@ def zusammenfasser(db: Session):
         def ueber_api(db_, s):
             klient = api_klient(k)
             basis = eingabe_bauen(db_, s)
+            # 0.4.62: keine Nachbesserung über die Cloud – sie hat in der Messung nur Kosten gebracht und das Kapitel
+            # verschlechtert; die Prüfung bleibt als Hinweis für die Spielleitung
             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
-                            vorschlag_klient=api_klient_vorschlaege(k))
+                            vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False)
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"

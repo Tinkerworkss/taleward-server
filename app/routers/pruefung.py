@@ -41,6 +41,24 @@ def _kampagnen_mitglieder(db: Session, campaign_id: str) -> set[str]:
     return set(db.scalars(select(Member.id).where(Member.campaign_id == campaign_id)))
 
 
+NEU_SCHREIBEN_JE_TAG = 5  # 0.4.62: Kapitel neu schreiben kostet bei der Cloud jedes Mal
+
+
+def _neu_schreiben_pruefen(db: Session, s: GameSession) -> None:
+    """Höchstens NEU_SCHREIBEN_JE_TAG Zusammenfassungen je Kapitel in 24 Stunden (409 resummarize_limit)."""
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    from app.models import Job
+
+    seit = utcnow() - timedelta(hours=24)
+    anzahl = db.scalar(select(func.count()).select_from(Job).where(
+        Job.session_id == s.id, Job.type == "summarize", Job.created_at >= seit)) or 0
+    if anzahl >= NEU_SCHREIBEN_JE_TAG:
+        raise errors.conflict("resummarize_limit")
+
+
 # ---------- Stimmen bestätigen ----------
 @router.put("/sessions/{sessionId}/speakers", tags=["Stimmen"], status_code=202,
             response_model=schemas.ProcessingStatusOut)
@@ -57,6 +75,8 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
         raise errors.conflict("wrong_state", "wrong_state.speakers")
     if nachtraeglich and not _hat_abschrift(db, s):
         raise errors.conflict("transcript_missing")
+    if nachtraeglich:
+        _neu_schreiben_pruefen(db, s)
     stimmen = {sp.id: sp for sp in db.scalars(select(Speaker).where(Speaker.session_id == s.id))}
     ids = [z.speaker_id for z in body]
     if len(ids) != len(set(ids)):
@@ -113,6 +133,7 @@ def resummarize(sessionId: str, request: Request, user: User = Depends(current_u
         raise errors.conflict("wrong_state", "wrong_state.resummarize")
     if not _hat_abschrift(db, s):
         raise errors.conflict("transcript_missing")
+    _neu_schreiben_pruefen(db, s)
     queue.create_summarize_job(db, s)
     db.commit()
     return processing_status(db, s, sprache(request))

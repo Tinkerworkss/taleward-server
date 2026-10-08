@@ -266,5 +266,8 @@ def entfernen(db: Session, u: User) -> None:
     from app import umzug
 
     umzug.konto_entfernt(db, u.id)  # hochgeladene Teile offener Importe
+    from app import kapitelprobe
+
+    kapitelprobe.konto_entfernt(u.id)  # 0.4.62: Probeläufe der Verwaltung
     db.flush()
     db.delete(u)

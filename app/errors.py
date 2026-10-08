@@ -214,6 +214,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
                      "The character can only be given to an active player of this campaign."),
     "retranscribe_limit": ("Diese Aufnahme wurde schon zweimal neu transkribiert – mehr geht nicht.",
                            "This recording has already been transcribed again twice – no more attempts."),
+    "resummarize_limit": ("Dieses Kapitel wurde heute schon fünfmal neu geschrieben. Morgen geht es wieder.",
+                          "This chapter has already been rewritten five times today. You can try again tomorrow."),
     "audio_gone": ("Das Audio ist schon gelöscht. Bitte die Aufnahme neu hochladen.",
                    "The audio has already been deleted. Please upload the recording again."),
     "audio_deleted": ("Die Hörprobe ist bereits gelöscht.", "The voice sample has already been deleted."),

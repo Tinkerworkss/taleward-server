@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import charaktere, errors, schemas, umzug
+from app import begrenzung, charaktere, errors, schemas, umzug
 from app.access import aktive_sl_anzahl, current_user, membership, require_gm, require_member
 from app.db import get_db, utcnow
 from app.models import Campaign, Invite, Member, UsageLog, User
@@ -58,6 +58,25 @@ def create_campaign(body: schemas.CampaignCreate, user: User = Depends(current_u
 
 JOIN_FENSTER = 15 * 60
 JOIN_JE_KONTO, JOIN_JE_ADRESSE = 10, 30  # falsche Codes im Fenster
+# 0.4.62: zusätzlich eine Grenze über alle Adressen – wer viele Adressen hat, rät nicht schneller
+JOIN_SERVERWEIT, JOIN_SERVER_FENSTER = 300, 60 * 60
+
+
+def code_versuch(adresse: str, konto_id: str | None = None):
+    """Einladungscode-Versuch vorab zählen (Beitritt, Vorschau, Einladungsseite teilen die Zähler). None = gesperrt;
+    bei gültigem Code gibt der Aufrufer die Zählung mit ZAEHLER.freigeben zurück."""
+    from app.begrenzung import ZAEHLER
+
+    posten = [(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER)]
+    if konto_id:
+        posten.append((f"join-konto:{konto_id}", JOIN_JE_KONTO, JOIN_FENSTER))
+    posten.append(("join-alle", JOIN_SERVERWEIT, JOIN_SERVER_FENSTER))
+    versuch = ZAEHLER.reservieren(posten)
+    if versuch is None and ZAEHLER.voll("join-alle", JOIN_SERVERWEIT, JOIN_SERVER_FENSTER):
+        import logging
+
+        logging.getLogger("begrenzung").warning("Sehr viele falsche Einladungscodes: Beitritte sind vorübergehend gesperrt")
+    return versuch
 
 
 @router.get("/invites/{code}", response_model=schemas.InvitePreviewOut)
@@ -67,15 +86,15 @@ def invite_preview(code: str, request: Request, response: Response, db: Session 
     from app.begrenzung import ZAEHLER
 
     response.headers["Cache-Control"] = "no-store"
-    adresse = request.client.host if request.client else "?"
-    if ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
+    versuch = code_versuch(begrenzung.adresse(request))
+    if versuch is None:
         raise errors.ApiError(429, "too_many_requests")
     inv = db.get(Invite, normalize_invite_code(code[:64]))
     c = db.get(Campaign, inv.campaign_id) if inv is not None else None
     platz = db.get(Member, inv.member_id) if inv is not None and inv.member_id else None
     if inv is None or c is None or inv.expires_at <= utcnow() or (inv.member_id and (platz is None or not platz.open_seat)):
-        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
         raise errors.ApiError(404, "invite_invalid")
+    ZAEHLER.freigeben(versuch)
     return schemas.InvitePreviewOut(campaign_title=c.title, expires_at=inv.expires_at,
                                     seat_character_name=platz.character_name if platz else None)
 
@@ -85,15 +104,13 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
          db: Session = Depends(get_db)):
     from app.begrenzung import ZAEHLER
 
-    adresse = request.client.host if request.client else "?"
-    if ZAEHLER.voll(f"join-konto:{user.id}", JOIN_JE_KONTO, JOIN_FENSTER) or \
-            ZAEHLER.voll(f"join-adr:{adresse}", JOIN_JE_ADRESSE, JOIN_FENSTER):
+    versuch = code_versuch(begrenzung.adresse(request), user.id)
+    if versuch is None:
         raise errors.ApiError(429, "too_many_requests")  # 0.4.9 (vorher 409 mit demselben code)
     inv = db.get(Invite, normalize_invite_code(body.code))
     if inv is None or inv.expires_at <= utcnow():
-        ZAEHLER.zaehlen(f"join-konto:{user.id}", JOIN_FENSTER)
-        ZAEHLER.zaehlen(f"join-adr:{adresse}", JOIN_FENSTER)
         raise errors.ApiError(404, "invite_invalid")
+    ZAEHLER.freigeben(versuch)
     c = db.get(Campaign, inv.campaign_id)
     me = membership(db, c.id, user)
     char = (body.character_name or "").strip() or None
@@ -249,7 +266,13 @@ def patch_member(
                 raise errors.conflict("last_gm")
             # SL-Übergabe: Als SL hat sie alles gesehen – nicht alle Recaps und Einträge als ungelesen zeigen
             target.chronicle_seen_at = target.bible_seen_at = utcnow()
+        war_sl = target.role == "gm"
         target.role = body.role
+        if war_sl and target.user_id:
+            db.commit()
+            from app import kapitelprobe
+
+            kapitelprobe.rechte_pruefen(db, target.user_id)  # 0.4.62
     db.commit()
     db.refresh(me)
     return member_out(target, me)
@@ -293,6 +316,10 @@ def remove_member(campaignId: str, memberId: str, user: User = Depends(current_u
     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))
     db.execute(DateVote.__table__.delete().where(DateVote.member_id == target.id))
     db.commit()
+    if target.role == "gm" and target.user_id:
+        from app import kapitelprobe
+
+        kapitelprobe.rechte_pruefen(db, target.user_id)  # 0.4.62: Probeläufe der Verwaltung gleich mit
     return Response(status_code=204)
 
 

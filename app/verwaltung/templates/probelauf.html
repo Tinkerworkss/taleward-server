@@ -14,7 +14,7 @@
   {% else %}
     <p><span class="marke-status marke-status--gut">{{ _("fertig") }}</span> {{ _("{n} Aufrufe", n=p.aufrufe) }} · {{ _("{ein} Tokens ein, {aus} aus", ein=p.tokens_ein, aus=p.tokens_aus) }} · {{ _("etwa {cent} Cent", cent=p.kosten_cent) }} · {{ (p.dauer_s // 60)|int }} min {{ (p.dauer_s % 60)|int }} s</p>
     {% for w in p.warnungen %}<p class="hilfe">{{ _("Hinweis") }} ({{ w.schritt }}): {{ w.fehler }}</p>{% endfor %}
-    {% if p.bereinigt %}{% set arten = {"du_form": _("Du-/Ihr-Form (meist Rede der Spielleitung)"), "regel": _("Regelsprache"), "kraftausdruck": _("Kraftausdruck"), "name_am_tisch": _("Name eines Menschen am Tisch"), "name_ersetzt": _("Spielername durch Figur ersetzt"), "wiederholung": _("Wiederholung")} %}
+    {% if p.bereinigt %}{% set arten = {"du_form": _("Du-/Ihr-Form (meist Rede der Spielleitung)"), "regel": _("Regelsprache"), "kraftausdruck": _("Kraftausdruck"), "name_am_tisch": _("Name eines Menschen am Tisch"), "name_ersetzt": _("Spielername durch Figur ersetzt"), "wiederholung": _("Wiederholung"), "tischgespraech": _("Hinweis: klingt nach Gespräch am Tisch (bleibt stehen)"), "erzaehlstimme": _("Hinweis: Erzählstimme in der Du-/Ihr-Form, nichts gelöscht (Sätze)")} %}
     <details><summary>{{ _("Vom Filter bereinigt ({n})", n=p.bereinigt|length) }}</summary>
       <ul class="hilfe">{% for b in p.bereinigt %}<li>{{ arten.get(b.art, b.art) }}: „{{ b.text }}“</li>{% endfor %}</ul></details>{% endif %}
     {% if dateien %}<p><a class="tw-btn tw-btn--klein" href="/verwaltung/probelauf/{{ p.id }}/alles.zip">{{ _("Alle Dateien als ZIP") }}</a></p>

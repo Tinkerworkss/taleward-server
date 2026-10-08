@@ -28,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import errors, queue
+from app import begrenzung, errors, queue
 from app.config import get_settings
 from app.db import get_db, server_id, utcnow
 from app.einstellungen import angaben, meta_lesen, meta_schreiben, speichern
@@ -75,7 +75,7 @@ def tr(request: Request):
 # Meldungen nach einer Aktion (?ok=…) – der Text ist zugleich der Übersetzungsschlüssel
 MELDUNGEN = {
     "probe_runde": "Bitte eine Runde mit Abschrift wählen.",
-    "probe_cloud": "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App unter „Kampagne verwalten“.",
+    "probe_cloud": "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App auf der Übersicht der Kampagne unter „Die Welt“ → „Bearbeiten“.",
     "probe_datei": "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.",
     "probe_lokal": "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.",
     "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",
@@ -120,18 +120,17 @@ SPERRE_VERSUCHE, SPERRE_SEKUNDEN = 5, 300   # je Name (über alle Adressen)
 SPERRE_ADRESSE = 20                          # je Adresse (über alle Namen)
 
 
-def _gesperrt(adresse: str, name: str) -> bool:
+def _versuch(adresse: str, name: str | None):
+    """Versuch vorab zählen (0.4.62): erst die Adresse, dann der Name. None = gesperrt. name=None: Einrichtungscode –
+    streng je Adresse, aber ohne gemeinsamen Namen (den könnte sonst jeder sperren)."""
     from app.begrenzung import ZAEHLER
 
-    return (ZAEHLER.voll(f"verw-name:{name}", SPERRE_VERSUCHE, SPERRE_SEKUNDEN)
-            or ZAEHLER.voll(f"verw-adr:{adresse}", SPERRE_ADRESSE, SPERRE_SEKUNDEN))
-
-
-def _fehlversuch(adresse: str, name: str) -> None:
-    from app.begrenzung import ZAEHLER
-
-    ZAEHLER.zaehlen(f"verw-name:{name}", SPERRE_SEKUNDEN)
-    ZAEHLER.zaehlen(f"verw-adr:{adresse}", SPERRE_SEKUNDEN)
+    posten = [(f"verw-adr:{adresse}", SPERRE_ADRESSE, SPERRE_SEKUNDEN)]
+    if name is None:
+        posten.append((f"verw-einrichtung:{adresse}", SPERRE_VERSUCHE, SPERRE_SEKUNDEN))
+    else:
+        posten.append((f"verw-name:{name}", SPERRE_VERSUCHE, SPERRE_SEKUNDEN))
+    return ZAEHLER.reservieren(posten)
 
 
 def _ist_verwalter(db: Session, user: User) -> bool:
@@ -228,23 +227,25 @@ def anmelden_seite(request: Request, db: Session = Depends(get_db)):
 @router.post("/anmelden")
 def anmelden(request: Request, username: str = Form(""), password: str = Form(""), db: Session = Depends(get_db)):
     name = username.strip().lower()
-    adresse = request.client.host if request.client else "?"
+    adresse = begrenzung.adresse(request)
     fehler = None
-    if _gesperrt(adresse, name):
+    versuch = _versuch(adresse, name)
+    if versuch is None:
         fehler = tr(request)("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen.")
     else:
+        from app.begrenzung import ZAEHLER
+
         user = db.scalar(select(User).where(User.username == name))
         methode = user and db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id,
                                                              AuthMethod.kind == "password"))
         if not (methode and verify_password(password, methode.secret)):
-            _fehlversuch(adresse, name)
             fehler = tr(request)("Benutzername oder Passwort stimmt nicht.")
         elif not _ist_verwalter(db, user):
+            ZAEHLER.freigeben(versuch)
             fehler = tr(request)("Dieses Konto hat kein Verwalter-Recht. Freischalten mit: uv run chronik admin -u {name}",
                                  name=name)
         else:
-            from app.begrenzung import ZAEHLER
-
+            ZAEHLER.freigeben(versuch)
             ZAEHLER.loeschen(f"verw-name:{name}")
             antwort = _zurueck("/einrichtung" if user.setup_account else "/")
             antwort.set_cookie(COOKIE, _cookie_wert(db, user), max_age=SITZUNG_STUNDEN * 3600, httponly=True,
@@ -841,6 +842,22 @@ def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter), db: Sessi
     return _zurueck("/zusammenfassung", "probe_geloescht")
 
 
+def _api_adresse_ok(url: str) -> bool:
+    """https mit Host, ohne Zugangsdaten; http nur für diesen Server selbst (Host exakt verglichen, 0.4.62)."""
+    from urllib.parse import urlsplit
+
+    if not url or any(c.isspace() or ord(c) < 32 for c in url):
+        return False
+    try:
+        t = urlsplit(url)
+        host = t.hostname
+    except ValueError:
+        return False
+    if not host or t.username is not None or t.password is not None or "@" in t.netloc:
+        return False
+    return t.scheme == "https" or (t.scheme == "http" and host in ("localhost", "127.0.0.1", "::1"))
+
+
 @router.post("/zusammenfassung", dependencies=[Depends(csrf_pruefen)])
 def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter: str = Form("mistral"),
                               api_url: str = Form(""), api_modell: str = Form(""), api_key: str = Form(""),
@@ -865,7 +882,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     if art not in LLM_ARTEN or (bekannt is None and anbieter != "andere"):
         return fehler(_("Unbekannte Auswahl."))
     url = bekannt.url if bekannt else api_url.strip().rstrip("/")
-    if not url.startswith("https://") and not url.startswith("http://localhost"):
+    if not _api_adresse_ok(url):
         return fehler(_("Die Adresse muss mit https:// beginnen."))
     if art == "api" and (bekannt is None or not bekannt.eu) and not ausserhalb_eu:
         return fehler(_("Bitte bestätigen, dass die Verarbeitung außerhalb der EU bzw. bei einem nicht beschriebenen Anbieter gewollt ist und der Vertrag zur Auftragsverarbeitung geschlossen wird."))  # noqa: E501
@@ -1207,10 +1224,8 @@ def qr_bild(text: str) -> str:
     return segno.make(text, error="m").svg_data_uri(scale=6, border=3, dark="#2A2118", light="#FBF6EA")
 
 
-EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER = 30, 15 * 60  # falsche Codes je Adresse
-# Derselbe Zähler wie beim Beitreten und bei der Vorschau (routers/campaigns.py): Wer Codes rät, hat für alle drei
-# Wege zusammen nur ein Kontingent.
-EINLADUNG_ZAEHLER = "join-adr:{adresse}"
+# Dieselben Zähler wie beim Beitreten und bei der Vorschau (routers/campaigns.py, code_versuch): Wer Codes rät, hat
+# für alle drei Wege zusammen nur ein Kontingent.
 
 
 @seiten.get("/einladung/{code}", response_class=HTMLResponse)
@@ -1225,14 +1240,15 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
     from app.einstellungen import oeffentliche_adresse
 
     from app.begrenzung import ZAEHLER
+    from app.routers.campaigns import code_versuch
 
     code = normalize_invite_code(code)[:32]
-    adresse = request.client.host if request.client else "?"
     einladung = None
-    if not ZAEHLER.voll(EINLADUNG_ZAEHLER.format(adresse=adresse), EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER):
+    versuch = code_versuch(begrenzung.adresse(request))
+    if versuch is not None:
         einladung = db.get(Invite, code)
-        if einladung is None:
-            ZAEHLER.zaehlen(EINLADUNG_ZAEHLER.format(adresse=adresse), EINLADUNG_FENSTER)
+        if einladung is not None:
+            ZAEHLER.freigeben(versuch)
     gueltig = einladung is not None and einladung.expires_at > utcnow()
     link = str(request.base_url).rstrip("/") + f"/einladung/{code}"
     a = angaben(db)

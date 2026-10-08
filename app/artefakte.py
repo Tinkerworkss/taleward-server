@@ -11,6 +11,9 @@ Keine Prompt-Schleife, sondern feste Regeln nach dem Schreiben – sie gelten f�
   sind, bleiben unberührt.
 - Wiederholte Sätze (nahezu wortgleich, z. B. aus einer Ergänzung): der spätere fällt weg.
 - Versalien in Eigennamen („BANBALADIN“) → normale Schreibung; „den Spielern“ → „der Gruppe“.
+- 0.4.62: Wörtlich gleiche Sätze kurz hintereinander (ab 3 Wörtern, auch kürzer als die obige Grenze): der spätere
+  fällt weg. Wörtliche Rede, die nach Gespräch am Tisch klingt („Alles klar. Ja, irgendwie so.“), wird nicht
+  gelöscht, sondern als Hinweis gemeldet (Art „tischgespraech“ mit Absatznummer) – die Spielleitung entscheidet.
 
 Jede Änderung wird als Befund zurückgegeben (Art und gekürzter Text), damit der Probelauf zeigt, was entfernt wurde.
 Die Abschrift selbst wird nie verändert – nur das, was das Modell daraus geschrieben hat.
@@ -36,30 +39,36 @@ _FLUCH = re.compile(r"\b(?:scheiß\w*|Scheiße|Arschloch|Wichser|Hurensohn|Kacke
 _VERSAL = re.compile(r"\b([A-ZÄÖÜ]{4,})\b")
 _ROEMISCH = re.compile(r"^[IVXLCDM]+$")
 _TRENNER = re.compile(r",\s+|;\s+|\s+(?:und|sowie|doch|aber)\s+")
+_FUELLWORT = re.compile(r"\b(?:alles klar|ja,|nee|na ja|naja|irgendwie|okay|ok|äh|ähm|halt|genau|keine ahnung|oder so|"
+                        r"quasi|mal)(?!\w)", re.I)
+NAH = 4  # so viele Sätze zurück gilt ein wörtlich gleicher Satz als Doppel
 
 
 def _ohne_zitate(satz: str) -> str:
     return _ZITAT.sub(" ", satz)
 
 
-_AUF = "„\"»"
-_ZU = {"„": "“”\"", "\"": "\"", "»": "«"}
+_AUF = "„\"»‚"
+_ZU = {"„": "“”\"", "\"": "\"", "»": "«", "‚": "‘’'", "'": "'’"}
 
 
 def _maske(absatz: str) -> str:
     """Absatz mit überdeckter wörtlicher Rede (gleich lang). Eine nicht geschlossene Rede reicht bis zum Absatzende –
     Modelle vergessen das schließende Zeichen, und Rede über mehrere Sätze wird sonst satzweise falsch beurteilt."""
     aus, offen = [], None
-    for ch in absatz:
+    for i, ch in enumerate(absatz):
+        vor = absatz[i - 1] if i else " "
+        nach = absatz[i + 1] if i + 1 < len(absatz) else " "
         if offen is None:
-            if ch in _AUF:
+            # ' öffnet nur am Wortanfang (nach Leerzeichen oder Doppelpunkt) – sonst ist es ein Apostroph
+            if ch in _AUF or (ch == "'" and (vor.isspace() or vor in ":(") and nach.isalpha()):
                 offen = ch
                 aus.append(" ")
             else:
                 aus.append(ch)
         else:
             aus.append(" ")
-            if ch in _ZU[offen]:
+            if ch in _ZU[offen] and not (ch in "'’" and nach.isalpha()):
                 offen = None
     return "".join(aus)
 
@@ -121,9 +130,26 @@ def _namen_ersetzen(satz: str, personen: list[dict], geschuetzt: set[str]) -> tu
     return satz, geaendert
 
 
+ERZAEHLSTIMME_ANTEIL = 0.15  # mehr Sätze in der Du-Form: dann ist es die Erzählstimme, keine abgeschriebene Rede
+
+
 def kapitel(text: str, personen: list[dict] | None = None, geschuetzte_namen: list[str] | None = None
             ) -> tuple[str, list[dict]]:
-    """Kapiteltext säubern. Liefert (Text, Befunde)."""
+    """Kapiteltext säubern. Liefert (Text, Befunde).
+
+    0.4.62: Steht ein großer Teil der Sätze in der Du-/Ihr-Form, erzählt das Modell so – dann würde das Löschen das
+    halbe Kapitel kosten. Die Sätze bleiben, es gibt einen Hinweis (Art „erzaehlstimme“)."""
+    aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=True)
+    du = sum(1 for b in befunde if b["art"] == "du_form")
+    saetze = sum(len(_saetze(a.strip())) for a in re.split(r"\n\s*\n", text or ""))
+    if du > max(3, ERZAEHLSTIMME_ANTEIL * saetze):
+        aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=False)
+        befunde.insert(0, {"art": "erzaehlstimme", "text": f"{du} von {saetze}"})
+    return aus, befunde
+
+
+def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str] | None, du_weg: bool
+             ) -> tuple[str, list[dict]]:
     personen = personen or []
     geschuetzt = {n.casefold() for n in (geschuetzte_namen or []) if n}
     for p in personen:
@@ -132,11 +158,16 @@ def kapitel(text: str, personen: list[dict] | None = None, geschuetzte_namen: li
             geschuetzt.update(w.casefold() for w in p["charakter"].split() if len(w) >= 3)
     befunde: list[dict] = []
     gesehen: list[set[str]] = []
+    zuletzt: list[str] = []  # die letzten NAH Sätze, nur Wörter (über Absätze hinweg)
     absaetze_aus = []
     for absatz in re.split(r"\n\s*\n", text or ""):
         saetze_aus = []
         for satz, draussen in _saetze(absatz.strip()):
-            if _DU_FORM.search(draussen):
+            kern = " ".join(re.findall(r"\w+", satz.casefold()))
+            if len(kern.split()) >= 3 and kern in zuletzt:
+                befunde.append({"art": "wiederholung", "text": satz[:200]})
+                continue
+            if du_weg and _DU_FORM.search(draussen):
                 befunde.append({"art": "du_form", "text": satz[:200]})
                 continue
             if _FLUCH.search(satz):
@@ -165,11 +196,27 @@ def kapitel(text: str, personen: list[dict] | None = None, geschuetzte_namen: li
                 befunde.append({"art": "wiederholung", "text": satz[:200]})
                 continue
             gesehen.append(w)
+            zuletzt[:] = (zuletzt + [kern])[-NAH:]
             saetze_aus.append(satz)
         if saetze_aus:
-            absaetze_aus.append(" ".join(saetze_aus))
+            fertig = " ".join(saetze_aus)
+            for z in tischgespraech(fertig):
+                befunde.append({"art": "tischgespraech", "text": z[:200], "absatz": len(absaetze_aus)})
+            absaetze_aus.append(fertig)
     aus = feinschliff("\n\n".join(absaetze_aus))
     return aus, befunde
+
+
+def tischgespraech(absatz: str) -> list[str]:
+    """Wörtliche Rede, die eher nach Gespräch am Tisch klingt als nach Figurenrede: mindestens zwei Füllwörter, oder
+    eines in einer langen Rede (über 25 Wörter). Wird nur gemeldet, nie gelöscht."""
+    aus = []
+    for m in _ZITAT.finditer(absatz):
+        rede = m.group(0)
+        fuell = {f.group(0).casefold() for f in _FUELLWORT.finditer(rede)}
+        if len(fuell) >= 2 or (fuell and len(rede.split()) > 25):
+            aus.append(rede)
+    return aus
 
 
 def feinschliff(t: str) -> str:

@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import anmeldedienste, einmal, errors, mail, schemas
+from app import anmeldedienste, begrenzung, einmal, errors, mail, schemas
 from app.access import current_user
 from app.db import get_db, server_id, utcnow
 from app.einstellungen import mail_adresse, oeffentliche_adresse
@@ -46,7 +46,7 @@ def versuche_vergessen() -> None:
 
 
 def _adresse(request: Request) -> str:
-    return request.client.host if request.client else "?"
+    return begrenzung.adresse(request)
 
 
 # ---------------------------------------------------------------- Passwort vergessen
@@ -184,7 +184,7 @@ def konto_loeschen_ausfuehren(request: Request, username: str = Form(""), passwo
 
     _ = tr(request)
     name = username.strip().lower()[:64]
-    adresse = request.client.host if request.client else "?"
+    adresse = begrenzung.adresse(request)
 
     def fehler(text: str, status: int = 400) -> HTMLResponse:
         db.rollback()
@@ -194,19 +194,19 @@ def konto_loeschen_ausfuehren(request: Request, username: str = Form(""), passwo
 
     if not bestaetigt:
         return fehler(_("Bitte das Löschen mit dem Haken bestätigen."))
-    if ZAEHLER.voll(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER) or \
-            ZAEHLER.voll(f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER):
+    versuch = ZAEHLER.reservieren([(f"login-adr:{adresse}", LOGIN_JE_ADRESSE, LOGIN_FENSTER),
+                                   (f"login-name:{name}", LOGIN_JE_NAME, LOGIN_FENSTER)])
+    if versuch is None:
         return fehler(_("Zu viele Versuche. Bitte in einer Viertelstunde noch einmal."), 429)
     user = db.scalar(select(User).where(User.username == name)) if name else None
     methode = None
     if user is not None:
         methode = db.scalar(select(AuthMethod).where(AuthMethod.user_id == user.id, AuthMethod.kind == "password"))
-    if user is not None and methode is None and not user.setup_account:
-        return fehler(_("Dieses Konto hat kein Passwort (Anmeldung über einen Dienst). Bitte in der App unter Konto löschen."))
+    # 0.4.62: Konten ohne Passwort bekommen dieselbe Meldung wie ein falsches Passwort (sonst ließen sich solche
+    # Benutzernamen aufzählen); der Hinweis auf die App steht immer auf der Seite.
     if not verify_password(password, methode.secret if methode else None) or user.setup_account:
-        ZAEHLER.zaehlen(f"login-adr:{adresse}", LOGIN_FENSTER)
-        ZAEHLER.zaehlen(f"login-name:{name}", LOGIN_FENSTER)
         return fehler(_("Benutzername oder Passwort stimmen nicht."), 401)
+    ZAEHLER.freigeben(versuch)
     try:
         entfernen(db, user)
     except errors.ApiError as e:
@@ -297,15 +297,25 @@ def dienst_start(provider: str, request: Request, challenge: str = "", purpose: 
     return antwort
 
 
-def _zur_app(ziel: str, status: int = 303, state: str = "") -> RedirectResponse:
-    """Weiterleitung in die App; der Text dient nur Browsern, die Weiterleitungen auf taleward:// nicht ausführen."""
+def _zur_app(ziel: str, status: int = 303, state: str = "", request: Request | None = None,
+             db: Session | None = None, provider: str = ""):
+    """Weiterleitung in die App; der Text dient nur Browsern, die Weiterleitungen auf taleward:// nicht ausführen.
+
+    0.4.62: Ein Ticket über das eigene Schema (taleward://auth, ältere Apps) gibt es erst nach einer Bestätigungsseite;
+    neue Apps kommen über den App Link ohne Umweg."""
     from html import escape
 
-    antwort = RedirectResponse(ziel, status_code=status)
-    antwort.body = (f'<!doctype html><meta charset="utf-8"><title>Taleward</title>'
-                    f'<p><a href="{escape(ziel)}">Zurück zu Taleward</a></p>').encode()
-    antwort.headers["content-type"] = "text/html; charset=utf-8"
-    antwort.headers["content-length"] = str(len(antwort.body))
+    if request is not None and db is not None and ziel.startswith("taleward://auth?") and "ticket=" in ziel:
+        from app.verwaltung.router import _seite as seite
+
+        antwort = seite(request, "anmeldung_bestaetigen.html", None, db, ziel=ziel,
+                        dienst=anmeldedienste.DIENSTE.get(provider, {}).get("name", provider))
+    else:
+        antwort = RedirectResponse(ziel, status_code=status)
+        antwort.body = (f'<!doctype html><meta charset="utf-8"><title>Taleward</title>'
+                        f'<p><a href="{escape(ziel)}">Zurück zu Taleward</a></p>').encode()
+        antwort.headers["content-type"] = "text/html; charset=utf-8"
+        antwort.headers["content-length"] = str(len(antwort.body))
     antwort.headers["Cache-Control"] = "no-store"
     antwort.headers["Referrer-Policy"] = "no-referrer"
     if state:  # Bindung verbraucht – Cookie entfernen
@@ -317,7 +327,8 @@ def _zur_app(ziel: str, status: int = 303, state: str = "") -> RedirectResponse:
 def dienst_rueckkehr(provider: str, request: Request, db: Session = Depends(get_db)):
     werte = dict(request.query_params)
     return _zur_app(anmeldedienste.rueckkehr(db, provider, werte, oeffentliche_adresse(db, request),
-                                             cookies=request.cookies), state=werte.get("state") or "")
+                                             cookies=request.cookies), state=werte.get("state") or "",
+                    request=request, db=db, provider=provider)
 
 
 @seiten.post("/auth/oidc/{provider}/callback")
@@ -327,7 +338,7 @@ def dienst_rueckkehr_formular(provider: str, request: Request, code: str = Form(
     werte = {"code": code, "state": state, "error": error, "user": user}
     return _zur_app(anmeldedienste.rueckkehr(db, provider, {k: v for k, v in werte.items() if v},
                                              oeffentliche_adresse(db, request), cookies=request.cookies),
-                    state=state)
+                    state=state, request=request, db=db, provider=provider)
 
 
 @router.post("/auth/oidc/exchange", response_model=schemas.OidcExchangeResponse)

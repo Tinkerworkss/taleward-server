@@ -705,6 +705,19 @@ URTEILE = {"belegt": "supported", "teilweise": "partial", "unbelegt": "unsupport
            "contradicted": "contradicted", "off_game": "off_game"}
 BEANSTANDET = ("unsupported", "contradicted", "off_game")
 HINWEIS_RELATION = {"de": "Hinweis aus dem Transkript, bitte prüfen: ", "en": "Note from the transcript, please check: "}
+HINWEIS_TISCH = {"de": "Klingt nach Gespräch am Tisch, bitte prüfen: ", "en": "Sounds like table talk, please check: "}
+
+
+def hinweise_eintragen(pruefung: dict, befunde: list[dict], sprache: str | None) -> None:
+    """0.4.62: Wörtliche Rede, die nach Gespräch am Tisch klingt, bleibt im Kapitel; die Spielleitung bekommt am
+    Absatz einen Hinweis (Recap.review), statt dass der Filter still etwas löscht."""
+    vorsatz = HINWEIS_TISCH["en" if sprache == "en" else "de"]
+    absaetze_ = {b.get("index"): b for b in pruefung.get("paragraphs") or []}
+    for f in befunde:
+        if f.get("art") != "tischgespraech" or f.get("absatz") not in absaetze_:
+            continue
+        b = absaetze_[f["absatz"]]
+        b["note"] = ((b.get("note") or "") + ("\n" if b.get("note") else "") + vorsatz + f["text"])[:2000]
 
 
 def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
@@ -1527,6 +1540,11 @@ class Ablauf:
         r["openThreads"] = [artefakte.feinschliff(f) for f in r.get("openThreads") or []]
         fortschritt(0.6 if gegenpruefen else 0.8)
         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
+        if pruefung is not None and pruefung.get("revised"):  # Nachbesserung kann Artefakte wieder hineinbringen
+            r["text"], nachher = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt)
+            self.bereinigt += [b for b in nachher if b["art"] not in ("tischgespraech", "erzaehlstimme")]
+        if pruefung is not None:
+            hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
         fortschritt(0.8)
         v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, titel, grundlage)]
         fortschritt(1.0)

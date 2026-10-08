@@ -237,6 +237,19 @@ def dienst(dbs, monkeypatch):
     return d
 
 
+def rueckweg(r) -> str:
+    """Ziel nach der Rückkehr vom Dienst: die Weiterleitung – oder (0.4.62, Ticket über taleward://) der Knopf auf der
+    Bestätigungsseite."""
+    import html
+
+    if r.status_code == 200:
+        m = re.search(r'href="(taleward://auth\?[^"]+)"', r.text)
+        assert m, r.text[:500]
+        return html.unescape(m.group(1))
+    assert r.status_code == 303, r.status_code
+    return r.headers["location"]
+
+
 def anmelden_mit(client, dienst: Dienst, name: str, purpose="login", link_token=None, code="gut",
                  verifier=VERIFIER) -> dict:
     params = {"challenge": challenge_von(verifier), "purpose": purpose}
@@ -249,8 +262,7 @@ def anmelden_mit(client, dienst: Dienst, name: str, purpose="login", link_token=
     assert q["redirect_uri"] == f"http://testserver/auth/oidc/{name}/callback"
     dienst.nonce = q.get("nonce")
     r = client.get(f"/auth/oidc/{name}/callback", params={"code": code, "state": q["state"]}, follow_redirects=False)
-    assert r.status_code == 303
-    zurueck = urlsplit(r.headers["location"])
+    zurueck = urlsplit(rueckweg(r))
     assert zurueck.scheme == "taleward" and zurueck.netloc == "auth"
     return {k: v[0] for k, v in parse_qs(zurueck.query).items()}
 
@@ -385,7 +397,7 @@ def test_apple_formular_und_secret(client, world, dbs, dienst):
                                                        "user": json.dumps({"name": {"firstName": "Lena",
                                                                                     "lastName": "L"}})},
                     follow_redirects=False)
-    ticket = parse_qs(urlsplit(r.headers["location"]).query)["ticket"][0]
+    ticket = parse_qs(urlsplit(rueckweg(r)).query)["ticket"][0]
     secret = dienst.token_anfragen[-1]["client_secret"][0]
     kopf = jwt.get_unverified_header(secret)
     daten = jwt.decode(secret, schluessel.public_key(), algorithms=["ES256"], audience="https://appleid.apple.com")
@@ -459,7 +471,7 @@ def test_ablauf_nur_im_selben_browser(client, world, dienst):
     q = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
     dienst.nonce = q["nonce"]
     r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": q["state"]}, follow_redirects=False)
-    assert "ticket=" in r.headers["location"]
+    assert "ticket=" in rueckweg(r)
     assert anmeldedienste.bindung_cookie(q["state"]) + '=""' in r.headers["set-cookie"]
 
 

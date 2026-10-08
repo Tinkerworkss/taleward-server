@@ -14,12 +14,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import einrichtung, errors, kosten, schluessel
+from app import begrenzung, einrichtung, errors, kosten, schluessel
 from app.db import get_db, utcnow
 from app.einstellungen import angaben, extern_konfig, llm_konfig, meta_lesen, meta_schreiben, speichern
 from app.models import Organization, OrgMember, User, Worker
 from app.verwaltung.router import (
-    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _fehlversuch, _gesperrt, _online_grenze,
+    COOKIE, MIN_PASSWORT, SITZUNG_STUNDEN, NichtAngemeldet, _cookie_wert, _versuch, _online_grenze,
     _seite, csrf_pruefen, sitzung, tr, verwalter,
 )
 
@@ -89,14 +89,15 @@ def einrichtung_abschliessen(request: Request, code: str = Form(""), username: s
     if alt is not None:
         csrf_pruefen(request, csrf)
     else:
-        adresse_ = request.client.host if request.client else "?"
-        if _gesperrt(adresse_, "(einrichtung)"):
+        adresse_ = begrenzung.adresse(request)
+        versuch = _versuch(adresse_, None)
+        if versuch is None:
             return einrichtung_seite(request, "", db, _("Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen."))
         if not einrichtung.code_pruefen(db, code):
-            _fehlversuch(adresse_, "(einrichtung)")
             antwort = einrichtung_seite(request, code, db)
             antwort.status_code = 400
             return antwort
+        begrenzung.ZAEHLER.freigeben(versuch)  # Code stimmt – Formfehler zählen nicht als Fehlversuch
 
     def fehler(text: str):
         antwort = einrichtung_seite(request, code, db, text)

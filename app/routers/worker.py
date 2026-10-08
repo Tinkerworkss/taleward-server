@@ -16,7 +16,7 @@ from pydantic import Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app import errors, storage
+from app import begrenzung, errors, storage
 from app.config import get_settings
 from app.db import get_db, utcnow
 from app.models import (
@@ -516,7 +516,7 @@ def pair(body: PairIn, request: Request, db: Session = Depends(get_db)):
     """Kurzen Code aus der Verwaltung gegen einen Zugangsschlüssel tauschen (ohne Anmeldung, Versuche begrenzt)."""
     from app.koppeln import koppeln
 
-    w, token = koppeln(db, request.client.host if request.client else "?", body.code, body.name)
+    w, token = koppeln(db, begrenzung.adresse(request), body.code, body.name)
     return {"workerId": w.id, "name": w.name, "token": token, "serverVersion": server_fassung()}
 
 

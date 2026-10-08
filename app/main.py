@@ -80,6 +80,13 @@ def _wartung_starten() -> threading.Event | None:
             except Exception:
                 log.exception("Umzug: Aufräumen fehlgeschlagen")
             try:
+                from app import kapitelprobe
+
+                with session_factory()() as db:
+                    kapitelprobe.rechte_pruefen(db)  # 0.4.62: Probeläufe ohne Besitzer oder ohne SL-Rolle
+            except Exception:
+                log.exception("Probeläufe: Aufräumen fehlgeschlagen")
+            try:
                 from app import woerterbuch
 
                 woerterbuch.automatisch()  # einmal laden; danach nichts mehr zu tun

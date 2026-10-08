@@ -153,7 +153,7 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch): 
     monkeypatch.setattr(benachrichtigung, "melden", lambda db, art, **w: gemeldet.append((art, w)))
     aktualisierung.pruefen(dbs, gh)
     aktualisierung.pruefen(dbs, gh)
-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.61"})]  # nur einmal
+    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.62"})]  # nur einmal
     seite = client.get("/verwaltung/updates").text
     assert "Update verfügbar" in seite and "git pull" in seite
     monkeypatch.setenv("TALEWARD_DOCKER", "1")

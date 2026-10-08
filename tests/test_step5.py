@@ -139,12 +139,12 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
 
     recap, vorschlag = api.recap_aufruf(), api.vorschlags_aufruf()
-    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Nachbesserung, zweite Prüfung, Relationen gegen das Transkript
-    # einmal auf der Endfassung (0.4.48: nur Hinweis), Vorschläge (0.4.6)
-    assert len(api.aufrufe) == 7 and recap["body"]["response_format"] == {"type": "json_object"}
+    # Recap, Vollständigkeit (0.4.46), Gegenprüfung, Relationen gegen das Transkript (0.4.48: nur Hinweis),
+    # Vorschläge (0.4.6). Über die Cloud seit 0.4.62 ohne Nachbesserung.
+    assert len(api.aufrufe) == 5 and recap["body"]["response_format"] == {"type": "json_object"}
     assert api.aufrufe[1]["system"].startswith("Du vergleichst den Recap")
-    assert api.aufrufe[5]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[5]["system"]
-    for a in api.aufrufe[1:6]:  # Vollständigkeit, Prüfungen und Nachbesserung sehen nur, was der Recap sah
+    assert api.aufrufe[3]["system"].startswith("Du prüfst einzelne Absätze") and "ORIGINALTRANSKRIPT" in api.aufrufe[3]["system"]
+    for a in api.aufrufe[1:4]:  # Vollständigkeit und Prüfungen sehen nur, was der Recap sah
         for verboten in ("MARKER", "Der Graue Fürst", "gmNotes"):
             assert verboten not in a["nutzer"] + a["system"], verboten
     # Recap: nichts Geheimes, nicht einmal der Name des geheimen Eintrags
@@ -162,13 +162,14 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
 
     r = client.get(f"{API}/sessions/{s['id']}/recap", headers=w["gm"]).json()
     assert r["title"] == "Kapitel 1: Der Ritt" and r["openThreads"] == ["Wer hat den Brief geschrieben?"]
-    # Prüfteil: der unbelegte Absatz wurde einmal nachgebessert (hier: gestrichen), der Rest belegt
-    assert r["text"] == "Die Gruppe ritt nach Rabenfels."
+    # Prüfteil: über die Cloud keine Nachbesserung (0.4.62) – der unbelegte Absatz bleibt und ist markiert
+    assert r["text"] == "Die Gruppe ritt nach Rabenfels.\n\nDort wartete Regen."
     rv = r["review"]
-    assert rv["state"] == "done" and rv["revised"] is True and rv["stale"] is False
-    assert rv["report"] == {"total": 1, "supported": 1, "partial": 0, "unsupported": 0, "contradicted": 0, "offGame": 0}
+    assert rv["state"] == "done" and rv["revised"] is False and rv["stale"] is False
+    assert rv["report"] == {"total": 2, "supported": 1, "partial": 0, "unsupported": 1, "contradicted": 0, "offGame": 0}
     assert rv["paragraphs"][0]["evidence"][0]["start"] == 40.0
-    assert rv["paragraphs"][0]["evidence"][0]["quote"].startswith("reiten nach")
+    assert "reiten nach" in rv["paragraphs"][0]["evidence"][0]["quote"]
+    assert rv["paragraphs"][1]["note"] == "Regen kommt nicht vor."
     vs = {v["title"]: v for v in client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()}
     assert set(vs) == {"Der Wirt", "Der Graue Fürst", "Rabenfels"}  # Ungültiges fällt weg
     assert vs["Der Wirt"]["evidence"] == [{"start": 40.0, "quote": "Wir reiten"}]  # erfundenes Zitat fällt weg
@@ -183,8 +184,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     assert "geheimen Notizen" in vs["Rabenfels"]["visibilityReason"] and "low_confidence" in vs["Rabenfels"]["flags"]
     log = dbs.query(UsageLog).filter_by(session_id=s["id"], kind="summary").one()
     assert (log.engine, log.model, log.tokens_in, log.tokens_out) == ("external", "mistral-large-latest",
-                                                                     700_000, 28_000)  # 7 Aufrufe (0.4.48)
-    assert log.cost_cents == round((700_000 * 50 + 28_000 * 150) / 1e6)  # Preistabelle Mistral Large
+                                                                     500_000, 20_000)  # 5 Aufrufe (0.4.62)
+    assert log.cost_cents == round((500_000 * 50 + 20_000 * 150) / 1e6)  # Preistabelle Mistral Large
     # Spieler sehen weiterhin nichts davon
     assert client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["pl"]).status_code == 404
 
