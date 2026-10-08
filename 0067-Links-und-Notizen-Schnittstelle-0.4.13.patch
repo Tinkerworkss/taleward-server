@@ -1,0 +1,899 @@
+From 8dddc6f44502bd24404f0e9796dac28ed24a4ad8 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 15:01:21 +0200
+Subject: [PATCH] Links und Notizen am SL-Schirm, Schnittstelle 0.4.13 (Server
+ 0.4.57)
+
+Links (Name, Adresse, geteilt) an Kampagne, Bibel-Eintraegen und Szenen des
+Kapitelplans; tableNotes am Kapitelplan. Spieler bekommen nur geteilte Links an
+Eintraegen, die sie sehen. Links und Notizen gehen beim Umzug mit und fliessen
+nicht in die KI-Verarbeitung.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/errors.py                                 |   6 +
+ app/links.py                                  |  86 ++++++++
+ app/models.py                                 |   7 +-
+ app/routers/auth.py                           |   2 +-
+ app/routers/campaigns.py                      |   4 +
+ app/routers/plaene.py                         |  15 +-
+ app/schemas.py                                |  16 ++
+ app/services.py                               |  10 +-
+ app/umzug.py                                  |  24 ++-
+ contract/session-chronik-api.yaml             |  54 ++++-
+ .../versions/e8b2f4a6c1d3_links_0_4_13.py     |  35 ++++
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_links_0413.py                      | 188 ++++++++++++++++++
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_schnittstelle_0410.py              |   2 +-
+ tests/test_step1b.py                          |   2 +-
+ tests/test_umzug_048.py                       |   2 +-
+ tests/test_verwaltung2.py                     |   2 +-
+ tests/test_webapp.py                          |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 23 files changed, 439 insertions(+), 30 deletions(-)
+ create mode 100644 app/links.py
+ create mode 100644 migrations/versions/e8b2f4a6c1d3_links_0_4_13.py
+ create mode 100644 tests/test_links_0413.py
+
+diff --git a/app/errors.py b/app/errors.py
+index 471cdca..188b26e 100644
+--- a/app/errors.py
++++ b/app/errors.py
+@@ -74,4 +74,10 @@ MESSAGES: dict[str, tuple[str, str]] = {
+                                 "A linked entry or document doesn't belong to this campaign (any more). Please reload."),
+     "invalid_input.plan_scene": ("Zwei Szenen haben dieselbe Kennung.", "Two scenes have the same ID."),
++    # Links (0.4.13)
++    "invalid_input.link_url": ("Die Adresse eines Links muss mit http:// oder https:// beginnen und darf keine "
++                               "Zugangsdaten enthalten.",
++                               "A link address must start with http:// or https:// and must not contain credentials."),
++    "invalid_input.link_label": ("Ein Link braucht einen Namen.", "A link needs a name."),
++    "invalid_input.link_id": ("Zwei Links haben dieselbe Kennung.", "Two links have the same ID."),
+     "conflict": ("Das wurde inzwischen geändert.", "This was changed in the meantime."),
+     "conflict.plan": ("Der Kapitelplan wurde inzwischen auf einem anderen Gerät geändert. Bitte neu laden.",
+diff --git a/app/links.py b/app/links.py
+new file mode 100644
+index 0000000..c8ce4ac
+--- /dev/null
++++ b/app/links.py
+@@ -0,0 +1,86 @@
++"""Links an Kampagne, Bibel-Einträgen und Szenen des Kapitelplans (Schnittstelle 0.4.13).
++
++Ein Link ist nur ein Verweis nach draußen (virtueller Spieltisch, Discord, Karte, Musik). Der Server ruft die Adresse
++nie auf und bettet nichts ein. Er prüft nur: http:// oder https://, ein Host, keine Zugangsdaten in der Adresse.
++
++Links fließen nie in Kapitel, Vorschläge, Schreibhilfe oder Prüfungen – die KI-Wege bauen ihre Texte aus einzelnen
++Feldern und kennen das Feld nicht (Test in tests/test_links_0413.py).
++
++Gespeichert wird als JSON-Text [{id, label, url, shared}] in der jeweiligen Zeile.
++"""
++import json
++import re
++from urllib.parse import urlsplit
++
++from app import errors
++from app.schemas import UUID_MUSTER
++
++MAX_KAMPAGNE = 20
++MAX_EINTRAG = 3
++MAX_SZENE = 3
++
++
++def adresse_ok(url: str) -> bool:
++    if not url or len(url) > 2000 or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
++        return False
++    try:
++        teile = urlsplit(url)
++        host = teile.hostname
++    except ValueError:
++        return False
++    if teile.scheme.lower() not in ("http", "https") or not host:
++        return False
++    # Zugangsdaten (user:pass@ oder user@) gehören nicht in einen geteilten Link
++    return "@" not in teile.netloc
++
++
++def pruefen(links) -> list[dict]:
++    """Eingabe aus der Schnittstelle (schemas.Link) prüfen → Liste zum Speichern. Fehler → 400 invalid_input."""
++    aus, ids = [], set()
++    for link in links or []:
++        label = link.label.strip()
++        url = link.url.strip()
++        if not label:
++            raise errors.bad_request("invalid_input", "invalid_input.link_label")
++        if not adresse_ok(url):
++            raise errors.bad_request("invalid_input", "invalid_input.link_url")
++        lid = link.id.lower()
++        if lid in ids:
++            raise errors.bad_request("invalid_input", "invalid_input.link_id")
++        ids.add(lid)
++        aus.append({"id": lid, "label": label, "url": url, "shared": bool(link.shared)})
++    return aus
++
++
++def bereinigen(roh, hoechstens: int) -> list[dict]:
++    """Links aus einer Umzugsdatei: Ungültiges fällt still heraus, statt den ganzen Umzug abzubrechen."""
++    aus, ids = [], set()
++    for x in roh or []:
++        if not isinstance(x, dict):
++            continue
++        lid, label, url = x.get("id"), x.get("label"), x.get("url")
++        if not (isinstance(lid, str) and re.match(UUID_MUSTER, lid) and isinstance(label, str)
++                and isinstance(url, str)):
++            continue
++        label, url, lid = label.strip()[:60], url.strip(), lid.lower()
++        if not label or not adresse_ok(url) or lid in ids:
++            continue
++        ids.add(lid)
++        aus.append({"id": lid, "label": label, "url": url, "shared": x.get("shared") is True})
++        if len(aus) >= hoechstens:
++            break
++    return aus
++
++
++def lesen(text: str | None, nur_geteilt: bool = False) -> list[dict]:
++    try:
++        links = json.loads(text or "[]")
++    except ValueError:
++        return []
++    if not isinstance(links, list):
++        return []
++    return [x for x in links if isinstance(x, dict) and (not nur_geteilt or x.get("shared") is True)]
++
++
++def schreiben(links: list[dict]) -> str | None:
++    return json.dumps(links, ensure_ascii=False) if links else None
+diff --git a/app/models.py b/app/models.py
+index a72ffd0..234dcf0 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -103,4 +103,6 @@ class Campaign(Base):
+     imported_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+     imported_by_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    # 0.4.13: Links der Kampagne als JSON [{id, label, url, shared}] (app/links.py)
++    links: Mapped[str | None] = mapped_column(Text, nullable=True)
+     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+ 
+@@ -280,4 +282,6 @@ class Entry(Base):
+     # 0.4.9: NSC aus der Figur eines ausgetretenen Mitglieds – nur die SL sieht, von wem
+     former_holder_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
++    # 0.4.13: Links als JSON [{id, label, url, shared}]; Spieler bekommen nur shared (app/links.py)
++    links: Mapped[str | None] = mapped_column(Text, nullable=True)
+ 
+     mentions: Mapped[list["EntryMention"]] = relationship(cascade="all, delete-orphan")
+@@ -586,5 +590,6 @@ class ChapterPlan(Base):
+     state: Mapped[str] = mapped_column(String(16), default="draft")  # draft | ready | played
+     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state}]
++    table_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # 0.4.13: Notizzettel am SL-Schirm
++    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state, links}]
+     names: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
+     document_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
+diff --git a/app/routers/auth.py b/app/routers/auth.py
+index c8112dc..5cf322a 100644
+--- a/app/routers/auth.py
++++ b/app/routers/auth.py
+@@ -14,5 +14,5 @@ from app.security import create_token, verify_password
+ from app.services import user_out
+ 
+-API_VERSION = "0.4.12"
++API_VERSION = "0.4.13"
+ 
+ router = APIRouter(tags=["Auth"])
+diff --git a/app/routers/campaigns.py b/app/routers/campaigns.py
+index 5fb4003..160e7ce 100644
+--- a/app/routers/campaigns.py
++++ b/app/routers/campaigns.py
+@@ -196,4 +196,8 @@ def patch_campaign(
+ 
+         namenshilfe.setzen(db, c, body.hotwords)
++    if "links" in f and body.links is not None:  # 0.4.13: ganze Liste ersetzen; fehlt das Feld, bleibt alles
++        from app import links
++
++        c.links = links.schreiben(links.pruefen(body.links))
+     if "cover_preset" in f:
+         from app.bilder import cover_ordner, loeschen
+diff --git a/app/routers/plaene.py b/app/routers/plaene.py
+index a5fb154..c1f9a71 100644
+--- a/app/routers/plaene.py
++++ b/app/routers/plaene.py
+@@ -15,5 +15,5 @@ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+-from app import errors, schemas
++from app import errors, links, schemas
+ from app.access import current_user, membership
+ from app.db import get_db, utcnow
+@@ -51,5 +51,5 @@ def plan_out(db: Session, p: ChapterPlan, vorhanden: tuple[set[str], set[str]] |
+     return schemas.ChapterPlanOut(
+         id=p.id, campaign_id=p.campaign_id, title=p.title, session_number=p.session_number, state=p.state,
+-        notes=p.notes, scenes=szenen, names=json.loads(p.names or "[]"),
++        notes=p.notes, table_notes=p.table_notes, scenes=szenen, names=json.loads(p.names or "[]"),
+         document_ids=[i for i in json.loads(p.document_ids or "[]") if i in unterlagen],
+         created_at=p.created_at, updated_at=p.updated_at)
+@@ -79,4 +79,6 @@ def _setzen(db: Session, p: ChapterPlan, felder: dict) -> None:
+     if "notes" in felder:
+         p.notes = (felder["notes"] or "").strip() or None
++    if "table_notes" in felder:  # 0.4.13
++        p.table_notes = (felder["table_notes"] or "").strip() or None
+     if "scenes" in felder:
+         szenen = felder["scenes"]
+@@ -92,5 +94,6 @@ def _setzen(db: Session, p: ChapterPlan, felder: dict) -> None:
+                 raise errors.bad_request("validation_error", "validation_error.empty", field="title")
+             aus.append({"id": s.id.lower(), "title": titel, "notes": (s.notes or "").strip() or None,
+-                        "entryIds": _eindeutig(s.entry_ids), "state": s.state})
++                        "entryIds": _eindeutig(s.entry_ids), "state": s.state,
++                        "links": links.pruefen(s.links)})  # 0.4.13
+         p.scenes = json.dumps(aus, ensure_ascii=False)
+     if "names" in felder:
+@@ -122,6 +125,6 @@ def plan_create(campaignId: str, body: schemas.ChapterPlanIn, user: User = Depen
+     jetzt = utcnow()
+     p = ChapterPlan(campaign_id=campaignId, created_at=jetzt, updated_at=jetzt)
+-    _setzen(db, p, {f: getattr(body, f) for f in ("title", "session_number", "state", "notes", "scenes", "names",
+-                                                    "document_ids")})
++    _setzen(db, p, {f: getattr(body, f) for f in ("title", "session_number", "state", "notes", "table_notes", "scenes",
++                                                    "names", "document_ids")})
+     db.add(p)
+     db.commit()
+@@ -145,5 +148,5 @@ def plan_patch(planId: str, body: schemas.ChapterPlanPatchIn, user: User = Depen
+             raise errors.conflict("conflict", "conflict.plan")
+     felder = {}
+-    for f in ("title", "session_number", "state", "notes", "scenes", "names", "document_ids"):
++    for f in ("title", "session_number", "state", "notes", "table_notes", "scenes", "names", "document_ids"):
+         if f not in gesetzt:
+             continue
+diff --git a/app/schemas.py b/app/schemas.py
+index 0936adc..b00f6c9 100644
+--- a/app/schemas.py
++++ b/app/schemas.py
+@@ -241,4 +241,12 @@ class CampaignSummaryOut(ApiModel):
+ 
+ 
++class Link(ApiModel):
++    """0.4.13: Verweis nach draußen (Prüfung der Adresse in app/links.py)."""
++    id: str = Field(pattern=UUID_MUSTER)
++    label: str = Field(min_length=1, max_length=60)
++    url: str = Field(min_length=1, max_length=2000)
++    shared: bool = False
++
++
+ class CampaignOut(CampaignSummaryOut):
+     description: str
+@@ -250,4 +258,5 @@ class CampaignOut(CampaignSummaryOut):
+     allow_cloud_summary: bool = False
+     hotwords: list[str] | None = None  # 0.4.6: nur für die SL, für Spieler weggelassen
++    links: list[Link] = []  # 0.4.13: Spieler nur shared
+     gm_notices: list["GmNoticeOut"] | None = None  # 0.4.7: nur für die SL, für Spieler weggelassen
+     members: list[MemberOut]
+@@ -321,4 +330,5 @@ class CampaignPatch(ApiModel):
+     archived: bool | None = None
+     hotwords: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=200)
++    links: list[Link] | None = Field(default=None, max_length=20)  # 0.4.13: ganze Liste ersetzen
+ 
+ 
+@@ -560,4 +570,5 @@ class EntryInput(ApiModel):
+     gm_notes: str | None = Field(default=None, max_length=20000)
+     hidden_from_member_ids: list[str] | None = None
++    links: list[Link] | None = Field(default=None, max_length=3)  # 0.4.13
+ 
+ 
+@@ -586,4 +597,5 @@ class EntryOut(ApiModel):
+     origin_version: int | None = None
+     former_holder_member_id: str | None = None  # 0.4.9: nur für die SL, sonst weggelassen
++    links: list[Link] = []  # 0.4.13: Spieler nur shared
+ 
+ 
+@@ -702,4 +714,5 @@ class PlanScene(ApiModel):
+     entry_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=30)
+     state: Literal["open", "played", "skipped"] = "open"
++    links: list[Link] = Field(default=[], max_length=3)  # 0.4.13
+ 
+ 
+@@ -710,4 +723,5 @@ class ChapterPlanIn(ApiModel):
+     state: Literal["draft", "ready", "played"] = "draft"
+     notes: str | None = Field(default=None, max_length=20000)
++    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
+     scenes: list[PlanScene] = Field(default=[], max_length=50)
+     names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
+@@ -720,4 +734,5 @@ class ChapterPlanPatchIn(ApiModel):
+     state: Literal["draft", "ready", "played"] | None = None
+     notes: str | None = Field(default=None, max_length=20000)
++    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
+     scenes: list[PlanScene] | None = Field(default=None, max_length=50)
+     names: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=100)
+@@ -733,4 +748,5 @@ class ChapterPlanOut(ApiModel):
+     state: Literal["draft", "ready", "played"]
+     notes: str | None
++    table_notes: str | None = None  # 0.4.13
+     scenes: list[PlanScene]
+     names: list[str]
+diff --git a/app/services.py b/app/services.py
+index f8f775b..8018263 100644
+--- a/app/services.py
++++ b/app/services.py
+@@ -7,5 +7,5 @@ from sqlalchemy import func, select
+ from sqlalchemy.orm import Session
+ 
+-from app import errors, schemas
++from app import errors, links, schemas
+ from app.access import may_see_backstory
+ from app.config import get_settings
+@@ -205,4 +205,5 @@ def campaign_out(db: Session, c: Campaign, me: Member) -> schemas.CampaignOut:
+         allow_external_transcription=c.allow_external_transcription, allow_cloud_summary=c.allow_cloud_summary,
+         members=[member_out(m, me) for m in members],
++        links=links.lesen(c.links, nur_geteilt=me.role != "gm"),  # 0.4.13
+     )
+     if me.role == "gm":  # Namenshilfe (0.4.6) nur für die SL – für Spieler gar nicht im JSON
+@@ -446,4 +447,5 @@ def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.En
+         mentions=[schemas.MentionOut(session_number=mn.session.number, note=mn.note) for mn in mentions],
+         updated_at=e.updated_at,
++        links=links.lesen(e.links, nur_geteilt=not is_gm),  # 0.4.13
+     )
+     if is_gm:
+@@ -467,4 +469,5 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
+     vorher = {f: getattr(e, f) for f in _PUBLIC_FIELDS}
+     vorher_verborgen = set(e.hidden_member_ids)
++    vorher_geteilt = links.lesen(e.links, nur_geteilt=True)
+     fields = data.model_fields_set
+     if "type" in fields:
+@@ -502,4 +505,6 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
+                 raise errors.bad_request("hidden_member_unknown")
+         e.hidden_from = [EntryHidden(entry_id=e.id, member_id=m) for m in sorted(ids)]
++    if "links" in fields and data.links is not None:  # 0.4.13: ganze Liste ersetzen
++        e.links = links.schreiben(links.pruefen(data.links))
+     if require_public_text and e.visibility == "public" and not (e.summary or "").strip():
+         raise errors.bad_request("validation_error", "public_text_required")
+@@ -513,5 +518,6 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
+     e.updated_at = now
+     # „Neu“ für Spieler nur, wenn sich am öffentlichen Teil etwas geändert hat
+-    geaendert = any(getattr(e, f) != vorher[f] for f in _PUBLIC_FIELDS) or set(e.hidden_member_ids) != vorher_verborgen
++    geaendert = (any(getattr(e, f) != vorher[f] for f in _PUBLIC_FIELDS) or set(e.hidden_member_ids) != vorher_verborgen
++                 or links.lesen(e.links, nur_geteilt=True) != vorher_geteilt)
+     if e.visibility == "public" and geaendert:
+         e.public_changed_at = now
+diff --git a/app/umzug.py b/app/umzug.py
+index 61ba5e1..da5bbf3 100644
+--- a/app/umzug.py
++++ b/app/umzug.py
+@@ -37,5 +37,5 @@ from sqlalchemy import select, update
+ from sqlalchemy.orm import Session
+ 
+-from app import errors, schemas, storage
++from app import errors, links, schemas, storage
+ from app.config import get_settings
+ from app.db import utcnow
+@@ -306,5 +306,5 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+             "status": e.status, "holderSeat": halter, "visibility": e.visibility,
+             "hiddenFromSeats": sorted(platz[m] for m in e.hidden_member_ids if m in platz),
+-            "pcCharacterId": e.pc_character_id, "origin": herkunft,
++            "pcCharacterId": e.pc_character_id, "origin": herkunft, "links": links.lesen(e.links),
+             "createdAt": _z(e.created_at), "updatedAt": _z(e.updated_at), "publicChangedAt": _z(e.public_changed_at),
+             "mentions": [{"session": kapitel_schluessel[mn.session_id], "note": mn.note}
+@@ -333,8 +333,9 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+                                       .order_by(ChapterPlan.created_at, ChapterPlan.id))):
+         szenen = [{"id": sz.get("id"), "title": sz.get("title"), "notes": sz.get("notes"), "state": sz.get("state"),
++                   "links": sz.get("links") or [],
+                    "entryKeys": [eintrag_schluessel[x] for x in sz.get("entryIds") or [] if x in eintrag_schluessel]}
+                   for sz in json.loads(pl.scenes or "[]")]
+         plaene.append({"key": f"k{i + 1}", "title": pl.title, "sessionNumber": pl.session_number, "state": pl.state,
+-                       "notes": pl.notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
++                       "notes": pl.notes, "tableNotes": pl.table_notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
+                        "documentKeys": [unterlage_schluessel[x] for x in json.loads(pl.document_ids or "[]")
+                                         if x in unterlage_schluessel],
+@@ -355,4 +356,5 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+                      "coverPreset": c.cover_preset, "coverImage": titelbild,
+                      "hotwords": namenshilfe._gespeichert(c), "nextSessionAt": _z(c.next_session_at),
++                     "links": links.lesen(c.links),
+                      "createdAt": _z(c.created_at)},
+         "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen, "plans": plaene,
+@@ -554,4 +556,5 @@ class _Eintrag(schemas.ApiModel):
+     public_changed_at: datetime | None = None
+     mentions: list[_Erwaehnung] = Field(default=[], max_length=10000)
++    links: list = Field(default=[], max_length=50)  # 0.4.13; geprüft beim Anlegen
+ 
+ 
+@@ -572,4 +575,5 @@ class _Szene(schemas.ApiModel):
+     state: Literal["open", "played", "skipped"] = "open"
+     entry_keys: list[str] = Field(default=[], max_length=30)
++    links: list = Field(default=[], max_length=50)  # 0.4.13
+ 
+ 
+@@ -580,4 +584,5 @@ class _Plan(schemas.ApiModel):
+     state: Literal["draft", "ready", "played"] = "draft"
+     notes: str | None = Field(default=None, max_length=20000)
++    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
+     scenes: list[_Szene] = Field(default=[], max_length=50)
+     names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
+@@ -598,4 +603,5 @@ class _Kampagne(schemas.ApiModel):
+     hotwords: dict | None = None
+     next_session_at: datetime | None = None
++    links: list = Field(default=[], max_length=200)  # 0.4.13
+ 
+ 
+@@ -774,5 +780,6 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+                  organization_id=org_id, language=k.language, system=k.system,
+                  system_name=(k.system_name or "").strip() or None, world_info=(k.world_info or "").strip() or None,
+-                 cover_preset=k.cover_preset, next_session_at=k.next_session_at, imported_by_user_id=user.id)
++                 cover_preset=k.cover_preset, next_session_at=k.next_session_at, imported_by_user_id=user.id,
++                 links=links.schreiben(links.bereinigen(k.links, links.MAX_KAMPAGNE)))
+     c.allow_external_transcription = c.allow_cloud_summary = betriebsart(db) == "cloud"
+     if isinstance(k.hotwords, dict):
+@@ -873,5 +880,6 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+                   pc_character_id=((e.pc_character_id or "").lower() or None) if e.type == "pc" else None,
+                   created_at=e.created_at or jetzt, updated_at=e.updated_at or jetzt,
+-                  public_changed_at=e.public_changed_at)
++                  public_changed_at=e.public_changed_at,
++                  links=links.schreiben(links.bereinigen(e.links, links.MAX_EINTRAG)))
+         if e.origin is not None:
+             x.origin_character_id = e.origin.character_id.lower()
+@@ -924,7 +932,9 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+             gesehen.add(sz.id.lower())
+             szenen.append({"id": sz.id.lower(), "title": sz.title.strip() or "?", "notes": sz.notes, "state": sz.state,
+-                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu))})
++                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu)),
++                           "links": links.bereinigen(sz.links, links.MAX_SZENE)})
+         db.add(ChapterPlan(campaign_id=c.id, title=pl.title.strip() or "?", session_number=pl.session_number,
+-                           state=pl.state, notes=pl.notes, scenes=json.dumps(szenen, ensure_ascii=False),
++                           state=pl.state, notes=pl.notes, table_notes=(pl.table_notes or "").strip() or None,
++                           scenes=json.dumps(szenen, ensure_ascii=False),
+                            names=json.dumps(list(dict.fromkeys(n.strip() for n in pl.names if n.strip())),
+                                             ensure_ascii=False),
+diff --git a/contract/session-chronik-api.yaml b/contract/session-chronik-api.yaml
+index bd4df9d..a89d862 100644
+--- a/contract/session-chronik-api.yaml
++++ b/contract/session-chronik-api.yaml
+@@ -2,5 +2,5 @@ openapi: 3.1.0
+ info:
+   title: Taleward API
+-  version: 0.4.12
++  version: 0.4.13
+   description: |
+     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
+@@ -167,4 +167,9 @@ info:
+     `names` als Schreibhilfe der Transkription). Unterlagen lassen sich während der Runde nachlesen:
+     GET /documents/{id}/file (Originaldatei) und GET /documents/{id}/text (Text je Seite).
++    Änderungen in 0.4.13 (Links und Notizen am SL-Schirm): Links (Schema Link: Name, Adresse, geteilt ja/nein) an der
++    Kampagne (Campaign.links, PATCH /campaigns/{id}), an Bibel-Einträgen (EntryInput.links) und an Szenen des Kapitelplans
++    (PlanScene.links). Spieler bekommen nur Links mit shared = true, und nur an Einträgen, die sie ohnehin sehen; Links an
++    Szenen bleiben bei der SL. ChapterPlan.tableNotes: Notizen der SL während der Runde. Links und Notizen fließen nie in
++    Kapitel, Vorschläge oder Schreibhilfe.
+ 
+ servers:
+@@ -780,4 +785,9 @@ paths:
+                   items: { type: string, maxLength: 40 }
+                   description: Namenshilfe ganz ersetzen (nur SL, ab 0.4.6). Doppelte und leere Einträge verwirft der Server.
++                links:
++                  type: array
++                  maxItems: 20
++                  items: { $ref: "#/components/schemas/Link" }
++                  description: Links der Kampagne ganz ersetzen (nur SL, ab 0.4.13), siehe Campaign.links
+                 archived:
+                   type: boolean
+@@ -2949,4 +2959,10 @@ components:
+             (die SL kann es zurücksetzen).
+         notes: { type: [string, "null"], maxLength: 20000, description: Freie Notiz der SL zum ganzen Kapitel }
++        tableNotes:
++          type: [string, "null"]
++          maxLength: 20000
++          description: |
++            Ab 0.4.13: Notizen der SL während der Runde (Notizzettel am SL-Schirm). Nur für die SL, fließt nie in Kapitel,
++            Vorschläge oder Schreibhilfe. Fehlt bei älteren Servern.
+         scenes:
+           type: array
+@@ -2974,5 +2990,6 @@ components:
+         - Verknüpfte Bibel-Einträge ändern ihre Sichtbarkeit dadurch nicht; aufgedeckt wird wie bisher über
+           PATCH /entries/{id} (visibility).
+-        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt.
++        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt, Links und
++          tableNotes (ab 0.4.13) gehen mit.
+       allOf:
+         - $ref: "#/components/schemas/ChapterPlanInput"
+@@ -2998,4 +3015,22 @@ components:
+           description: Bibel-Einträge dieser Kampagne, die in der Szene eine Rolle spielen (gelöschte fallen heraus)
+         state: { type: string, enum: [open, played, skipped], default: open }
++        links:
++          type: array
++          maxItems: 3
++          items: { $ref: "#/components/schemas/Link" }
++          description: Ab 0.4.13. Nur für die SL wie der ganze Plan; shared spielt hier keine Rolle.
++
++    Link:
++      type: object
++      required: [id, label, url]
++      description: |
++        Ab 0.4.13. Ein Verweis auf ein anderes Programm oder eine Seite. Öffnet sich außerhalb von Taleward; nichts wird
++        eingebettet, Taleward speichert keine Zugangsdaten. Der Server prüft: nur http:// oder https://, keine
++        Zugangsdaten in der Adresse (user:pass@) → sonst 400 invalid_input. Er ruft die Adresse nie selbst auf.
++      properties:
++        id: { type: string, description: UUID; neue Links bringt die App mit eigener ID }
++        label: { type: string, minLength: 1, maxLength: 60 }
++        url: { type: string, maxLength: 2000, format: uri }
++        shared: { type: boolean, default: false, description: "true = auch Spieler sehen den Link (nicht bei Szenen)" }
+ 
+     CoverPreset:
+@@ -3177,4 +3212,11 @@ components:
+           properties:
+             description: { type: string }
++            links:
++              type: array
++              maxItems: 20
++              items: { $ref: "#/components/schemas/Link" }
++              description: |
++                Ab 0.4.13: Links der Kampagne (virtueller Spieltisch, Discord, Karte, Musik …). Die SL bekommt alle,
++                Spieler nur die mit shared = true (Treffpunkt für Online-Runden). Fehlt bei älteren Servern.
+             language: { $ref: "#/components/schemas/ContentLanguage" }
+             system:
+@@ -3530,4 +3572,12 @@ components:
+             der Spieler durchsucht es nicht. Recap-Pipeline bekommt nur öffentliche Einträge OHNE gmNotes;
+             die Vorschlags-Pipeline bekommt die ganze Bibel inklusive gmNotes.
++        links:
++          type: array
++          maxItems: 3
++          items: { $ref: "#/components/schemas/Link" }
++          description: |
++            Ab 0.4.13. Spieler bekommen nur Links mit shared = true, und nur an Einträgen, die sie sehen (ein Link an
++            einem gm_only-Eintrag wird also erst mit dem Aufdecken sichtbar). Wird ein Eintrag aufgedeckt, ändern sich die
++            Links nicht. Links fließen nie in Kapitel oder Vorschläge.
+ 
+     Entry:
+diff --git a/migrations/versions/e8b2f4a6c1d3_links_0_4_13.py b/migrations/versions/e8b2f4a6c1d3_links_0_4_13.py
+new file mode 100644
+index 0000000..bd39f82
+--- /dev/null
++++ b/migrations/versions/e8b2f4a6c1d3_links_0_4_13.py
+@@ -0,0 +1,35 @@
++"""Links und Notizen am SL-Schirm (Schnittstelle 0.4.13)
++
++Revision ID: e8b2f4a6c1d3
++Revises: d4e7a1c9b3f6
++Create Date: 2026-10-08 18:00:00
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision: str = 'e8b2f4a6c1d3'
++down_revision: Union[str, Sequence[str], None] = 'd4e7a1c9b3f6'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    with op.batch_alter_table('campaigns', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('links', sa.Text(), nullable=True))
++    with op.batch_alter_table('entries', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('links', sa.Text(), nullable=True))
++    with op.batch_alter_table('chapter_plans', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('table_notes', sa.Text(), nullable=True))
++
++
++def downgrade() -> None:
++    with op.batch_alter_table('chapter_plans', schema=None) as batch_op:
++        batch_op.drop_column('table_notes')
++    with op.batch_alter_table('entries', schema=None) as batch_op:
++        batch_op.drop_column('links')
++    with op.batch_alter_table('campaigns', schema=None) as batch_op:
++        batch_op.drop_column('links')
+diff --git a/pyproject.toml b/pyproject.toml
+index 88f2616..dcdc393 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.56"
++version = "0.4.57"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index c9ae657..62980a8 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.56"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.57"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index b619d10..9ebcf09 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.56"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.57"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_links_0413.py b/tests/test_links_0413.py
+new file mode 100644
+index 0000000..a3bc0c7
+--- /dev/null
++++ b/tests/test_links_0413.py
+@@ -0,0 +1,188 @@
++"""Schnittstelle 0.4.13: Links an Kampagne, Einträgen und Szenen; Notizen am SL-Schirm (tableNotes)."""
++import io
++import json
++import uuid
++import zipfile
++
++import pytest
++
++from tests.test_step2a import API
++from tests.test_umzug_048 import _exportieren, _importieren
++from tests.test_step2b import _kleine_teile  # noqa: F401 (Fixture)
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++@pytest.fixture(autouse=True)
++def _sofort(monkeypatch):
++    from app import umzug
++
++    monkeypatch.setattr(umzug, "HINTERGRUND", False)
++
++
++def _link(label, url, shared=False):
++    return {"id": str(uuid.uuid4()), "label": label, "url": url, "shared": shared}
++
++
++def test_kampagnen_links_sl_und_spieler(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}"
++    assert client.get(url, headers=w["gm"]).json()["links"] == []
++    tisch, karte = _link(" Spieltisch ", "https://vtt.example/raum/7", True), _link("Karte", "http://karte.example/x")
++    r = client.patch(url, headers=w["gm"], json={"links": [tisch, karte]})
++    assert r.status_code == 200, r.text
++    assert [x["label"] for x in r.json()["links"]] == ["Spieltisch", "Karte"]  # Name getrimmt
++    assert r.json()["links"][1]["shared"] is False
++    # Spieler: nur geteilte
++    sp = client.get(url, headers=w["pl"]).json()["links"]
++    assert [x["url"] for x in sp] == ["https://vtt.example/raum/7"]
++    assert "karte.example" not in json.dumps(client.get(f"{API}/campaigns", headers=w["pl"]).json())
++    # Spieler dürfen nicht ändern
++    assert client.patch(url, headers=w["pl"], json={"links": []}).status_code == 403
++    # ältere App: PATCH ohne links lässt die Links stehen
++    assert len(client.patch(url, headers=w["gm"], json={"title": "Neu"}).json()["links"]) == 2
++    # Liste ganz ersetzen
++    assert client.patch(url, headers=w["gm"], json={"links": [karte]}).json()["links"][0]["label"] == "Karte"
++    assert client.get(url, headers=w["pl"]).json()["links"] == []
++    assert client.patch(url, headers=w["gm"], json={"links": []}).json()["links"] == []
++
++
++@pytest.mark.parametrize("adresse", [
++    "javascript:alert(1)", "ftp://x.example/a", "https://nutzer:geheim@x.example/", "https://nutzer@x.example/",
++    "https://", "https://x.example/a b", "x.example", "file:///etc/passwd", "data:text/html,hi",
++])
++def test_ungueltige_adressen(client, world, adresse):
++    w = world
++    r = client.patch(f"{API}/campaigns/{w['cid']}", headers=w["gm"], json={"links": [_link("x", adresse)]})
++    assert r.status_code == 400 and r.json()["code"] == "invalid_input", r.text
++
++
++def test_grenzen_und_doppelte_ids(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}"
++    zuviel = [_link(f"L{i}", "https://x.example") for i in range(21)]
++    assert client.patch(url, headers=w["gm"], json={"links": zuviel}).status_code == 400
++    assert client.patch(url, headers=w["gm"], json={"links": [_link("x" * 61, "https://x.example")]}).status_code == 400
++    assert client.patch(url, headers=w["gm"], json={"links": [_link("   ", "https://x.example")]}).status_code == 400
++    a = _link("a", "https://x.example")
++    r = client.patch(url, headers=w["gm"], json={"links": [a, {**a, "label": "b"}]})
++    assert r.status_code == 400 and r.json()["code"] == "invalid_input"
++
++
++def test_eintrags_links(client, world):
++    w = world
++    offen, geheim = _link("Stadtplan", "https://karte.example/stadt", True), _link("SL-Notiz", "https://notiz.example")
++    r = client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "location", "name": "Hafen", "summary": "Laut.", "visibility": "public", "links": [offen, geheim]})
++    assert r.status_code == 201, r.text
++    eid = r.json()["id"]
++    assert len(r.json()["links"]) == 2
++    sp = client.get(f"{API}/entries/{eid}", headers=w["pl"]).json()
++    assert [x["label"] for x in sp["links"]] == ["Stadtplan"]
++    alle = json.dumps(client.get(f"{API}/campaigns/{w['cid']}/entries", headers=w["pl"]).json())
++    assert "notiz.example" not in alle and "karte.example" in alle
++    # mehr als 3 → 400
++    zuviel = [_link(f"L{i}", "https://x.example") for i in range(4)]
++    assert client.patch(f"{API}/entries/{eid}", headers=w["gm"], json={"links": zuviel}).status_code == 400
++    assert client.patch(f"{API}/entries/{eid}", headers=w["gm"],
++                        json={"links": [_link("x", "javascript:alert(1)")]}).status_code == 400
++    # PATCH ohne links lässt sie stehen
++    assert len(client.patch(f"{API}/entries/{eid}", headers=w["gm"], json={"summary": "Leise."}).json()["links"]) == 2
++
++
++def test_links_an_geheimem_eintrag_erst_nach_dem_aufdecken(client, world):
++    w = world
++    geteilt = _link("Bild", "https://bild.example/1", True)
++    eid = client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Mira", "summary": "Wirtin.", "visibility": "gm_only", "links": [geteilt]}).json()["id"]
++    assert client.get(f"{API}/entries/{eid}", headers=w["pl"]).status_code == 404
++    assert "bild.example" not in json.dumps(client.get(f"{API}/campaigns/{w['cid']}/entries", headers=w["pl"]).json())
++    r = client.patch(f"{API}/entries/{eid}", headers=w["gm"], json={"visibility": "public"})
++    assert r.json()["links"] == [{**geteilt, "id": geteilt["id"].lower()}]  # Aufdecken ändert die Links nicht
++    assert client.get(f"{API}/entries/{eid}", headers=w["pl"]).json()["links"][0]["url"] == "https://bild.example/1"
++
++
++def test_szenen_links_und_tischnotizen(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/plans"
++    sz = {"id": str(uuid.uuid4()), "title": "Ankunft", "links": [_link("Musik", "https://musik.example/a", True)]}
++    p = client.post(url, headers=w["gm"], json={"title": "Plan", "scenes": [sz], "tableNotes": " Bolko hat 3 Silber "})
++    assert p.status_code == 201, p.text
++    p = p.json()
++    assert p["tableNotes"] == "Bolko hat 3 Silber" and p["scenes"][0]["links"][0]["label"] == "Musik"
++    # dieselbe ifUpdatedAt-Regel
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"],
++                     json={"tableNotes": "neu", "ifUpdatedAt": p["updatedAt"]})
++    assert r.status_code == 200 and r.json()["tableNotes"] == "neu"
++    r2 = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"],
++                      json={"tableNotes": "alt", "ifUpdatedAt": p["updatedAt"]})
++    assert r2.status_code == 409
++    # ohne tableNotes bleibt die Notiz; null leert sie
++    assert client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"title": "P2"}).json()["tableNotes"] == "neu"
++    assert client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"tableNotes": None}).json()["tableNotes"] is None
++    # ungültige Links an Szenen
++    schlecht = {**sz, "links": [_link("x", "ftp://x.example")]}
++    assert client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"scenes": [schlecht]}).status_code == 400
++    viele = {**sz, "links": [_link(f"L{i}", "https://x.example") for i in range(4)]}
++    assert client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"scenes": [viele]}).status_code == 400
++    # Spieler: weiter nichts
++    assert client.get(f"{API}/plans/{p['id']}", headers=w["pl"]).status_code == 404
++
++
++def test_links_und_notizen_fliessen_nicht_in_die_ki(client, world, dbs, tmp_path):
++    from app import namenshilfe
++    from app.models import Campaign, GameSession
++    from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
++    from tests.test_step2b import transkribiert
++
++    w = world
++    client.patch(f"{API}/campaigns/{w['cid']}", headers=w["gm"], json={
++        "links": [_link("LINKKAMPAGNE", "https://kampagne-link.example/", True)]})
++    client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Bolko", "summary": "Wirt.", "gmNotes": "geheim", "visibility": "public",
++        "links": [_link("LINKEINTRAG", "https://eintrag-link.example/", True),
++                  _link("LINKSL", "https://sl-link.example/")]})
++    client.post(f"{API}/campaigns/{w['cid']}/plans", headers=w["gm"], json={
++        "title": "Plan", "sessionNumber": 1, "tableNotes": "TISCHNOTIZ",
++        "scenes": [{"id": str(uuid.uuid4()), "title": "S", "links": [_link("LINKSZENE", "https://szene-link.example/")]}]})
++    s = transkribiert(client, w, dbs, tmp_path)
++    g = dbs.get(GameSession, s["id"])
++    basis = eingabe_bauen(dbs, g)
++    c = dbs.get(Campaign, w["cid"])
++    alles = (json.dumps(recap_eingabe(basis), ensure_ascii=False)
++             + json.dumps(vorschlag_eingabe(dbs, g, basis), ensure_ascii=False)
++             + json.dumps(namenshilfe.fuer_kampagne(dbs, c, 1), ensure_ascii=False)
++             + json.dumps(namenshilfe.anzeige(dbs, c), ensure_ascii=False))
++    assert "Bolko" in alles  # der Eintrag selbst ist dabei
++    for wort in ("LINK", "link.example", "TISCHNOTIZ"):
++        assert wort not in alles
++
++
++def test_links_und_notizen_beim_umzug(client, world, make_user, login):
++    w = world
++    client.patch(f"{API}/campaigns/{w['cid']}", headers=w["gm"], json={
++        "links": [_link("Tisch", "https://vtt.example/", True)]})
++    client.post(f"{API}/campaigns/{w['cid']}/entries", headers=w["gm"], json={
++        "type": "npc", "name": "Bolko", "summary": "Wirt.", "visibility": "public",
++        "links": [_link("Bild", "https://bild.example/")]})
++    client.post(f"{API}/campaigns/{w['cid']}/plans", headers=w["gm"], json={
++        "title": "Plan", "tableNotes": "Notiz", "scenes": [{"id": str(uuid.uuid4()), "title": "S",
++                                                           "links": [_link("Musik", "https://musik.example/")]}]})
++    _, daten = _exportieren(client, w)
++    inhalt = json.loads(zipfile.ZipFile(io.BytesIO(daten)).read("kampagne.json"))
++    # Ungültiges in der Datei fällt still heraus, statt den Umzug abzubrechen
++    inhalt["campaign"]["links"].append({"id": str(uuid.uuid4()), "label": "böse", "url": "javascript:x"})
++    puffer = io.BytesIO()
++    with zipfile.ZipFile(io.BytesIO(daten)) as alt, zipfile.ZipFile(puffer, "w") as neu:
++        for n in alt.namelist():
++            neu.writestr(n, json.dumps(inhalt) if n == "kampagne.json" else alt.read(n))
++    make_user("eve")
++    eve = login("eve")
++    st = _importieren(client, eve, puffer.getvalue())
++    assert st["state"] == "done", st
++    cid = st["campaignId"]
++    assert [x["label"] for x in client.get(f"{API}/campaigns/{cid}", headers=eve).json()["links"]] == ["Tisch"]
++    e = client.get(f"{API}/campaigns/{cid}/entries", headers=eve).json()
++    assert [x["label"] for x in next(x for x in e if x["name"] == "Bolko")["links"]] == ["Bild"]
++    p = client.get(f"{API}/campaigns/{cid}/plans", headers=eve).json()[0]
++    assert p["tableNotes"] == "Notiz" and p["scenes"][0]["links"][0]["label"] == "Musik"
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 7ae3b1d..fde7165 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.56"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.57"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_schnittstelle_0410.py b/tests/test_schnittstelle_0410.py
+index c26de76..3b7cce8 100644
+--- a/tests/test_schnittstelle_0410.py
++++ b/tests/test_schnittstelle_0410.py
+@@ -191,3 +191,3 @@ def test_stimmen_vor_bestaetigung_ohne_zuordnung(client, world, dbs, tmp_path):
+ 
+ def test_info_meldet_schnittstelle_0411(client):
+-    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.12"
++    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.13"
+diff --git a/tests/test_step1b.py b/tests/test_step1b.py
+index cd7fcb2..9255c72 100644
+--- a/tests/test_step1b.py
++++ b/tests/test_step1b.py
+@@ -23,5 +23,5 @@ def test_info_ist_oeffentlich(client):
+     assert r.status_code == 200
+     i = r.json()
+-    assert i["apiVersion"] == "0.4.12" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
++    assert i["apiVersion"] == "0.4.13" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+ 
+ 
+diff --git a/tests/test_umzug_048.py b/tests/test_umzug_048.py
+index a599595..3f33ad6 100644
+--- a/tests/test_umzug_048.py
++++ b/tests/test_umzug_048.py
+@@ -151,5 +151,5 @@ def test_export_inhalt_und_zugang(client, world, dbs, make_user, login):
+     alles = b"".join(z.read(n) for n in namen)
+     k = json.loads(z.read("kampagne.json"))
+-    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.12"
++    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.13"
+     # nie in der Datei
+     for verboten in (GEHEIM, PRUEF, "Anna", "Ben", "Dora", "anna", "HINTERGRUND-DORIN", "DORA-BOGEN",
+diff --git a/tests/test_verwaltung2.py b/tests/test_verwaltung2.py
+index 5f8dbb8..220a173 100644
+--- a/tests/test_verwaltung2.py
++++ b/tests/test_verwaltung2.py
+@@ -173,5 +173,5 @@ def test_mindestversion(client, world, admin):  # noqa: F811
+     info = client.get(f"{API}/info").json()  # /info bleibt immer erreichbar
+     assert info["minAppVersion"] == "0.9.0" and info["latestAppVersion"] == "0.9.1"
+-    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.12"
++    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.13"
+     url = f"{API}/campaigns"
+     r = client.get(url, headers=world["gm"])
+diff --git a/tests/test_webapp.py b/tests/test_webapp.py
+index 51aa831..bc9e346 100644
+--- a/tests/test_webapp.py
++++ b/tests/test_webapp.py
+@@ -107,5 +107,5 @@ def test_info_mit_pruefsumme(client, dbs):
+     info = client.get(f"{API}/info").json()
+     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
+-    assert info["apiVersion"] == "0.4.12"
++    assert info["apiVersion"] == "0.4.13"
+ 
+ 
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 93e7367..3ca6ad8 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.56"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.57"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 7ddaa3f..e6eba05 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+ version = "0.4.56"
++version = "0.4.57"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
