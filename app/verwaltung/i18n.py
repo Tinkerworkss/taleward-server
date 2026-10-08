@@ -57,6 +57,7 @@ EN: dict[str, str] = {
     "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.": "Summary is off or has no API key – please set it up first.",
     "Diese Runde hat keine Abschrift.": "This session has no transcript.",
     "Probelauf gelöscht.": "Trial run deleted.",
+    "Diesen Probelauf gibt es nicht mehr – oder er gehört zu einem anderen Konto.": "This trial run no longer exists – or it belongs to another account.",
     "Automatisch aktualisieren": "Update automatically",
     "nachts zwischen 3 und 5 Uhr, mit Sicherung vorher. Startet die neue Fassung nicht, geht der Server von selbst auf die alte Fassung und die Daten von vorher zurück.": "at night between 3 and 5 am, with a backup first. If the new version doesn't start, the server goes back to the old version and the data from before by itself.",
     "Jetzt aktualisieren": "Update now",

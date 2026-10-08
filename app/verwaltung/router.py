@@ -81,6 +81,7 @@ MELDUNGEN = {
     "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",
     "probe_leer": "Diese Runde hat keine Abschrift.",
     "probe_geloescht": "Probelauf gelöscht.",
+    "probe_weg": "Diesen Probelauf gibt es nicht mehr – oder er gehört zu einem anderen Konto.",
     "konto_angelegt": "Konto angelegt.",
     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
     "verwalter": "Verwalter-Recht geändert.",
@@ -771,17 +772,17 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
     _ = tr(request)
     s = db.get(GameSession, session.strip()) if session.strip() else None
     if s is None:
-        return _zurueck("/verwaltung/zusammenfassung", "probe_runde")
+        return _zurueck("/zusammenfassung", "probe_runde")
     text, name = None, None
     if abschrift is not None and abschrift.filename:
         roh = await abschrift.read()
         if len(roh) > 5_000_000:
-            return _zurueck("/verwaltung/zusammenfassung", "probe_datei")
+            return _zurueck("/zusammenfassung", "probe_datei")
         text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
     try:
         p = probelauf.starten(db, s, text, name, user_id=user.id)
     except ValueError as e:
-        return _zurueck("/verwaltung/zusammenfassung", f"probe_{e}")
+        return _zurueck("/zusammenfassung", f"probe_{e}")
     return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)
 
 
@@ -790,8 +791,8 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
     from app import kapitelprobe as probelauf
 
     p = probelauf.fuer(db, probe_id, user.id)
-    if p is None:
-        raise errors.not_found()
+    if p is None:  # gelöscht, abgeräumt oder fremd – zurück zur Liste statt roher Fehlermeldung
+        return _zurueck("/zusammenfassung", "probe_weg")
     schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
                 "proposals": "Vorschläge"}
     return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
@@ -828,7 +829,7 @@ def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter), db: Sessi
     if probelauf.fuer(db, probe_id, user.id) is None:
         raise errors.not_found()
     probelauf.loeschen(probe_id)
-    return _zurueck("/verwaltung/zusammenfassung", "probe_geloescht")
+    return _zurueck("/zusammenfassung", "probe_geloescht")
 
 
 @router.post("/zusammenfassung", dependencies=[Depends(csrf_pruefen)])

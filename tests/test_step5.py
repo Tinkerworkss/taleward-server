@@ -447,7 +447,7 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     seite = client.get(url).text
     assert s["id"] not in seite and "Rabenfels" not in seite
     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
-    assert "ok=probe_runde" in r.headers["location"] and not probelauf.alle()
+    assert r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_runde" and not probelauf.alle()
     from app.models import Campaign, Member, User
 
     chef = dbs.query(User).filter_by(username="chef").one()
@@ -455,7 +455,8 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     dbs.commit()
     # Spielleitung, aber die Kampagne erlaubt die Cloud nicht → kein Aufruf beim Anbieter
     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
-    assert "ok=probe_cloud" in r.headers["location"] and not probelauf.alle() and not api.aufrufe
+    assert r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_cloud" and not probelauf.alle()
+    assert not api.aufrufe and "Cloud-Zusammenfassung nicht freigegeben" in client.get(r.headers["location"]).text
     dbs.get(Campaign, w["cid"]).allow_cloud_summary = True
     dbs.commit()
     seite = client.get(url).text
@@ -477,7 +478,8 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     seite = client.get(f"/verwaltung/probelauf/{pid}").text
     assert p.titel in seite and "fertig" in seite and "recap.txt" in seite
     assert client.get(f"/verwaltung/probelauf/{pid}/recap.txt").text.startswith(p.titel)
-    assert client.get(f"/verwaltung/probelauf/{pid}/../stand.json").status_code in (404, 400)
+    r = client.get(f"/verwaltung/probelauf/{pid}/../stand.json", follow_redirects=False)
+    assert r.status_code in (303, 404, 400) and "besitzer" not in r.text
     assert client.get(f"/verwaltung/probelauf/{pid}/stand.json").status_code == 404  # nur bekannte Dateien
     # alles als ZIP
     import io
@@ -491,7 +493,9 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     stand = probelauf.ordner(pid) / "stand.json"
     echt = stand.read_text(encoding="utf-8")
     stand.write_text(echt.replace(chef.id, "anderes-konto"), encoding="utf-8")
-    for pfad in ("", "/recap.txt", "/alles.zip"):
+    r = client.get(f"/verwaltung/probelauf/{pid}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_weg"
+    for pfad in ("/recap.txt", "/alles.zip"):
         assert client.get(f"/verwaltung/probelauf/{pid}{pfad}").status_code == 404
     assert client.post(f"/verwaltung/probelauf/{pid}/loeschen", data={"csrf": admin}).status_code == 404
     assert pid not in client.get(url).text and probelauf.lesen(pid) is not None
@@ -521,7 +525,7 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     assert seite.count("/verwaltung/probelauf/") >= 2 and "eigene.txt" in seite
     r = client.post(f"/verwaltung/probelauf/{pid2}/loeschen", data={"csrf": admin}, follow_redirects=False)
     assert r.status_code == 303 and probelauf.lesen(pid2) is None
-    assert client.get(f"/verwaltung/probelauf/{pid2}").status_code == 404
+    assert client.get(f"/verwaltung/probelauf/{pid2}", follow_redirects=False).status_code == 303
     # lokales Modell eingestellt → verständlicher Hinweis statt Lauf
     client.post(url, data={**basis, "art": "lokal"})
     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
@@ -534,7 +538,8 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     m = dbs.query(Member).filter_by(campaign_id=w["cid"], user_id=chef.id).one()
     m.left_at = utcnow()
     dbs.commit()
-    assert client.get(f"/verwaltung/probelauf/{pid}").status_code == 404 and probelauf.lesen(pid) is None
+    assert client.get(f"/verwaltung/probelauf/{pid}", follow_redirects=False).status_code == 303
+    assert probelauf.lesen(pid) is None
     p3 = probelauf.Probe(id="00000000-0000-0000-0000-000000000003", session_id=s["id"], kampagne="x", kapitel=1,
                          quelle="Runde", zeilen=1, modell="m", gestartet="2026-10-08T00:00:00Z",
                          campaign_id=w["cid"], besitzer=chef.id)
