@@ -186,7 +186,38 @@ def test_alte_zentrale_in_der_konfiguration_wird_gehoben(dbs, monkeypatch):
 
     monkeypatch.setattr(get_settings(), "central_web_origin", "https://taleward.org")
     assert webapp.konfigurierte_zentrale() == ZENTRAL and webapp.zentrale_herkunft(dbs) == ZENTRAL
-    assert webapp.rueckwege(dbs, "http://testserver") == {"http://testserver/app/#/auth", f"{ZENTRAL}/#/auth"}
+    assert webapp.rueckwege(dbs, "http://testserver") == {"http://testserver/app/#/auth", f"{ZENTRAL}/#/auth",
+                                                          webapp.APP_LINK}
     monkeypatch.setattr(get_settings(), "central_web_origin", "https://web.anderer-verein.de")
     assert webapp.zentrale_herkunft(dbs) == "https://web.anderer-verein.de"
     assert f"{ALT}/app/#/auth" not in webapp.rueckwege(dbs, "http://testserver")
+
+
+def test_return_to_app_link_0_4_13(client, world, dbs, dienst, monkeypatch):  # noqa: F811
+    """Android-App: fester Rückweg über den App Link, unabhängig von der zentralen Herkunft, wörtlich verglichen."""
+    from app import webapp
+    from app.config import get_settings
+    from tests.test_anmeldung import challenge_von
+
+    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
+    ziel = "https://app.taleward.org/auth/app"
+    assert webapp.APP_LINK == ziel
+    # Abwandlungen sind kein erlaubtes Ziel
+    for anders in (ziel + "/", ziel + "?x=1", ziel + "/../boese", "http://app.taleward.org/auth/app",
+                   "https://app.taleward.org.boese.example/auth/app", ziel.upper()):
+        r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": anders}, follow_redirects=False)
+        assert r.headers["location"] == "taleward://auth?error=return_to_not_allowed", anders
+    # gilt auch, wenn die Verwaltung eine andere zentrale Web-App eingestellt hat
+    with monkeypatch.context() as mp:
+        mp.setattr(get_settings(), "central_web_origin", "https://web.anderer-verein.de")
+        assert ziel in webapp.rueckwege(dbs, "http://testserver")
+    r = client.get(f"{API}/auth/oidc/google/start", params={**params, "returnTo": ziel}, follow_redirects=False)
+    q = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
+    dienst.nonce = q.get("nonce")
+    dienst.claims = {"sub": "g-android", "email": "app@example.org", "email_verified": True, "name": "App"}
+    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": q["state"]}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith(ziel + "?ticket=")
+    assert "serverId=" in r.headers["location"]
+    # ohne returnTo bleibt es bei taleward://auth (ältere Apps)
+    r = client.get(f"{API}/auth/oidc/apple/start", params=params, follow_redirects=False)
+    assert r.headers["location"].startswith("taleward://auth?")

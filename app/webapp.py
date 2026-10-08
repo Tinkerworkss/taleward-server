@@ -96,10 +96,15 @@ def vergessen() -> None:
     _cache["zeit"] = 0.0
 
 
+# 0.4.13: Rückweg der Android-App als App Link (Android öffnet die Adresse in der App, geprüft über
+# /.well-known/assetlinks.json). Fest und unabhängig von der zentralen Herkunft.
+APP_LINK = "https://app.taleward.org/auth/app"
+
+
 def rueckwege(db: Session, basis: str) -> set[str]:
-    """Erlaubte returnTo-Werte: <eigene Adresse>/app/#/auth und die zentrale Web-App (an der Wurzel). Nur feste
-    Ziele, kein offener Umleiter."""
-    ziele = {basis.rstrip("/") + "/app/#/auth"}
+    """Erlaubte returnTo-Werte: <eigene Adresse>/app/#/auth, die zentrale Web-App (an der Wurzel) und der App Link
+    der Android-App. Nur feste Ziele, wörtlich verglichen, kein offener Umleiter."""
+    ziele = {basis.rstrip("/") + "/app/#/auth", APP_LINK}
     zentral = zentrale_herkunft(db)
     if zentral:
         ziele.add(zentral + "/#/auth")

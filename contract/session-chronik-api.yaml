@@ -171,6 +171,8 @@ info:
     (PlanScene.links). Spieler bekommen nur Links mit shared = true, und nur an Einträgen, die sie ohnehin sehen; Links an
     Szenen bleiben bei der SL. ChapterPlan.tableNotes: Notizen der SL während der Runde. Links und Notizen fließen nie in
     Kapitel, Vorschläge oder Schreibhilfe.
+    Außerdem (0.4.13): Rückweg der Android-App als App Link – `returnTo=https://app.taleward.org/auth/app` bei
+    /auth/oidc/{provider}/start (siehe dort). Die App nutzt ihn nur, wenn der Server 0.4.13 meldet.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -350,10 +352,13 @@ paths:
           in: query
           schema: { type: string }
           description: |
-            Nur Web-Fassung (ab 0.4.2): Rückweg statt taleward://auth, z. B. `https://app.taleward.org/#/auth`. Der Server
+            Rückweg statt taleward://auth. Web-Fassung (ab 0.4.2), z. B. `https://app.taleward.org/#/auth`. Der Server
             hängt `?ticket=…&serverId=…` bzw. `?error=…` wörtlich an den Wert an (auch hinter `#/auth`). Erlaubt sind nur
             fest hinterlegte Ziele: `<PUBLIC_URL>/app/#/auth` und die zentrale Web-App (`<Herkunft>/#/auth`); sonst Rückweg mit
             error=return_to_not_allowed über taleward://auth.
+            Ab 0.4.13 zusätzlich für die Android-App das feste Ziel `https://app.taleward.org/auth/app` (App Link: Android
+            öffnet die Adresse in der Taleward-App, geprüft über `/.well-known/assetlinks.json`). Die Adresse ist fest und
+            hängt nicht von der zentralen Herkunft ab. Ohne returnTo bleibt es bei taleward://auth (ältere Apps).
       responses:
         "302": { description: Weiterleitung zum Dienst }
         "404": { $ref: "#/components/responses/NotFound" }
