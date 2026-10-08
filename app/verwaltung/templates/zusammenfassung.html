@@ -55,7 +55,8 @@
       </details>
       <label>{{ _("Adresse (nur bei „Anderer“)") }}
         <input type="url" name="api_url" id="anbieter-url" value="{{ k.api_url if llm.gewaehlt == "andere" else '' }}" placeholder="https://…/v1" maxlength="300"></label>
-      <label>{{ _("Modell") }} <input type="text" name="api_modell" id="anbieter-modell" value="{{ k.api_modell }}" maxlength="100" required>
+      <label>{{ _("Modell") }} <input type="text" name="api_modell" id="anbieter-modell" value="{{ k.api_modell }}" maxlength="100" required{% if pruefung and pruefung.modelle %} list="modelle-liste"{% endif %}>
+        {% if pruefung and pruefung.modelle %}<datalist id="modelle-liste">{% for m in pruefung.modelle %}<option value="{{ m }}">{% endfor %}</datalist>{% endif %}
         <span class="hilfe">{{ _("Beim Wechsel des Anbieters wird das empfohlene Modell eingetragen; „Verbindung prüfen“ zeigt, welche Modelle der Schlüssel nutzen darf.") }}</span></label>
       <label>{{ _("API-Schlüssel") }}
         <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
@@ -97,7 +98,8 @@
   {% if pruefung %}
   <div class="meldung{% if not pruefung.ok %} meldung--fehler{% endif %}" role="status">{{ pruefung.text }}
     {% if pruefung.modelle %}<details><summary>{{ _("Modelle, die der Schlüssel nutzen darf ({n})", n=pruefung.modelle|length) }}</summary>
-      <p class="hilfe">{{ pruefung.modelle|join(", ") }}</p></details>{% endif %}
+      <p class="hilfe">{{ pruefung.modelle|join(", ") }}</p>
+      <p class="hilfe">{{ _("Im Feld „Modell“ oben stehen diese Namen jetzt zur Auswahl; danach speichern und erneut prüfen.") }}</p></details>{% endif %}
   </div>
   {% endif %}
   {% endif %}
@@ -107,6 +109,7 @@
 <div class="karte">
   <h2>{{ _("Probelauf") }}</h2>
   <p class="hilfe">{{ _("Kapitel und Vorschläge für eine Runde mit Abschrift neu schreiben lassen, ohne die Runde zu verändern – zum Vergleichen von Modellen und Fassungen. Rechnet mit der Einstellung oben (Cloud-API oder Testmodus) direkt auf dem Server, auch ohne Worker. Kosten zählen zum Monatslimit, nicht zur Kampagne.") }}</p>
+  <p class="hilfe">{{ _("Zur Wahl stehen nur Runden aus Kampagnen, in denen du selbst Spielleitung bist. Mit der Cloud-API gehen Abschrift und Bibel der Kampagne an den Anbieter – nur, wenn die Kampagne die Cloud-Zusammenfassung erlaubt. Deine Probeläufe sieht nur dein Konto.") }}</p>
   {% if runden %}
   <form class="formular" method="post" action="/verwaltung/probelauf" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -118,7 +121,7 @@
       <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
   </form>
-  {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift auf diesem Server.") }}</p>{% endif %}
+  {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift in deinen Kampagnen.") }}</p>{% endif %}
   {% if proben %}
   <table>
     <thead><tr><th>{{ _("Gestartet") }}</th><th>{{ _("Runde") }}</th><th>{{ _("Modell") }}</th><th>{{ _("Zustand") }}</th><th>{{ _("Kosten") }}</th></tr></thead>

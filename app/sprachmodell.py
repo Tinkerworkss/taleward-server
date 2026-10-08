@@ -27,7 +27,8 @@ log = logging.getLogger("worker")
 
 ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
 FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
-MAX_VORSCHLAEGE = 15
+MAX_VORSCHLAEGE = 15  # so viele sieht die Spielleitung höchstens
+MAX_VORSCHLAEGE_ROH = 25  # so viele darf das Modell liefern; der Server wählt die gewichtigsten aus
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
 BISHER = 8  # so viele Notizen des vorigen Abschnitts gehen als Vorgeschichte mit
@@ -68,6 +69,23 @@ class Klient(Protocol):
     def chat(self, system: str, nutzer: str) -> Antwort: ...
 
 
+def anbieter_meldung(r: httpx.Response) -> str:
+    """Wortlaut, mit dem der Anbieter einen Aufruf ablehnt (z. B. „Requests rate limit exceeded“) – kurz und ohne
+    Zeilenumbrüche. Die Anbieter verpacken ihn verschieden: message, error.message, detail oder nur Text."""
+    text = ""
+    try:
+        d = r.json()
+        if isinstance(d, dict):
+            fehler = d.get("error")
+            text = (d.get("message") or (fehler.get("message") if isinstance(fehler, dict) else fehler)
+                    or d.get("detail") or "")
+            if isinstance(text, (list, dict)):
+                text = json.dumps(text, ensure_ascii=False)
+    except ValueError:
+        text = r.text
+    return " ".join(str(text or "").split())[:200]
+
+
 class OpenAIKlient:
     """OpenAI-kompatible Schnittstelle (Mistral, OpenAI, viele andere): POST {url}/chat/completions."""
 
@@ -91,13 +109,17 @@ class OpenAIKlient:
                 continue
             if r.status_code == 429 or r.status_code >= 500:
                 if versuch == 2:
-                    raise SprachmodellFehler(f"Der Anbieter antwortet mit {r.status_code}.")
+                    grund = anbieter_meldung(r)
+                    raise SprachmodellFehler(f"Der Anbieter antwortet mit {r.status_code}" + (f": {grund}" if grund
+                                                                                              else "."))
                 time.sleep(5 * (versuch + 1))
                 continue
             if r.status_code in (401, 403):
-                raise SprachmodellFehler("Der Anbieter lehnt den API-Schlüssel ab.", erneut=False)
+                grund = anbieter_meldung(r)
+                raise SprachmodellFehler(f"Der Anbieter lehnt den API-Schlüssel ab ({r.status_code}"
+                                         + (f": {grund})" if grund else ")."), erneut=False)
             if r.status_code >= 400:
-                raise SprachmodellFehler(f"Der Anbieter lehnt die Anfrage ab ({r.status_code}): {r.text[:200]}",
+                raise SprachmodellFehler(f"Der Anbieter lehnt die Anfrage ab ({r.status_code}): {anbieter_meldung(r)}",
                                          erneut=False)
             d = r.json()
             u = d.get("usage") or {}
@@ -131,7 +153,15 @@ class OpenAIKlient:
 
         Liefert {"json": bool, "tokens": int, "modelle": list | None}; Fehler als SprachmodellFehler."""
         modelle = self.modelle()
-        a = self.chat('Antworte nur mit dem JSON-Objekt {"ok": true}.', 'Bitte {"ok": true} zurückgeben.')
+        try:
+            a = self.chat('Antworte nur mit dem JSON-Objekt {"ok": true}.', 'Bitte {"ok": true} zurückgeben.')
+        except SprachmodellFehler as e:
+            if modelle and self.modell not in modelle:
+                # Der Schlüssel hat die Modellliste geholt, ist also gültig – nur dieses Modell darf er nicht nutzen.
+                raise SprachmodellFehler(f"Der Schlüssel ist gültig, aber das Modell {self.modell} ist für ihn nicht "
+                                         f"freigeschaltet. Bitte eines aus der Liste wählen. ({e})",
+                                         erneut=False) from e
+            raise
         try:
             json_ok = bool(json.loads(a.text).get("ok"))
         except (ValueError, AttributeError):
@@ -529,7 +559,7 @@ nächsten Session allen Spielern vorgelesen.
 Regeln:
 - Nur, was am Tisch als Spielgeschehen passiert ist. Nichts erfinden, nichts ausschmücken, was nicht vorkam.
 - Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {woerter} Wörter, \
-Absätze durch Leerzeilen getrennt.
+in Absätzen von je 80 bis 180 Wörtern (ein Absatz je Szene oder Wendung), durch Leerzeilen getrennt.
 - Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
 weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
 geschehen; wer etwas wofür gibt, steht so in der Grundlage.
@@ -567,6 +597,9 @@ einem vorhandenen Eintrag).
 - evidence: 1 bis 3 Belege {"start": "m:ss", "quote": wörtliches Zitat, höchstens 200 Zeichen}. start ist der \
 Zeitstempel der Zeile bzw. Notiz in eckigen Klammern.
 - Keine Einträge für die Charaktere der Spieler. Höchstens {max} Vorschläge, das Wichtigste zuerst. Lieber wenige gute.
+- Wichtig ist, was die Kampagne weiterträgt: Nichtspielercharaktere mit Namen, Fraktionen, Aufträge und Ziele der \
+Gruppe (quest), Gegenstände mit eigenem Namen, Orte, an die die Gruppe zurückkehren kann. Kulisse, die nur einmal \
+vorbeizieht, kommt zuletzt oder gar nicht.
 - detail und gmNotes sind reiner Text ohne Markdown (keine Sternchen, keine Rauten); mehrere Punkte als eigene Zeilen. \
 Keine Vermutungen – nur, was gesagt wurde.
 Antworte nur mit JSON: {"proposals": [{"entryType": "…", "action": "…", "targetEntryId": null, "title": "…", \
@@ -713,6 +746,36 @@ _FUELL = {"nicht", "einer", "einem", "einen", "eines", "gruppe", "wurde", "wurde
 def _kennwoerter(text: str) -> set[str]:
     """Kennzeichnende Wörter eines Textes (ab sechs Buchstaben, ohne Füllwörter) – zum Wiederfinden einer Stelle."""
     return {w for w in _notizkern(text).split() if len(w) >= 6 and w not in _FUELL}
+
+
+ABSATZ_HOECHSTENS = 220  # Wörter; längere Absätze werden an Satzgrenzen geteilt
+ABSATZ_ZIEL = 140
+_SATZENDE = re.compile(r"(?<=[.!?…])[»«“\"')]*\s+(?=[„\"»«(]?[A-ZÄÖÜ0-9])")
+
+
+def absaetze_teilen(text: str) -> str:
+    """Absätze mit mehr als ABSATZ_HOECHSTENS Wörtern an Satzgrenzen in Stücke von etwa ABSATZ_ZIEL Wörtern teilen.
+    Manche Modelle liefern das ganze Kapitel als einen Block – dann kann es niemand vorlesen, und die Gegenprüfung gibt
+    nur ein Urteil für alles. Kein Wort wird verändert, nur Leerzeilen kommen hinzu."""
+    aus = []
+    for absatz in [a for a in re.split(r"\n\s*\n", text or "") if a.strip()]:
+        if len(absatz.split()) <= ABSATZ_HOECHSTENS:
+            aus.append(absatz.strip())
+            continue
+        saetze = [x for x in _SATZENDE.split(absatz.strip()) if x.strip()]
+        stueck: list[str] = []
+        for satz in saetze:
+            stueck.append(satz.strip())
+            if sum(len(x.split()) for x in stueck) >= ABSATZ_ZIEL:
+                aus.append(" ".join(stueck))
+                stueck = []
+        if stueck:
+            rest = " ".join(stueck)
+            if aus and len(rest.split()) < ABSATZ_ZIEL // 3:
+                aus[-1] += " " + rest  # kein Absatz aus einem halben Satz
+            else:
+                aus.append(rest)
+    return "\n\n".join(aus)
 
 
 def absaetze(text: str) -> list[str]:
@@ -1193,6 +1256,7 @@ class Ablauf:
         text = klartext(text)
         if "\n\n" not in text and "\n" in text:  # Absätze nur mit einfachem Umbruch – für App und Prüfung trennen
             text = re.sub(r"\n+", "\n\n", text)
+        text = absaetze_teilen(text)
         return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": text, "openThreads": faeden}
 
     def vollstaendigkeit(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
@@ -1379,7 +1443,7 @@ class Ablauf:
         geheim = "\n".join(eintrag(e) for e in ein["geheim"])
         nutzer = (f"{_kopf(ein)}\n\nBibel (für Spieler sichtbar; gmNotes sind geheim):\n{bibel or '(leer)'}"
                   f"\n\nGeheime Einträge (nur Spielleitung oder nur einzelne Spieler kennen sie):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
-        system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE)))
+        system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE_ROH)))
         self._schritt("proposals")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
@@ -1475,6 +1539,71 @@ def ohne_meta(text: str) -> str:
     return "\n".join(behalten).strip()
 
 
+# Vermutungen des Modells („gehört vermutlich …“) sind keine Aussagen über die Welt. „scheint“ bleibt erlaubt: So
+# beschreibt der Auftrag eine Spur, die am Tisch nur angedeutet wurde. Vermutungen von Figuren („Lysander vermutet“)
+# sind Spielgeschehen und bleiben ebenfalls.
+_VERMUTUNG = re.compile(r"\b(?:vermutlich|wahrscheinlich|möglicherweise|vielleicht|dürfte|dürften|presumably|probably"
+                        r"|possibly|perhaps|likely)\b", re.IGNORECASE)
+
+
+def ohne_vermutung(text: str) -> str:
+    """Sätze mit Vermutungen des Modells entfernen; der Rest bleibt, wie er war."""
+    if not text or not _VERMUTUNG.search(text):
+        return text
+    behalten = []
+    for zeile in text.split("\n"):
+        rest = " ".join(t for t in re.split(r"(?<=[.!?])\s+", zeile) if not _VERMUTUNG.search(t)).strip()
+        if rest:
+            behalten.append(rest)
+    return "\n".join(behalten).strip()
+
+
+def _normwoerter(text: str) -> str:
+    return " " + " ".join(re.findall(r"\w+", (text or "").casefold())) + " "
+
+
+def zitat_belegt(zitat: str, grundlage_norm: str) -> bool:
+    """Steht das Zitat (wörtlich, ohne Satzzeichen) in der Grundlage? Lange Zitate zählen auch, wenn Anfang oder Ende
+    aus fünf Wörtern wörtlich vorkommt – Modelle kürzen oder verbinden Zeilen."""
+    w = re.findall(r"\w+", re.sub(r"\[[^\]]*\]", " ", zitat or "").casefold())
+    if len(w) < 2:
+        return False
+    if f" {' '.join(w)} " in grundlage_norm:
+        return True
+    return len(w) >= 8 and (f" {' '.join(w[:5])} " in grundlage_norm or f" {' '.join(w[-5:])} " in grundlage_norm)
+
+
+_NAMENSFUELL = {"der", "die", "das", "des", "dem", "den", "von", "vom", "zum", "zur", "und", "the", "of", "and"}
+
+
+def nennungen(titel: str, grundlage_norm: str) -> int:
+    """Wie oft kommt der Name in der Grundlage vor? Bei mehreren Wörtern zählt das seltenste („Gasthaus Zum Holzbein“
+    → „holzbein“), damit allgemeine Wörter wie „Gasthaus“ nichts aufblähen."""
+    woerter = [w for w in re.findall(r"\w+", _kern(titel)) if len(w) >= 4 and w not in _NAMENSFUELL]
+    if not woerter:
+        return 0
+    return min(len(re.findall(rf" {re.escape(w)}\w*", grundlage_norm)) for w in woerter)
+
+
+TYPGEWICHT = {"npc": 1.0, "faction": 1.0, "quest": 1.0, "item": 0.85, "location": 0.85, "other": 0.6}
+
+
+def gewicht(v: dict, belegt: int, n: int) -> float:
+    """Reihenfolge der Vorschläge: Änderungen an Vorhandenem vor Neuem, Figuren, Fraktionen und Aufträge vor Orten und
+    Gegenständen, Häufiges vor Beiläufigem, Belegtes vor Unbelegtem."""
+    import math
+
+    bonus = 0.5 if v["action"] in ("update", "reveal") else 0.0
+    return TYPGEWICHT.get(v["entryType"], 0.6) * (1 + math.log2(1 + min(n, 30))) + 0.3 * belegt + bonus
+
+
+def zutrauen(modell: float, belegt: int, n: int) -> float:
+    """Zutrauen aus dem, was der Server selbst prüfen kann: wörtlich gefundene Belege und wie oft der Name fällt.
+    Das Modell gibt fast immer 1.0; sein Wert zählt nur noch nach unten."""
+    rechnerisch = 0.3 + 0.15 * min(belegt, 3) + (0.1 if n >= 3 else 0.0) + (0.1 if n >= 8 else 0.0)
+    return round(min(modell, rechnerisch, 0.95), 2)
+
+
 def _zeit_aus_notizen(zitat: str, notizen: list[tuple[float, str]]) -> float | None:
     """Zitiert der Vorschlag eine Szenennotiz ohne ihren Zeitstempel, liefert die Notiz die Zeit."""
     k = _notizkern(zitat)
@@ -1496,7 +1625,8 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
     """
     namen = namen or {}
     notizen = [(_zeit_vorn(z), _notizkern(z)) for z in grundlage.split("\n") if _zeit_vorn(z) is not None]
-    out = []
+    grund_norm = _normwoerter(grundlage)
+    out, gewichte = [], []
     for v in roh if isinstance(roh, list) else []:
         if not isinstance(v, dict):
             continue
@@ -1515,6 +1645,9 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
         if detail and not ohne_meta(detail):
             continue  # nur Sätze über den Spieltisch
         detail = ohne_meta(detail)
+        if detail and not ohne_vermutung(detail):
+            continue  # nur Vermutungen
+        detail = ohne_vermutung(detail)
         if art == "update" and ziel not in bibel_ids | geheim_ids:
             continue
         if art == "reveal" and ziel not in geheim_ids:
@@ -1539,18 +1672,31 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
                     start = zeit_lesen(m.group(1)) if m else _zeit_aus_notizen(str(b["quote"]), notizen)
                 belege.append({"start": start if start is not None else 0.0,
                                "quote": str(b["quote"]).strip()[:200]})
+        belege = belege[:3]
         flags = [f for f in v.get("flags") or [] if f in FLAGS]
+        if grundlage:
+            belegt = sum(1 for b in belege if zitat_belegt(b["quote"], grund_norm))
+            n = nennungen(titel, grund_norm)
+            sicherheit = zutrauen(sicherheit, belegt, n)
+            if belegt == 0 and "low_confidence" not in flags:
+                flags.append("low_confidence")
+        else:
+            belegt, n = len(belege), 0
         if sicherheit < 0.4 and "low_confidence" not in flags:
             flags.append("low_confidence")
-        out.append({
+        v_neu = {
             "entryType": typ, "action": art, "targetEntryId": ziel, "title": titel[:300], "detail": detail[:4000],
-            "gmNotes": (ohne_meta(klartext(v.get("gmNotes")))[:4000] or None) if art == "create" else None,
+            "gmNotes": (ohne_vermutung(ohne_meta(klartext(v.get("gmNotes"))))[:4000] or None) if art == "create" else None,
             "suggestedVisibility": sicht, "visibilityReason": klartext(v.get("visibilityReason"))[:500] or None,
-            "confidence": sicherheit, "flags": flags, "evidence": belege[:3],
-        })
-        if len(out) >= MAX_VORSCHLAEGE:
+            "confidence": sicherheit, "flags": flags, "evidence": belege,
+        }
+        out.append(v_neu)
+        gewichte.append(gewicht(v_neu, belegt, n))
+        if len(out) >= MAX_VORSCHLAEGE_ROH:
             break
-    return out
+    # Die gewichtigsten zuerst, bei Gleichstand in der Reihenfolge des Modells; dann auf MAX_VORSCHLAEGE kürzen
+    reihenfolge = sorted(range(len(out)), key=lambda i: (-gewichte[i], i)) if grundlage else list(range(len(out)))
+    return [out[i] for i in reihenfolge[:MAX_VORSCHLAEGE]]
 
 
 # ================================================================ SL-Unterlagen

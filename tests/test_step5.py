@@ -172,7 +172,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
     vs = {v["title"]: v for v in client.get(f"{API}/sessions/{s['id']}/proposals", headers=w["gm"]).json()}
     assert set(vs) == {"Der Wirt", "Der Graue Fürst", "Rabenfels"}  # Ungültiges fällt weg
     assert vs["Der Wirt"]["evidence"] == [{"start": 40.0, "quote": "Wir reiten"}]  # erfundenes Zitat fällt weg
-    assert vs["Der Wirt"]["confidence"] == 0.9 and "low_confidence" not in vs["Der Wirt"]["flags"]
+    # 0.4.55: Zutrauen aus belegten Zitaten und Nennungen, das Modell (0.9) senkt nur
+    assert 0.4 <= vs["Der Wirt"]["confidence"] <= 0.9 and "low_confidence" not in vs["Der Wirt"]["flags"]
     # Ohne auffindbaren Beleg: markiert, nicht gestrichen – die SL entscheidet
     assert vs["Der Graue Fürst"]["confidence"] <= 0.3 and "low_confidence" in vs["Der Graue Fürst"]["flags"]
     assert vs["Der Graue Fürst"]["gmNotes"] == "MARKER-GEHEIMER-TEXT\n\nMARKER-GMNOTES-GEHEIM"  # vom Server
@@ -442,6 +443,21 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     basis = {"csrf": admin, "art": "api", "anbieter": "mistral", "api_modell": "mistral-large-latest",
              "lokal_modell": "auto", "lokal_kontext": "12288", "api_key": "sk-abcdefghijklmnop1234"}
     assert client.post(url, data=basis, follow_redirects=False).status_code == 303
+    # Der Verwalter ist (noch) keine Spielleitung der Kampagne: Runde nicht in der Liste, Start abgelehnt
+    seite = client.get(url).text
+    assert s["id"] not in seite and "Rabenfels" not in seite
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+    assert "ok=probe_runde" in r.headers["location"] and not probelauf.alle()
+    from app.models import Campaign, Member, User
+
+    chef = dbs.query(User).filter_by(username="chef").one()
+    dbs.add(Member(campaign_id=w["cid"], user_id=chef.id, role="gm"))
+    dbs.commit()
+    # Spielleitung, aber die Kampagne erlaubt die Cloud nicht → kein Aufruf beim Anbieter
+    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+    assert "ok=probe_cloud" in r.headers["location"] and not probelauf.alle() and not api.aufrufe
+    dbs.get(Campaign, w["cid"]).allow_cloud_summary = True
+    dbs.commit()
     seite = client.get(url).text
     assert "Probelauf starten" in seite and s["id"] in seite
     # ohne Runde → Hinweis
@@ -463,6 +479,24 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     assert client.get(f"/verwaltung/probelauf/{pid}/recap.txt").text.startswith(p.titel)
     assert client.get(f"/verwaltung/probelauf/{pid}/../stand.json").status_code in (404, 400)
     assert client.get(f"/verwaltung/probelauf/{pid}/stand.json").status_code == 404  # nur bekannte Dateien
+    # alles als ZIP
+    import io
+    import zipfile
+
+    r = client.get(f"/verwaltung/probelauf/{pid}/alles.zip")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    namen = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert f"probe-{pid[:8]}-recap.txt" in namen and f"probe-{pid[:8]}-vorschlaege.json" in namen
+    # gehört einem anderen Konto → 404 für Seite, Dateien, ZIP und Löschen; die Liste zeigt ihn nicht
+    stand = probelauf.ordner(pid) / "stand.json"
+    echt = stand.read_text(encoding="utf-8")
+    stand.write_text(echt.replace(chef.id, "anderes-konto"), encoding="utf-8")
+    for pfad in ("", "/recap.txt", "/alles.zip"):
+        assert client.get(f"/verwaltung/probelauf/{pid}{pfad}").status_code == 404
+    assert client.post(f"/verwaltung/probelauf/{pid}/loeschen", data={"csrf": admin}).status_code == 404
+    assert pid not in client.get(url).text and probelauf.lesen(pid) is not None
+    stand.write_text(echt, encoding="utf-8")
+    assert "besitzer" not in json.loads(client.get(f"/verwaltung/probelauf/{pid}/ergebnis.json").text)
     # Runde unverändert, Kosten beim Betreiber, nicht bei der Kampagne
     dbs.expire_all()
     assert dbs.get(GameSession, s["id"]).state == "awaiting_speakers"
@@ -492,3 +526,19 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
     client.post(url, data={**basis, "art": "lokal"})
     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
     assert "ok=probe_lokal" in r.headers["location"]
+    # Mit der Kampagne verschwinden ihre Probeläufe; wer keine Spielleitung mehr ist, sieht seine nicht mehr
+    from app import konto
+    from app.db import utcnow
+
+    assert probelauf.fuer(dbs, pid, chef.id) is not None
+    m = dbs.query(Member).filter_by(campaign_id=w["cid"], user_id=chef.id).one()
+    m.left_at = utcnow()
+    dbs.commit()
+    assert client.get(f"/verwaltung/probelauf/{pid}").status_code == 404 and probelauf.lesen(pid) is None
+    p3 = probelauf.Probe(id="00000000-0000-0000-0000-000000000003", session_id=s["id"], kampagne="x", kapitel=1,
+                         quelle="Runde", zeilen=1, modell="m", gestartet="2026-10-08T00:00:00Z",
+                         campaign_id=w["cid"], besitzer=chef.id)
+    probelauf._speichern(p3)
+    konto._kampagne_loeschen(dbs, dbs.get(Campaign, w["cid"]))
+    dbs.commit()
+    assert probelauf.lesen(p3.id) is None

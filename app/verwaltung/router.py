@@ -75,6 +75,7 @@ def tr(request: Request):
 # Meldungen nach einer Aktion (?ok=…) – der Text ist zugleich der Übersetzungsschlüssel
 MELDUNGEN = {
     "probe_runde": "Bitte eine Runde mit Abschrift wählen.",
+    "probe_cloud": "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App unter „Kampagne verwalten“.",
     "probe_datei": "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.",
     "probe_lokal": "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.",
     "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",
@@ -711,7 +712,7 @@ def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db:
     from app import kapitelprobe as probelauf
 
     return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
-                  runden=_runden_mit_abschrift(db), proben=probelauf.alle()[:10], pruefung=pruefung)
+                  runden=_runden_mit_abschrift(db, user), proben=probelauf.eigene(db, user.id)[:10], pruefung=pruefung)
 
 
 @router.post("/zusammenfassung/pruefen", dependencies=[Depends(csrf_pruefen)])
@@ -746,12 +747,15 @@ def zusammenfassung_pruefen(request: Request, user: User = Depends(verwalter), d
     return antwort
 
 
-def _runden_mit_abschrift(db: Session) -> list[dict]:
-    from app.models import Campaign, GameSession, TranscriptSegment
+def _runden_mit_abschrift(db: Session, user: User) -> list[dict]:
+    """Runden mit Abschrift aus Kampagnen, in denen das angemeldete Konto selbst Spielleitung ist."""
+    from app.models import Campaign, GameSession, Member, TranscriptSegment
 
+    eigene = select(Member.campaign_id).where(Member.user_id == user.id, Member.role == "gm", Member.left_at.is_(None))
     zeilen = db.execute(select(GameSession, Campaign.title, func.count(TranscriptSegment.id))
                         .join(Campaign, Campaign.id == GameSession.campaign_id)
                         .join(TranscriptSegment, TranscriptSegment.session_id == GameSession.id)
+                        .where(GameSession.campaign_id.in_(eigene))
                         .group_by(GameSession.id).order_by(GameSession.created_at.desc()).limit(30)).all()
     return [{"id": s.id, "kampagne": titel, "kapitel": s.number, "titel": s.title, "zeilen": n} for s, titel, n in zeilen]
 
@@ -775,7 +779,7 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
             return _zurueck("/verwaltung/zusammenfassung", "probe_datei")
         text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
     try:
-        p = probelauf.starten(db, s, text, name)
+        p = probelauf.starten(db, s, text, name, user_id=user.id)
     except ValueError as e:
         return _zurueck("/verwaltung/zusammenfassung", f"probe_{e}")
     return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)
@@ -785,7 +789,7 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
 def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
     from app import kapitelprobe as probelauf
 
-    p = probelauf.lesen(probe_id)
+    p = probelauf.fuer(db, probe_id, user.id)
     if p is None:
         raise errors.not_found()
     schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
@@ -794,11 +798,23 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
                   dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
 
 
-@router.get("/probelauf/{probe_id}/{name}")
-def probelauf_datei(probe_id: str, name: str, user: User = Depends(verwalter)):
+@router.get("/probelauf/{probe_id}/alles.zip")
+def probelauf_zip(probe_id: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    """Alle Ergebnisdateien eines Probelaufs in einer ZIP-Datei."""
     from app import kapitelprobe as probelauf
 
-    pfad = probelauf.datei(probe_id, name)
+    inhalt = probelauf.zip_bytes(probe_id) if probelauf.fuer(db, probe_id, user.id) is not None else None
+    if inhalt is None:
+        raise errors.not_found()
+    return Response(inhalt, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="probe-{probe_id[:8]}.zip"'})
+
+
+@router.get("/probelauf/{probe_id}/{name}")
+def probelauf_datei(probe_id: str, name: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
+    from app import kapitelprobe as probelauf
+
+    pfad = probelauf.datei(probe_id, name) if probelauf.fuer(db, probe_id, user.id) is not None else None
     if pfad is None:
         raise errors.not_found()
     return FileResponse(pfad, filename=f"probe-{probe_id[:8]}-{name}",
@@ -806,9 +822,11 @@ def probelauf_datei(probe_id: str, name: str, user: User = Depends(verwalter)):
 
 
 @router.post("/probelauf/{probe_id}/loeschen", dependencies=[Depends(csrf_pruefen)])
-def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter)):
+def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter), db: Session = Depends(get_db)):
     from app import kapitelprobe as probelauf
 
+    if probelauf.fuer(db, probe_id, user.id) is None:
+        raise errors.not_found()
     probelauf.loeschen(probe_id)
     return _zurueck("/verwaltung/zusammenfassung", "probe_geloescht")
 
@@ -1169,6 +1187,9 @@ def qr_bild(text: str) -> str:
 
 
 EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER = 30, 15 * 60  # falsche Codes je Adresse
+# Derselbe Zähler wie beim Beitreten und bei der Vorschau (routers/campaigns.py): Wer Codes rät, hat für alle drei
+# Wege zusammen nur ein Kontingent.
+EINLADUNG_ZAEHLER = "join-adr:{adresse}"
 
 
 @seiten.get("/einladung/{code}", response_class=HTMLResponse)
@@ -1187,10 +1208,10 @@ def einladung(code: str, request: Request, db: Session = Depends(get_db)):
     code = normalize_invite_code(code)[:32]
     adresse = request.client.host if request.client else "?"
     einladung = None
-    if not ZAEHLER.voll(f"einladung-adr:{adresse}", EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER):
+    if not ZAEHLER.voll(EINLADUNG_ZAEHLER.format(adresse=adresse), EINLADUNG_FEHLVERSUCHE, EINLADUNG_FENSTER):
         einladung = db.get(Invite, code)
         if einladung is None:
-            ZAEHLER.zaehlen(f"einladung-adr:{adresse}", EINLADUNG_FENSTER)
+            ZAEHLER.zaehlen(EINLADUNG_ZAEHLER.format(adresse=adresse), EINLADUNG_FENSTER)
     gueltig = einladung is not None and einladung.expires_at > utcnow()
     link = str(request.base_url).rstrip("/") + f"/einladung/{code}"
     a = angaben(db)

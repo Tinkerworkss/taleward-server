@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-STAND = "2026-10-07"  # Datum, an dem die Angaben zuletzt geprüft wurden – in der Verwaltung sichtbar
+STAND = "2026-10-08"  # Datum, an dem die Angaben zuletzt geprüft wurden – in der Verwaltung sichtbar
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,10 @@ ANBIETER: tuple[Anbieter, ...] = (
              "Im kostenlosen Tarif („Experiment“) darf Mistral Ein- und Ausgaben zum Training nutzen; im bezahlten Tarif "
              "lässt es sich abschalten. Abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Der "
              "Schalter für Vibe ist ein eigener und zählt hier nicht.",
-             "console.mistral.ai → Konto anlegen → Workspace → „API Keys“ → „Create new key“ → Schlüssel kopieren. Für "
-             "den bezahlten Tarif unter „Billing“ eine Zahlungsart hinterlegen.",
+             "console.mistral.ai → Konto anlegen → Workspace → „API Keys“ (nicht unter „Code“: Vibe-Schlüssel hängen am "
+             "Vibe-Budget) → „Create new key“ → Schlüssel kopieren. Dann unter „Billing“ die Abrechnung „Pay as you go“ "
+             "einschalten – Guthaben aufladen allein reicht nicht. Im kostenlosen Tarif sind die Grenzen sehr niedrig "
+             "(oft Fehler 429), und nicht jedes Modell ist freigeschaltet.",
              "Preise der Mistral-Modelle sind hinterlegt; der Schlüssel der externen Transkription gilt auch hier.",
              "https://docs.mistral.ai", anzeige="Mistral AI", land="FR"),
     Anbieter("ionos", "IONOS AI Model Hub (DE)", "https://openai.inference.de-txl.ionos.com/v1",

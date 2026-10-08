@@ -8,6 +8,10 @@ Modell braucht einen Worker und steht hier nicht zur Verfügung. Kosten landen i
 
 Ergebnisse liegen als Dateien unter <data_dir>/proben/<id>/ und bleiben bis zum Löschen; der Zustand eines laufenden
 Probelaufs steht in stand.json, damit die Seite ihn nach einem Neustart nicht verliert.
+
+Ein Probelauf gehört dem Verwalterkonto, das ihn gestartet hat, und nur für Kampagnen, in denen dieses Konto selbst
+Spielleitung ist. Für die Cloud-API gilt dieselbe Freigabe der Kampagne wie im normalen Ablauf. Ist das Konto keine
+Spielleitung der Kampagne mehr, verschwinden seine Probeläufe dort; mit der Kampagne werden sie gelöscht.
 """
 from __future__ import annotations
 
@@ -56,6 +60,8 @@ class Probe:
     pruefung: dict = field(default_factory=dict)
     warnungen: list[dict] = field(default_factory=list)
     beendet: str | None = None
+    campaign_id: str = ""
+    besitzer: str = ""  # Benutzer-ID des Verwalterkontos, das gestartet hat
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -83,6 +89,38 @@ def lesen(probe_id: str) -> Probe | None:
         return Probe(**d)
     except TypeError:
         return None
+
+
+def ist_sl(db: Session, user_id: str, campaign_id: str) -> bool:
+    from sqlalchemy import select
+
+    from app.models import Member
+
+    return db.scalar(select(Member.id).where(Member.campaign_id == campaign_id, Member.user_id == user_id,
+                                             Member.role == "gm", Member.left_at.is_(None)).limit(1)) is not None
+
+
+def fuer(db: Session, probe_id: str, user_id: str) -> Probe | None:
+    """Probelauf für dieses Konto – None (also 404), wenn er einem anderen gehört oder das Konto in der Kampagne keine
+    Spielleitung mehr ist. Im zweiten Fall wird er gleich gelöscht."""
+    p = lesen(probe_id)
+    if p is None or not p.besitzer or p.besitzer != user_id:
+        return None
+    if not p.campaign_id or not ist_sl(db, user_id, p.campaign_id):
+        loeschen(p.id)
+        return None
+    return p
+
+
+def eigene(db: Session, user_id: str) -> list[Probe]:
+    return [p for p in alle() if p.besitzer == user_id and p.campaign_id and ist_sl(db, user_id, p.campaign_id)]
+
+
+def kampagne_entfernt(campaign_id: str) -> None:
+    """Beim Löschen einer Kampagne: ihre Probeläufe mit allen Dateien entfernen."""
+    for p in alle():
+        if p.campaign_id == campaign_id:
+            loeschen(p.id)
 
 
 def alle() -> list[Probe]:
@@ -115,6 +153,22 @@ def datei(probe_id: str, name: str) -> Path | None:
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "transkript.txt", "ergebnis.json")
 
 
+def zip_bytes(probe_id: str) -> bytes | None:
+    """Alle vorhandenen Ergebnisdateien in einer ZIP-Datei (Namen wie beim Einzeldownload)."""
+    import io
+    import zipfile
+
+    if lesen(probe_id) is None:
+        return None
+    puffer = io.BytesIO()
+    with zipfile.ZipFile(puffer, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in DATEIEN:
+            pfad = datei(probe_id, name)
+            if pfad is not None:
+                z.write(pfad, arcname=f"probe-{probe_id[:8]}-{name}")
+    return puffer.getvalue()
+
+
 def abschrift_lesen(text: str) -> list[dict]:
     """Textdatei → Transkriptzeilen {start, sprecher, member_id, text}. Zeilen ohne Zeitmarke hängen an der vorigen."""
     zeilen: list[dict] = []
@@ -133,17 +187,23 @@ def abschrift_lesen(text: str) -> list[dict]:
     return zeilen
 
 
-def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname: str | None = None) -> Probe:
+def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname: str | None = None,
+            user_id: str = "") -> Probe:
     """Legt die Probe an und rechnet im Hintergrund. Wirft ValueError mit verständlicher Meldung, wenn nichts zu tun ist."""
     from app.einstellungen import llm_konfig
     from app.models import Campaign
     from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
 
+    if not user_id or not ist_sl(db, user_id, s.campaign_id):
+        raise ValueError("runde")
     k = llm_konfig(db)
     if k.art == "lokal":
         raise ValueError("lokal")
     if k.art == "aus" or (k.art == "api" and not k.api_key):
         raise ValueError("aus")
+    c = db.get(Campaign, s.campaign_id)
+    if k.art == "api" and (c is None or not c.allow_cloud_summary):
+        raise ValueError("cloud")
     basis = eingabe_bauen(db, s)
     recap_ein, vorschlag_ein = recap_eingabe(basis), vorschlag_eingabe(db, s, basis)
     quelle = "Runde"
@@ -156,10 +216,9 @@ def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname
         quelle = (dateiname or "Abschrift")[:80]
     if not recap_ein["transkript"]:
         raise ValueError("leer")
-    c = db.get(Campaign, s.campaign_id)
     p = Probe(id=new_id(), session_id=s.id, kampagne=c.title if c else "?", kapitel=s.number, quelle=quelle,
               zeilen=len(recap_ein["transkript"]), modell=(k.api_modell if k.art == "api" else "Testmodus"),
-              gestartet=utcnow().isoformat().replace("+00:00", "Z"))
+              gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id)
     _aufraeumen()
     _speichern(p)
     if abschrift is not None:
@@ -238,7 +297,7 @@ def _dateien_schreiben(p: Probe) -> None:
             (o / "vorschlaege.json").write_text(json.dumps(p.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
             (o / "pruefung.json").write_text(json.dumps(p.pruefung, ensure_ascii=False, indent=2), encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
-                                                      if k not in ("text", "vorschlaege", "pruefung")},
+                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)

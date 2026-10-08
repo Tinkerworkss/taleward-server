@@ -204,6 +204,9 @@ def _kampagne_loeschen(db: Session, c: Campaign) -> None:
     from app import umzug
 
     umzug.kampagne_entfernt(db, c.id)  # gepackte Umzugsdateien
+    from app import kapitelprobe
+
+    kapitelprobe.kampagne_entfernt(c.id)  # Probeläufe der Verwaltung
     from app.models import CampaignDocument
     from app.unterlagen import ordner as unterlagen_ordner
 
