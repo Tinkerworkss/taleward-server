@@ -1,0 +1,263 @@
+From 02d26cb4874d4d79d31ac533ee915ef54c444281 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 16:05:05 +0200
+Subject: [PATCH] Anmeldung mit Diensten: Ablauf an den Browser binden (Server
+ 0.4.59)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/anmeldedienste.py        | 32 ++++++++++++++++++++++-----
+ app/routers/anmeldung.py     | 26 +++++++++++++++++-----
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_anmeldung.py      | 43 ++++++++++++++++++++++++++++++++++++
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 9 files changed, 95 insertions(+), 18 deletions(-)
+
+diff --git a/app/anmeldedienste.py b/app/anmeldedienste.py
+index e67f64a..1e358ed 100644
+--- a/app/anmeldedienste.py
++++ b/app/anmeldedienste.py
+@@ -126,8 +126,22 @@ def challenge_von(verifier: str) -> str:
+ 
+ 
++# ---------------------------------------------------------------- Bindung an den Browser
++# Der Ablauf gilt nur in dem Browser, in dem er begonnen wurde: Beim Start bekommt der Browser ein zufälliges
++# Geheimnis als Cookie, der Zustand merkt sich dessen Hash. Kommt die Antwort des Dienstes in einem anderen Browser an,
++# gibt es kein Ticket.
++def bindung_cookie(zustand: str) -> str:
++    """Cookie-Name je Ablauf, damit zwei gleichzeitige Anmeldungen sich nicht stören."""
++    return "tw_oidc_" + hashlib.sha256(zustand.encode()).hexdigest()[:16]
++
++
++def _bindung_hash(geheimnis: str) -> str:
++    return hashlib.sha256(geheimnis.encode()).hexdigest()
++
++
+ # ---------------------------------------------------------------- 1. Start
+ def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: str | None, basis: str,
+-          rueckweg: str = "taleward://auth") -> str:
+-    """URL beim Dienst. Fehler als DienstFehler (→ Rückweg in die App)."""
++          rueckweg: str = "taleward://auth", bindung: str | None = None) -> tuple[str, str]:
++    """(URL beim Dienst, Zustand). bindung: Geheimnis für das Browser-Cookie (siehe oben). Fehler als DienstFehler
++    (→ Rückweg in die App)."""
+     if dienst not in DIENSTE or not konfig(db, dienst).eingerichtet:
+         raise DienstFehler("provider_unknown")
+@@ -142,5 +156,6 @@ def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: st
+     nonce = secrets.token_urlsafe(16)
+     zustand = einmal.erzeugen(db, "oidc_zustand", ZUSTAND_GUELTIG, user_id=user_id, dienst=dienst,
+-                              challenge=challenge, purpose=purpose, nonce=nonce, rueckweg=rueckweg)
++                              challenge=challenge, purpose=purpose, nonce=nonce, rueckweg=rueckweg,
++                              bindung=_bindung_hash(bindung) if bindung else None)
+     db.commit()
+     d, k = DIENSTE[dienst], konfig(db, dienst)
+@@ -149,5 +164,5 @@ def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: st
+     if d["art"] == "oidc":
+         werte["nonce"] = nonce
+-    return f"{d['auth']}?{urlencode(werte)}"
++    return f"{d['auth']}?{urlencode(werte)}", zustand
+ 
+ 
+@@ -228,6 +243,7 @@ def identitaet_holen(db: Session, dienst: str, code: str, basis: str, nonce: str
+ 
+ 
+-def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.Client | None = None) -> str:
+-    """Antwort des Dienstes verarbeiten → Adresse taleward://auth?… für den Browser."""
++def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.Client | None = None,
++              cookies: dict | None = None) -> str:
++    """Antwort des Dienstes verarbeiten → Adresse taleward://auth?… für den Browser. cookies: die des Browsers."""
+     from app.db import server_id
+ 
+@@ -238,4 +254,8 @@ def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.C
+     z = zustand[1]
+     weg = z.get("rueckweg") or "taleward://auth"  # Web-Fassung: https://…/app/#/auth
++    geheimnis = (cookies or {}).get(bindung_cookie(werte.get("state") or ""), "")
++    if not z.get("bindung") or not secrets.compare_digest(_bindung_hash(geheimnis), z["bindung"]):
++        # nicht in diesem Browser begonnen → kein Ticket
++        return f"{weg}?" + urlencode({"error": "oidc_failed"})
+     if werte.get("error"):
+         code = "cancelled" if werte["error"] in ("access_denied", "user_cancelled_authorize") else "oidc_failed"
+diff --git a/app/routers/anmeldung.py b/app/routers/anmeldung.py
+index 9ab493e..1a6f101 100644
+--- a/app/routers/anmeldung.py
++++ b/app/routers/anmeldung.py
+@@ -9,4 +9,5 @@ import hmac
+ import logging
+ import re
++import secrets
+ from datetime import timedelta
+ 
+@@ -280,13 +281,22 @@ def dienst_start(provider: str, request: Request, challenge: str = "", purpose:
+             return RedirectResponse("taleward://auth?error=return_to_not_allowed", status_code=302)
+         rueckweg = returnTo
++    geheimnis = secrets.token_urlsafe(32)
+     try:
+-        ziel = anmeldedienste.start(db, provider, challenge, purpose, linkToken, basis, rueckweg)
++        ziel, zustand = anmeldedienste.start(db, provider, challenge, purpose, linkToken, basis, rueckweg, geheimnis)
+     except anmeldedienste.DienstFehler as e:
+         db.rollback()
+         return RedirectResponse(webapp.mit_parametern(rueckweg, f"error={e.code}"), status_code=302)
+-    return RedirectResponse(ziel, status_code=302)
++    antwort = RedirectResponse(ziel, status_code=302)
++    # Bindung an diesen Browser. Apple antwortet per Formular (POST von fremder Seite) → über HTTPS SameSite=None,
++    # sonst (Heimnetz ohne HTTPS) Lax; nur der Rückweg-Pfad bekommt das Cookie.
++    https = basis.startswith("https://")
++    antwort.set_cookie(anmeldedienste.bindung_cookie(zustand), geheimnis,
++                       max_age=int(anmeldedienste.ZUSTAND_GUELTIG.total_seconds()), path="/auth/oidc/",
++                       httponly=True, secure=https, samesite="none" if https else "lax")
++    antwort.headers["Cache-Control"] = "no-store"
++    return antwort
+ 
+ 
+-def _zur_app(ziel: str, status: int = 303) -> RedirectResponse:
++def _zur_app(ziel: str, status: int = 303, state: str = "") -> RedirectResponse:
+     """Weiterleitung in die App; der Text dient nur Browsern, die Weiterleitungen auf taleward:// nicht ausführen."""
+     from html import escape
+@@ -299,4 +309,6 @@ def _zur_app(ziel: str, status: int = 303) -> RedirectResponse:
+     antwort.headers["Cache-Control"] = "no-store"
+     antwort.headers["Referrer-Policy"] = "no-referrer"
++    if state:  # Bindung verbraucht – Cookie entfernen
++        antwort.delete_cookie(anmeldedienste.bindung_cookie(state), path="/auth/oidc/")
+     return antwort
+ 
+@@ -304,6 +316,7 @@ def _zur_app(ziel: str, status: int = 303) -> RedirectResponse:
+ @seiten.get("/auth/oidc/{provider}/callback")
+ def dienst_rueckkehr(provider: str, request: Request, db: Session = Depends(get_db)):
+-    return _zur_app(anmeldedienste.rueckkehr(db, provider, dict(request.query_params),
+-                                             oeffentliche_adresse(db, request)))
++    werte = dict(request.query_params)
++    return _zur_app(anmeldedienste.rueckkehr(db, provider, werte, oeffentliche_adresse(db, request),
++                                             cookies=request.cookies), state=werte.get("state") or "")
+ 
+ 
+@@ -314,5 +327,6 @@ def dienst_rueckkehr_formular(provider: str, request: Request, code: str = Form(
+     werte = {"code": code, "state": state, "error": error, "user": user}
+     return _zur_app(anmeldedienste.rueckkehr(db, provider, {k: v for k, v in werte.items() if v},
+-                                             oeffentliche_adresse(db, request)))
++                                             oeffentliche_adresse(db, request), cookies=request.cookies),
++                    state=state)
+ 
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 6a0cc32..9fac57f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.58"
++version = "0.4.59"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 1431656..9ea9442 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.58"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.59"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_anmeldung.py b/tests/test_anmeldung.py
+index 55f5cb0..466d09a 100644
+--- a/tests/test_anmeldung.py
++++ b/tests/test_anmeldung.py
+@@ -428,2 +428,45 @@ from tests.test_step2b import _kleine_teile  # noqa: E402,F401 (Fixture)
+ from tests.test_step5 import api  # noqa: E402,F401 (Fixture)
+ from tests.test_verwaltung import admin, csrf_von  # noqa: E402,F401 (Fixture)
++
++
++def test_ablauf_nur_im_selben_browser(client, world, dienst):
++    """Ein Ablauf, der nicht in diesem Browser begonnen wurde, endet ohne Ticket."""
++    from app import anmeldedienste
++
++    dienst.claims = {"sub": "g-bindung", "email_verified": True}
++    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
++    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
++    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
++    name = anmeldedienste.bindung_cookie(state)
++    gesetzt = r.headers["set-cookie"]
++    assert gesetzt.startswith(name + "=") and "HttpOnly" in gesetzt and "Path=/auth/oidc/" in gesetzt
++    assert "samesite=lax" in gesetzt.lower() and "secure" not in gesetzt.lower()  # Heimnetz ohne HTTPS
++    # anderer Browser: kein Cookie → kein Ticket, Zustand verbraucht
++    client.cookies.clear()
++    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": state}, follow_redirects=False)
++    assert r.headers["location"] == "taleward://auth?error=oidc_failed"
++    assert dienst.token_anfragen == []  # der Code wurde gar nicht erst eingelöst
++    # falsches Geheimnis
++    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
++    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
++    client.cookies.clear()
++    client.cookies.set(anmeldedienste.bindung_cookie(state), "geraten", path="/auth/oidc/")
++    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": state}, follow_redirects=False)
++    assert r.headers["location"] == "taleward://auth?error=oidc_failed"
++    # derselbe Browser: Ticket, Cookie wird entfernt
++    client.cookies.clear()
++    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
++    q = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
++    dienst.nonce = q["nonce"]
++    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": q["state"]}, follow_redirects=False)
++    assert "ticket=" in r.headers["location"]
++    assert anmeldedienste.bindung_cookie(q["state"]) + '=""' in r.headers["set-cookie"]
++
++
++def test_bindung_ueber_https(client, world, dienst):
++    """Über HTTPS: Secure und SameSite=None, damit Apple (Antwort als Formular von fremder Seite) es mitschickt."""
++    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
++    r = client.get(f"https://testserver{API}/auth/oidc/google/start", params=params, follow_redirects=False)
++    gesetzt = r.headers["set-cookie"].lower()
++    assert "secure" in gesetzt and "samesite=none" in gesetzt and "httponly" in gesetzt
++    assert r.headers["cache-control"] == "no-store"
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index c93efb9..7ab6590 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.58"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.59"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 4a7edf0..65df4ec 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.58"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.59"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index fceffc8..b9d61d9 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.58"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.59"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 30ec08c..a904940 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.58"
++version = "0.4.59"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
