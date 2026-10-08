@@ -1,0 +1,1284 @@
+From c07cbd25a0697003ae2bc7b9e655ccb9ed8fd730 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 08:52:04 +0200
+Subject: [PATCH] Kapitelplaene und Unterlagen nachlesen, Schnittstelle 0.4.12
+ (Server 0.4.56)
+
+- GET/POST /campaigns/{id}/plans, GET/PATCH/DELETE /plans/{id}: nur fuer die SL,
+  Szenen mit verknuepften Eintraegen, Namen, Unterlagen; ifUpdatedAt -> 409 conflict
+- Plan-Namen als Schreibhilfe der Transkription des Kapitels mit derselben Nummer;
+  sonst fliesst der Plan nirgends in die KI
+- Veroeffentlichen setzt den Plan derselben Nummer auf played
+- GET /documents/{id}/text (Text je Seite) und /documents/{id}/file (Original)
+- Plaene gehen beim Umzug mit; apiVersion 0.4.12, YAML aus dem App-Repo
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/errors.py                                 |  10 +
+ app/extern.py                                 |   2 +-
+ app/main.py                                   |   4 +-
+ app/models.py                                 |  20 ++
+ app/namenshilfe.py                            |  12 +-
+ app/routers/auth.py                           |   2 +-
+ app/routers/plaene.py                         | 185 ++++++++++++++++
+ app/routers/pruefung.py                       |   3 +
+ app/routers/unterlagen.py                     |  40 ++++
+ app/routers/worker.py                         |   2 +-
+ app/schemas.py                                |  54 +++++
+ app/umzug.py                                  |  70 +++++-
+ app/unterlagen.py                             |   6 +
+ contract/session-chronik-api.yaml             | 206 +++++++++++++++++-
+ docs/ARCHITEKTUR.md                           |   6 +
+ .../d4e7a1c9b3f6_kapitelplan_0_4_12.py        |  43 ++++
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_kapitelplan_0412.py                | 206 ++++++++++++++++++
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_schnittstelle_0410.py              |   2 +-
+ tests/test_step1b.py                          |   2 +-
+ tests/test_umzug_048.py                       |   2 +-
+ tests/test_verwaltung2.py                     |   2 +-
+ tests/test_webapp.py                          |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 28 files changed, 867 insertions(+), 26 deletions(-)
+ create mode 100644 app/routers/plaene.py
+ create mode 100644 migrations/versions/d4e7a1c9b3f6_kapitelplan_0_4_12.py
+ create mode 100644 tests/test_kapitelplan_0412.py
+
+diff --git a/app/errors.py b/app/errors.py
+index 926d12d..471cdca 100644
+--- a/app/errors.py
++++ b/app/errors.py
+@@ -67,4 +67,14 @@ MESSAGES: dict[str, tuple[str, str]] = {
+                                       "Proposals can only be reviewed and applied while the document is awaiting review."),
+     "not_found.document": ("Die Unterlage wurde nicht gefunden.", "Document not found."),
++    # Kapitelplan (0.4.12)
++    "not_found.plan": ("Der Kapitelplan wurde nicht gefunden.", "Chapter plan not found."),
++    "invalid_input": ("Die Eingabe passt nicht zu dieser Kampagne.", "The input doesn't match this campaign."),
++    "invalid_input.plan_link": ("Ein verknüpfter Eintrag oder eine Unterlage gehört nicht (mehr) zu dieser Kampagne. "
++                                "Bitte neu laden.",
++                                "A linked entry or document doesn't belong to this campaign (any more). Please reload."),
++    "invalid_input.plan_scene": ("Zwei Szenen haben dieselbe Kennung.", "Two scenes have the same ID."),
++    "conflict": ("Das wurde inzwischen geändert.", "This was changed in the meantime."),
++    "conflict.plan": ("Der Kapitelplan wurde inzwischen auf einem anderen Gerät geändert. Bitte neu laden.",
++                      "The chapter plan was changed on another device in the meantime. Please reload."),
+     "doc.no_text": ("Die Unterlage enthält keinen auslesbaren Text (eingescannt?). Eine Texterkennung gibt es noch nicht.",
+                     "The document contains no readable text (scanned?). Text recognition is not available yet."),
+diff --git a/app/extern.py b/app/extern.py
+index 74d5a5a..b81e78d 100644
+--- a/app/extern.py
++++ b/app/extern.py
+@@ -158,5 +158,5 @@ def verarbeiten(db: Session, job: Job, klient: MistralKlient | None = None) -> N
+     sitzung = db.get(GameSession, job.session_id)
+     up = db.get(Upload, job.upload_id)
+-    hotwords = fuer_kampagne(db, db.get(Campaign, sitzung.campaign_id))
++    hotwords = fuer_kampagne(db, db.get(Campaign, sitzung.campaign_id), sitzung.number)
+     arbeit = Path(tempfile.mkdtemp(prefix="extern-", dir=str(storage.uploads_root().parent)))
+     t0 = time.monotonic()
+diff --git a/app/main.py b/app/main.py
+index 0a19e98..81d7c49 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -188,5 +188,7 @@ def create_app() -> FastAPI:
+     from app.routers import umzug as umzug_router
+ 
+-    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, umzug_router.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router):
++    from app.routers import plaene
++
++    for r in (auth.router, anmeldung.router, voice_profile.router, charaktere.router, umzug_router.router, campaigns.router, sessions.router, pruefung.router, uploads.router, entries.router, miteinander.router, unterlagen.router, plaene.router):
+         api.include_router(r)
+     app.include_router(api)
+diff --git a/app/models.py b/app/models.py
+index 5bb233c..a72ffd0 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -573,4 +573,24 @@ class CampaignDocument(Base):
+ 
+ 
++class ChapterPlan(Base):
++    """Kapitelplan der SL (Schnittstelle 0.4.12): Szenen mit Notiz und verknüpften Einträgen, Namen als Schreibhilfe,
++    verknüpfte Unterlagen. Nur die SL sieht ihn; er fließt nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf –
++    einzige Ausnahme sind `names` als Schreibhilfe der Transkription des Kapitels mit derselben Nummer.
++    Szenen, Namen und Unterlagen liegen als JSON im Plan (immer als ganze Liste ersetzt)."""
++
++    __tablename__ = "chapter_plans"
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
++    title: Mapped[str] = mapped_column(String(120))
++    session_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    state: Mapped[str] = mapped_column(String(16), default="draft")  # draft | ready | played
++    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
++    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state}]
++    names: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
++    document_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
++    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
++
++
+ # ---------------------------------------------------------------- Miteinander (Kommentare, Termine)
+ class Comment(Base):
+diff --git a/app/namenshilfe.py b/app/namenshilfe.py
+index bc505c4..80c6905 100644
+--- a/app/namenshilfe.py
++++ b/app/namenshilfe.py
+@@ -118,8 +118,12 @@ def ignoriert(campaign: Campaign) -> set[str]:
+ 
+ 
+-def fuer_kampagne(db: Session, campaign: Campaign) -> list[str]:
+-    """Was der Worker als hotwords bekommt: Namenshilfe der Kampagne, dann die Begriffsliste des Systems – begrenzt,
+-    weil Whisper nur einen kurzen Vorspann nutzt."""
+-    namen = _eindeutig(anzeige(db, campaign) + list(systembegriffe(campaign.system)))
++def fuer_kampagne(db: Session, campaign: Campaign, kapitel: int | None = None) -> list[str]:
++    """Was der Worker als hotwords bekommt: Namen aus dem Kapitelplan für dieses Kapitel (0.4.12, nur die Wörter),
++    dann die Namenshilfe der Kampagne, dann die Begriffsliste des Systems – begrenzt, weil Whisper nur einen kurzen
++    Vorspann nutzt. Die Plan-Namen stehen vorn, weil die SL sie ausdrücklich für diese Runde eingetragen hat."""
++    from app.routers.plaene import namen_fuer
++
++    namen = _eindeutig(namen_fuer(db, campaign.id, kapitel) + anzeige(db, campaign)
++                       + list(systembegriffe(campaign.system)))
+     ergebnis, laenge = [], 0
+     for n in namen[:MAX_BEGRIFFE]:
+diff --git a/app/routers/auth.py b/app/routers/auth.py
+index 8a944a0..c8112dc 100644
+--- a/app/routers/auth.py
++++ b/app/routers/auth.py
+@@ -14,5 +14,5 @@ from app.security import create_token, verify_password
+ from app.services import user_out
+ 
+-API_VERSION = "0.4.11"
++API_VERSION = "0.4.12"
+ 
+ router = APIRouter(tags=["Auth"])
+diff --git a/app/routers/plaene.py b/app/routers/plaene.py
+new file mode 100644
+index 0000000..a5fb154
+--- /dev/null
++++ b/app/routers/plaene.py
+@@ -0,0 +1,185 @@
++"""Kapitelpläne der SL (Schnittstelle 0.4.12).
++
++Nur die SL der Kampagne sieht und ändert Pläne. Für alle anderen gibt es keinen Weg dorthin – auch nicht die Anzahl –,
++darum 404 statt 403. Pläne fließen nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf; nur die Namen gehen als
++Schreibhilfe in die Transkription des Kapitels mit derselben Nummer (app/namenshilfe.py).
++
++Verknüpfte Einträge und Unterlagen müssen zur Kampagne gehören (sonst 400 invalid_input). Werden sie später gelöscht,
++fallen sie beim Lesen aus dem Plan heraus – der Plan selbst wird dafür nicht angefasst.
++"""
++import json
++from datetime import timedelta
++
++from fastapi import APIRouter, Depends, Response
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app import errors, schemas
++from app.access import current_user, membership
++from app.db import get_db, utcnow
++from app.models import CampaignDocument, ChapterPlan, Entry, User
++
++router = APIRouter(tags=["Kapitelplan"])
++
++
++def _sl(db: Session, campaign_id: str, user: User) -> None:
++    me = membership(db, campaign_id, user)
++    if me is None or me.role != "gm":
++        raise errors.not_found("plan")
++
++
++def _plan(db: Session, plan_id: str, user: User) -> ChapterPlan:
++    p = db.get(ChapterPlan, plan_id)
++    if p is None:
++        raise errors.not_found("plan")
++    _sl(db, p.campaign_id, user)
++    return p
++
++
++def _vorhandene(db: Session, campaign_id: str) -> tuple[set[str], set[str]]:
++    eintraege = set(db.scalars(select(Entry.id).where(Entry.campaign_id == campaign_id)))
++    unterlagen = set(db.scalars(select(CampaignDocument.id).where(CampaignDocument.campaign_id == campaign_id)))
++    return eintraege, unterlagen
++
++
++def plan_out(db: Session, p: ChapterPlan, vorhanden: tuple[set[str], set[str]] | None = None) -> schemas.ChapterPlanOut:
++    eintraege, unterlagen = vorhanden or _vorhandene(db, p.campaign_id)
++    szenen = []
++    for sz in json.loads(p.scenes or "[]"):
++        sz["entryIds"] = [i for i in sz.get("entryIds") or [] if i in eintraege]
++        szenen.append(schemas.PlanScene.model_validate(sz))
++    return schemas.ChapterPlanOut(
++        id=p.id, campaign_id=p.campaign_id, title=p.title, session_number=p.session_number, state=p.state,
++        notes=p.notes, scenes=szenen, names=json.loads(p.names or "[]"),
++        document_ids=[i for i in json.loads(p.document_ids or "[]") if i in unterlagen],
++        created_at=p.created_at, updated_at=p.updated_at)
++
++
++def _eindeutig(werte: list[str]) -> list[str]:
++    gesehen, aus = set(), []
++    for w in werte:
++        if w not in gesehen:
++            gesehen.add(w)
++            aus.append(w)
++    return aus
++
++
++def _setzen(db: Session, p: ChapterPlan, felder: dict) -> None:
++    """Felder übernehmen und Verweise prüfen. felder: nur, was gesetzt werden soll (camelCase-frei, Modellwerte)."""
++    eintraege, unterlagen = _vorhandene(db, p.campaign_id)
++    if "title" in felder:
++        titel = felder["title"].strip()
++        if not titel:
++            raise errors.bad_request("validation_error", "validation_error.empty", field="title")
++        p.title = titel
++    if "session_number" in felder:
++        p.session_number = felder["session_number"]
++    if "state" in felder:
++        p.state = felder["state"]
++    if "notes" in felder:
++        p.notes = (felder["notes"] or "").strip() or None
++    if "scenes" in felder:
++        szenen = felder["scenes"]
++        ids = [s.id.lower() for s in szenen]
++        if len(ids) != len(set(ids)):
++            raise errors.bad_request("invalid_input", "invalid_input.plan_scene")
++        aus = []
++        for s in szenen:
++            if any(i not in eintraege for i in s.entry_ids):
++                raise errors.bad_request("invalid_input", "invalid_input.plan_link")
++            titel = s.title.strip()
++            if not titel:
++                raise errors.bad_request("validation_error", "validation_error.empty", field="title")
++            aus.append({"id": s.id.lower(), "title": titel, "notes": (s.notes or "").strip() or None,
++                        "entryIds": _eindeutig(s.entry_ids), "state": s.state})
++        p.scenes = json.dumps(aus, ensure_ascii=False)
++    if "names" in felder:
++        namen = _eindeutig([n.strip() for n in felder["names"] if n.strip()])
++        p.names = json.dumps(namen, ensure_ascii=False)
++    if "document_ids" in felder:
++        if any(i not in unterlagen for i in felder["document_ids"]):
++            raise errors.bad_request("invalid_input", "invalid_input.plan_link")
++        p.document_ids = json.dumps(_eindeutig(felder["document_ids"]))
++    p.updated_at = utcnow()
++
++
++def _reihenfolge(p: ChapterPlan) -> tuple:
++    return (p.session_number is None, p.session_number or 0, p.created_at)
++
++
++@router.get("/campaigns/{campaignId}/plans", response_model=list[schemas.ChapterPlanOut])
++def plans_list(campaignId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    _sl(db, campaignId, user)
++    vorhanden = _vorhandene(db, campaignId)
++    plaene = sorted(db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == campaignId)), key=_reihenfolge)
++    return [plan_out(db, p, vorhanden) for p in plaene]
++
++
++@router.post("/campaigns/{campaignId}/plans", status_code=201, response_model=schemas.ChapterPlanOut)
++def plan_create(campaignId: str, body: schemas.ChapterPlanIn, user: User = Depends(current_user),
++                db: Session = Depends(get_db)):
++    _sl(db, campaignId, user)
++    jetzt = utcnow()
++    p = ChapterPlan(campaign_id=campaignId, created_at=jetzt, updated_at=jetzt)
++    _setzen(db, p, {f: getattr(body, f) for f in ("title", "session_number", "state", "notes", "scenes", "names",
++                                                    "document_ids")})
++    db.add(p)
++    db.commit()
++    db.refresh(p)
++    return plan_out(db, p)
++
++
++@router.get("/plans/{planId}", response_model=schemas.ChapterPlanOut)
++def plan_get(planId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    return plan_out(db, _plan(db, planId, user))
++
++
++@router.patch("/plans/{planId}", response_model=schemas.ChapterPlanOut)
++def plan_patch(planId: str, body: schemas.ChapterPlanPatchIn, user: User = Depends(current_user),
++               db: Session = Depends(get_db)):
++    p = _plan(db, planId, user)
++    gesetzt = body.model_fields_set
++    if "if_updated_at" in gesetzt and body.if_updated_at is not None:
++        erwartet = schemas._as_utc(body.if_updated_at)
++        if abs(schemas._as_utc(p.updated_at) - erwartet) > timedelta(milliseconds=1):
++            raise errors.conflict("conflict", "conflict.plan")
++    felder = {}
++    for f in ("title", "session_number", "state", "notes", "scenes", "names", "document_ids"):
++        if f not in gesetzt:
++            continue
++        wert = getattr(body, f)
++        if wert is None and f in ("title", "state", "scenes", "names", "document_ids"):
++            raise errors.bad_request("validation_error", "validation_error.value", field=f)
++        felder[f] = wert
++    _setzen(db, p, felder)
++    db.commit()
++    db.refresh(p)
++    return plan_out(db, p)
++
++
++@router.delete("/plans/{planId}", status_code=204)
++def plan_delete(planId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    db.delete(_plan(db, planId, user))
++    db.commit()
++    return Response(status_code=204)
++
++
++def gespielt_markieren(db: Session, campaign_id: str, nummer: int) -> None:
++    """Session mit dieser Nummer veröffentlicht: Pläne für dieses Kapitel gelten als gespielt (die SL kann es
++    zurücksetzen)."""
++    for p in db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == campaign_id,
++                                                  ChapterPlan.session_number == nummer)):
++        if p.state != "played":
++            p.state, p.updated_at = "played", utcnow()
++
++
++def namen_fuer(db: Session, campaign_id: str, nummer: int | None) -> list[str]:
++    """Namen aus den Plänen für das Kapitel mit dieser Nummer – nur die Wörter, für die Schreibhilfe."""
++    if nummer is None:
++        return []
++    aus: list[str] = []
++    for p in db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == campaign_id,
++                                                  ChapterPlan.session_number == nummer)
++                        .order_by(ChapterPlan.created_at)):
++        aus += [n for n in json.loads(p.names or "[]") if isinstance(n, str)]
++    return _eindeutig(aus)
+diff --git a/app/routers/pruefung.py b/app/routers/pruefung.py
+index a36430c..621f077 100644
+--- a/app/routers/pruefung.py
++++ b/app/routers/pruefung.py
+@@ -412,4 +412,7 @@ def publish(sessionId: str, user: User = Depends(current_user), db: Session = De
+     s.published_at = utcnow()
+     set_state(s, "published")
++    from app.routers.plaene import gespielt_markieren
++
++    gespielt_markieren(db, s.campaign_id, s.number)  # 0.4.12: Kapitelplan dieser Nummer gilt als gespielt
+     from app.aufbewahrung import audio_loeschen
+ 
+diff --git a/app/routers/unterlagen.py b/app/routers/unterlagen.py
+index ee0c287..2d27bcc 100644
+--- a/app/routers/unterlagen.py
++++ b/app/routers/unterlagen.py
+@@ -100,4 +100,44 @@ def document_delete(documentId: str, user: User = Depends(current_user), db: Ses
+ 
+ 
++# 0.4.12: Nachlesen während der Runde (SL-Schirm). Rechte wie GET /documents/{id}: SL, beim Charakterbogen auch die
++# Urheberin. Die Datei kommt als Anzeige im Browser, aber abgeschottet: Kein Skript in einer Unterlage läuft im
++# Ursprung des Servers (CSP sandbox), der Typ wird nicht erraten (nosniff), nichts wird zwischengespeichert.
++MEDIENTYP = {".pdf": "application/pdf", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
++             ".markdown": "text/plain; charset=utf-8",
++             ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
++
++
++@router.get("/documents/{documentId}/file")
++def document_file(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    from urllib.parse import quote
++
++    doc = _dokument(db, documentId, user, eigener_bogen=True)
++    pfad = unterlagen.datei_pfad(doc.id)
++    if pfad is None:
++        raise errors.not_found("document")
++    name = doc.file_name or pfad.name
++    einfach = "".join(z if 32 <= ord(z) < 127 and z not in '"\\' else "_" for z in name) or "unterlage"
++    return Response(pfad.read_bytes(), media_type=MEDIENTYP.get(pfad.suffix.lower(), "application/octet-stream"),
++                    headers={"Content-Disposition": f'inline; filename="{einfach}"; filename*=UTF-8\'\'{quote(name)}',
++                             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
++                             "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
++                                                        "img-src data:; object-src 'none'"})
++
++
++@router.get("/documents/{documentId}/text", response_model=schemas.DocumentTextOut)
++def document_text(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
++    doc = _dokument(db, documentId, user, eigener_bogen=True)
++    seiten = []
++    for i, a in enumerate(unterlagen.text_laden(doc.id)):
++        if not isinstance(a, dict) or not str(a.get("text") or "").strip():
++            continue
++        try:
++            nummer = int(a.get("seite") or 0)
++        except (TypeError, ValueError):
++            nummer = 0
++        seiten.append(schemas.DocumentPageOut(page=nummer if nummer >= 1 else i + 1, text=str(a["text"])))
++    return schemas.DocumentTextOut(pages=seiten)
++
++
+ @router.get("/documents/{documentId}/proposals", response_model=list[schemas.ProposalOut],
+             response_model_exclude_unset=True)
+diff --git a/app/routers/worker.py b/app/routers/worker.py
+index c9664cc..5fd64af 100644
+--- a/app/routers/worker.py
++++ b/app/routers/worker.py
+@@ -187,5 +187,5 @@ def _auftrag(db: Session, job: Job) -> dict:
+             "language": c.language, "system": c.system, "systemName": c.system_name, "source": up.source,
+             "expectedSpeakers": len(anwesend) if up.source == "table" else len(up.files),
+-            "hotwords": fuer_kampagne(db, c),
++            "hotwords": fuer_kampagne(db, c, s.number),
+             # 0.4.6: erneute Transkription – nur der Text, Stimmen sind schon zugeordnet
+             "nurText": bool(s.nachtranskription),
+diff --git a/app/schemas.py b/app/schemas.py
+index 376d5be..0936adc 100644
+--- a/app/schemas.py
++++ b/app/schemas.py
+@@ -686,4 +686,58 @@ class DocumentApplyIn(ApiModel):
+ 
+ 
++# ---------------------------------------------------------------- Kapitelplan (0.4.12)
++class DocumentPageOut(ApiModel):
++    page: int
++    text: str
++
++
++class DocumentTextOut(ApiModel):
++    pages: list[DocumentPageOut]
++
++
++class PlanScene(ApiModel):
++    id: str = Field(pattern=UUID_MUSTER)
++    title: str = Field(min_length=1, max_length=120)
++    notes: str | None = Field(default=None, max_length=4000)
++    entry_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=30)
++    state: Literal["open", "played", "skipped"] = "open"
++
++
++class ChapterPlanIn(ApiModel):
++    """POST: title ist Pflicht. PATCH (ChapterPlanPatchIn): nur mitgeschickte Felder ändern sich."""
++    title: str = Field(min_length=1, max_length=120)
++    session_number: int | None = Field(default=None, ge=1)
++    state: Literal["draft", "ready", "played"] = "draft"
++    notes: str | None = Field(default=None, max_length=20000)
++    scenes: list[PlanScene] = Field(default=[], max_length=50)
++    names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
++    document_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=20)
++
++
++class ChapterPlanPatchIn(ApiModel):
++    title: str | None = Field(default=None, min_length=1, max_length=120)
++    session_number: int | None = Field(default=None, ge=1)
++    state: Literal["draft", "ready", "played"] | None = None
++    notes: str | None = Field(default=None, max_length=20000)
++    scenes: list[PlanScene] | None = Field(default=None, max_length=50)
++    names: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=100)
++    document_ids: list[Annotated[str, Field(max_length=36)]] | None = Field(default=None, max_length=20)
++    if_updated_at: datetime | None = None
++
++
++class ChapterPlanOut(ApiModel):
++    id: str
++    campaign_id: str
++    title: str
++    session_number: int | None
++    state: Literal["draft", "ready", "played"]
++    notes: str | None
++    scenes: list[PlanScene]
++    names: list[str]
++    document_ids: list[str]
++    created_at: datetime
++    updated_at: datetime
++
++
+ # ---------- Qualitätsprüfung (0.4.6) ----------
+ class CorrectionIn(ApiModel):
+diff --git a/app/umzug.py b/app/umzug.py
+index c9d55d2..61ba5e1 100644
+--- a/app/umzug.py
++++ b/app/umzug.py
+@@ -31,5 +31,5 @@ import zipfile
+ from datetime import datetime, timedelta
+ from pathlib import Path, PurePosixPath
+-from typing import Literal
++from typing import Annotated, Literal
+ 
+ from pydantic import Field, ValidationError
+@@ -41,5 +41,5 @@ from app.config import get_settings
+ from app.db import utcnow
+ from app.models import (
+-    Attendee, Campaign, CampaignDocument, CampaignExport, CampaignImport, Comment, DateOption, DateVote,
++    Attendee, Campaign, CampaignDocument, ChapterPlan, CampaignExport, CampaignImport, Comment, DateOption, DateVote,
+     Entry, EntryHidden, EntryMention, GameSession, GmNote, GmNotice, Invite, Member, Proposal, Recap, SessionSeen,
+     Speaker, User,
+@@ -290,7 +290,8 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+         })
+ 
+-    eintraege = []
++    eintraege, eintrag_schluessel = [], {}
+     for i, e in enumerate(db.scalars(select(Entry).where(Entry.campaign_id == c.id).order_by(Entry.created_at,
+                                                                                                Entry.id))):
++        eintrag_schluessel[e.id] = f"e{i + 1}"
+         halter = platz.get(e.holder_member_id or "")
+         summary = e.summary or ""
+@@ -311,5 +312,5 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+         })
+ 
+-    unterlagen = []
++    unterlagen, unterlage_schluessel = [], {}
+     for doc in db.scalars(select(CampaignDocument).where(CampaignDocument.campaign_id == c.id)
+                           .order_by(CampaignDocument.created_at)):
+@@ -320,4 +321,5 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+             continue
+         schluessel = f"d{len(unterlagen) + 1}"
++        unterlage_schluessel[doc.id] = schluessel
+         name = f"unterlagen/{schluessel}/datei{pfad.suffix.lower()}"
+         dateien.append((name, pfad))
+@@ -326,4 +328,17 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+                            "createdAt": _z(doc.created_at)})
+ 
++    # Kapitelpläne der SL (0.4.12) – Verweise als Schlüssel; was nicht mitgeht, fällt heraus
++    plaene = []
++    for i, pl in enumerate(db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == c.id)
++                                      .order_by(ChapterPlan.created_at, ChapterPlan.id))):
++        szenen = [{"id": sz.get("id"), "title": sz.get("title"), "notes": sz.get("notes"), "state": sz.get("state"),
++                   "entryKeys": [eintrag_schluessel[x] for x in sz.get("entryIds") or [] if x in eintrag_schluessel]}
++                  for sz in json.loads(pl.scenes or "[]")]
++        plaene.append({"key": f"k{i + 1}", "title": pl.title, "sessionNumber": pl.session_number, "state": pl.state,
++                       "notes": pl.notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
++                       "documentKeys": [unterlage_schluessel[x] for x in json.loads(pl.document_ids or "[]")
++                                        if x in unterlage_schluessel],
++                       "createdAt": _z(pl.created_at), "updatedAt": _z(pl.updated_at)})
++
+     titelbild = None
+     if c.cover_image_updated_at:
+@@ -341,5 +356,5 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
+                      "hotwords": namenshilfe._gespeichert(c), "nextSessionAt": _z(c.next_session_at),
+                      "createdAt": _z(c.created_at)},
+-        "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen,
++        "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen, "plans": plaene,
+     }
+     return daten, dateien
+@@ -551,4 +566,25 @@ class _Unterlage(schemas.ApiModel):
+ 
+ 
++class _Szene(schemas.ApiModel):
++    id: str = Field(pattern=schemas.UUID_MUSTER)
++    title: str = Field(min_length=1, max_length=120)
++    notes: str | None = Field(default=None, max_length=4000)
++    state: Literal["open", "played", "skipped"] = "open"
++    entry_keys: list[str] = Field(default=[], max_length=30)
++
++
++class _Plan(schemas.ApiModel):
++    key: str = Field(min_length=1, max_length=40)
++    title: str = Field(min_length=1, max_length=120)
++    session_number: int | None = Field(default=None, ge=1)
++    state: Literal["draft", "ready", "played"] = "draft"
++    notes: str | None = Field(default=None, max_length=20000)
++    scenes: list[_Szene] = Field(default=[], max_length=50)
++    names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
++    document_keys: list[str] = Field(default=[], max_length=20)
++    created_at: datetime | None = None
++    updated_at: datetime | None = None
++
++
+ class _Kampagne(schemas.ApiModel):
+     title: str = Field(min_length=1, max_length=200)
+@@ -572,4 +608,5 @@ class _Datei(schemas.ApiModel):
+     entries: list[_Eintrag] = Field(default=[], max_length=100000)
+     documents: list[_Unterlage] = Field(default=[], max_length=10000)
++    plans: list[_Plan] = Field(default=[], max_length=1000)  # 0.4.12; ältere Dateien haben keine
+ 
+ 
+@@ -639,5 +676,5 @@ def zip_pruefen(pfad: Path) -> tuple[zipfile.ZipFile, _Datei]:
+ def _verweise_pruefen(d: _Datei) -> None:
+     """Schlüssel eindeutig, Verweise zeigen auf Vorhandenes, Kapitelnummern eindeutig."""
+-    for liste in (d.seats, d.sessions, d.entries, d.documents):
++    for liste in (d.seats, d.sessions, d.entries, d.documents, d.plans):
+         schluessel = [x.key for x in liste]
+         if len(schluessel) != len(set(schluessel)):
+@@ -827,4 +864,5 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+ 
+     # Bibel
++    eintrag_neu: dict[str, str] = {}
+     for e in d.entries:
+         halter = platz[e.holder_seat].id if e.holder_seat else None
+@@ -843,4 +881,5 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+         db.add(x)
+         db.flush()
++        eintrag_neu[e.key] = x.id
+         for schluessel in sorted(set(e.hidden_from_seats)):
+             db.add(EntryHidden(entry_id=x.id, member_id=platz[schluessel].id))
+@@ -852,4 +891,5 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+     from app import unterlagen
+ 
++    unterlage_neu: dict[str, str] = {}
+     for u in d.documents:
+         daten = _lesen(z, u.file)
+@@ -869,4 +909,5 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+         db.add(doc)
+         db.flush()
++        unterlage_neu[u.key] = doc.id
+         ordner = unterlagen.ordner(doc.id)
+         angelegt.append(ordner)
+@@ -874,4 +915,21 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
+         if x is not None:
+             storage.write_atomic(ordner / "text.json", json.dumps(x.abschnitte, ensure_ascii=False).encode())
++
++    # Kapitelpläne (0.4.12): Verweise übersetzen; was nicht angelegt wurde, fällt heraus
++    for pl in d.plans:
++        szenen, gesehen = [], set()
++        for sz in pl.scenes:
++            if sz.id.lower() in gesehen:
++                continue
++            gesehen.add(sz.id.lower())
++            szenen.append({"id": sz.id.lower(), "title": sz.title.strip() or "?", "notes": sz.notes, "state": sz.state,
++                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu))})
++        db.add(ChapterPlan(campaign_id=c.id, title=pl.title.strip() or "?", session_number=pl.session_number,
++                           state=pl.state, notes=pl.notes, scenes=json.dumps(szenen, ensure_ascii=False),
++                           names=json.dumps(list(dict.fromkeys(n.strip() for n in pl.names if n.strip())),
++                                            ensure_ascii=False),
++                           document_ids=json.dumps(list(dict.fromkeys(unterlage_neu[k] for k in pl.document_keys
++                                                                      if k in unterlage_neu))),
++                           created_at=pl.created_at or jetzt, updated_at=pl.updated_at or jetzt))
+     return c, offen
+ 
+diff --git a/app/unterlagen.py b/app/unterlagen.py
+index fea4dce..bd215f9 100644
+--- a/app/unterlagen.py
++++ b/app/unterlagen.py
+@@ -170,4 +170,10 @@ def auslesen(art: str, daten: bytes) -> Extrakt:
+ 
+ 
++def datei_pfad(doc_id: str) -> Path | None:
++    """Gespeicherte Originaldatei (datei.<endung>) oder None."""
++    treffer = sorted(ordner(doc_id).glob("datei*"))
++    return treffer[0] if treffer else None
++
++
+ def text_laden(doc_id: str) -> list[dict]:
+     try:
+diff --git a/contract/session-chronik-api.yaml b/contract/session-chronik-api.yaml
+index 5665367..bd4df9d 100644
+--- a/contract/session-chronik-api.yaml
++++ b/contract/session-chronik-api.yaml
+@@ -2,5 +2,5 @@ openapi: 3.1.0
+ info:
+   title: Taleward API
+-  version: 0.4.11
++  version: 0.4.12
+   description: |
+     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
+@@ -162,4 +162,9 @@ info:
+     einer Kampagne mit allowCloudSummary bzw. allowExternalTranscription, wer die Kapitel schreibt bzw. transkribiert,
+     und nennt es im Einwilligungstext. Fehlen die Felder (ältere Server), zeigt die App nur die Kennung.
++    Änderungen in 0.4.12 (Kapitelplan und SL-Schirm): Die SL legt Kapitelpläne an (GET/POST /campaigns/{id}/plans,
++    GET/PATCH/DELETE /plans/{planId}) – Szenenkarten mit Notiz, verknüpften Bibel-Einträgen und Zustand, dazu Namen als
++    Schreibhilfe und verknüpfte Unterlagen. Pläne sind nur für die SL und fließen nie in Kapitel oder Vorschläge (nur
++    `names` als Schreibhilfe der Transkription). Unterlagen lassen sich während der Runde nachlesen:
++    GET /documents/{id}/file (Originaldatei) und GET /documents/{id}/text (Text je Seite).
+ 
+ servers:
+@@ -185,4 +190,5 @@ tags:
+   - name: Kommentare
+   - name: Unterlagen
++  - name: Kapitelplan
+   - name: Charaktere
+   - name: Umzug
+@@ -2474,4 +2480,136 @@ paths:
+         "409": { $ref: "#/components/responses/Conflict" }
+ 
++  /documents/{documentId}/file:
++    parameters: [{ $ref: "#/components/parameters/documentId" }]
++    get:
++      tags: [Unterlagen]
++      summary: Originaldatei einer Unterlage (ab 0.4.12; nur SL, bei character_sheet auch die Urheberin, sonst 404)
++      description: |
++        Zum Nachlesen während der Runde (SL-Schirm). Antwortet mit dem gespeicherten Inhalt und passendem Content-Type,
++        `Content-Disposition: inline; filename="…"` und `Cache-Control: no-store`. Unterlagen bleiben auf dem Server
++        der Kampagne; die App speichert sie nicht dauerhaft.
++      responses:
++        "200":
++          description: Datei
++          content:
++            application/pdf: { schema: { type: string, format: binary } }
++            application/octet-stream: { schema: { type: string, format: binary } }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /documents/{documentId}/text:
++    parameters: [{ $ref: "#/components/parameters/documentId" }]
++    get:
++      tags: [Unterlagen]
++      summary: Erkannter Text einer Unterlage, je Seite (ab 0.4.12; Rechte wie …/file)
++      description: |
++        Der Text, den der Server bei der Auswertung ohnehin gewinnt, mit Seitenzahlen. Die App zeigt ihn lesbar in einer
++        Spalte und durchsucht ihn. Ist (noch) kein Text vorhanden (Auswertung läuft, eingescannte Seiten ohne
++        Textebene), ist `pages` leer.
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema:
++                type: object
++                required: [pages]
++                properties:
++                  pages:
++                    type: array
++                    items:
++                      type: object
++                      required: [page, text]
++                      properties:
++                        page: { type: integer, minimum: 1, description: "Seite; bei .txt/.md/.docx fortlaufende Abschnitte" }
++                        text: { type: string }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /campaigns/{campaignId}/plans:
++    parameters: [{ $ref: "#/components/parameters/campaignId" }]
++    get:
++      tags: [Kapitelplan]
++      summary: Kapitelpläne der Kampagne (ab 0.4.12; nur SL – für alle anderen 404)
++      description: |
++        Sortiert nach sessionNumber (ohne Nummer zuletzt), dann nach createdAt. Spieler erfahren nie, ob es Pläne gibt
++        (404 statt 403, keine Anzahl, keine Ungelesen-Zähler).
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema:
++                type: array
++                items: { $ref: "#/components/schemas/ChapterPlan" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    post:
++      tags: [Kapitelplan]
++      summary: Kapitelplan anlegen (nur SL)
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: { $ref: "#/components/schemas/ChapterPlanInput" }
++      responses:
++        "201":
++          description: Angelegt
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ChapterPlan" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /plans/{planId}:
++    parameters: [{ $ref: "#/components/parameters/planId" }]
++    get:
++      tags: [Kapitelplan]
++      summary: Ein Kapitelplan (nur SL, sonst 404)
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ChapterPlan" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++    patch:
++      tags: [Kapitelplan]
++      summary: Kapitelplan ändern (nur SL)
++      description: |
++        Nur mitgeschickte Felder ändern sich; `scenes`, `names` und `documentIds` werden jeweils als ganze Liste ersetzt
++        (Reihenfolge der Szenen = Reihenfolge der Liste). Neue Szenen schickt die App mit eigener UUID.
++        Gleichzeitige Änderung auf zwei Geräten: Mit `ifUpdatedAt` antwortet der Server 409 `conflict`, wenn der Plan
++        inzwischen geändert wurde; die App lädt dann neu.
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              allOf:
++                - $ref: "#/components/schemas/ChapterPlanInput"
++                - type: object
++                  properties:
++                    ifUpdatedAt: { type: [string, "null"], format: date-time }
++      responses:
++        "200":
++          description: OK
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ChapterPlan" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
++    delete:
++      tags: [Kapitelplan]
++      summary: Kapitelplan löschen (nur SL; verknüpfte Einträge und Unterlagen bleiben)
++      responses:
++        "204": { description: Gelöscht }
++        "401": { $ref: "#/components/responses/Unauthorized" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   /campaigns/{campaignId}/entries:
+     parameters: [{ $ref: "#/components/parameters/campaignId" }]
+@@ -2630,4 +2768,5 @@ components:
+     pollId: { name: pollId, in: path, required: true, schema: { type: string } }
+     documentId: { name: documentId, in: path, required: true, schema: { type: string } }
++    planId: { name: planId, in: path, required: true, schema: { type: string } }
+ 
+   responses:
+@@ -2795,4 +2934,69 @@ components:
+         createdAt: { type: string, format: date-time }
+ 
++    ChapterPlanInput:
++      type: object
++      properties:
++        title: { type: string, minLength: 1, maxLength: 120 }
++        sessionNumber:
++          type: [integer, "null"]
++          minimum: 1
++          description: Für welches Kapitel (Nummer der Session). null = noch keinem Kapitel zugeordnet.
++        state:
++          type: string
++          enum: [draft, ready, played]
++          description: |
++            Nur Anzeige für die SL. Wird eine Session mit derselben Nummer veröffentlicht, setzt der Server `played`
++            (die SL kann es zurücksetzen).
++        notes: { type: [string, "null"], maxLength: 20000, description: Freie Notiz der SL zum ganzen Kapitel }
++        scenes:
++          type: array
++          maxItems: 50
++          items: { $ref: "#/components/schemas/PlanScene" }
++        names:
++          type: array
++          maxItems: 100
++          items: { type: string, maxLength: 40 }
++          description: |
++            Namen, die in diesem Kapitel vorkommen werden. Einzige Verbindung des Plans zur KI: Bei der Transkription der
++            Session mit derselben sessionNumber kommen sie zusätzlich zu Campaign.hotwords in die Schreibhilfe – nur die
++            Wörter, nie Inhalte des Plans.
++        documentIds:
++          type: array
++          maxItems: 20
++          items: { type: string }
++          description: Verknüpfte SL-Unterlagen dieser Kampagne (unbekannte IDs → 400 invalid_input; gelöschte fallen heraus)
++
++    ChapterPlan:
++      description: |
++        Kapitelplan (ab 0.4.12). Verbindlich:
++        - Nur für die SL. Für Spieler gibt es keinen Weg dorthin (404), keine Anzahl, keinen Hinweis.
++        - Der Plan fließt nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf. Ausnahme nur `names` (Schreibhilfe).
++        - Verknüpfte Bibel-Einträge ändern ihre Sichtbarkeit dadurch nicht; aufgedeckt wird wie bisher über
++          PATCH /entries/{id} (visibility).
++        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt.
++      allOf:
++        - $ref: "#/components/schemas/ChapterPlanInput"
++        - type: object
++          required: [id, campaignId, title, state, scenes, names, documentIds, createdAt, updatedAt]
++          properties:
++            id: { type: string }
++            campaignId: { type: string }
++            createdAt: { type: string, format: date-time }
++            updatedAt: { type: string, format: date-time }
++
++    PlanScene:
++      type: object
++      required: [id, title]
++      properties:
++        id: { type: string, description: UUID; neue Szenen bringt die App mit eigener ID }
++        title: { type: string, minLength: 1, maxLength: 120 }
++        notes: { type: [string, "null"], maxLength: 4000 }
++        entryIds:
++          type: array
++          maxItems: 30
++          items: { type: string }
++          description: Bibel-Einträge dieser Kampagne, die in der Szene eine Rolle spielen (gelöschte fallen heraus)
++        state: { type: string, enum: [open, played, skipped], default: open }
++
+     CoverPreset:
+       type: string
+diff --git a/docs/ARCHITEKTUR.md b/docs/ARCHITEKTUR.md
+index 70f095d..9b69e03 100644
+--- a/docs/ARCHITEKTUR.md
++++ b/docs/ARCHITEKTUR.md
+@@ -74,4 +74,10 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
+ - **SL-Unterlagen:** Handouts werden öffentlich, SL-Unterlagen bleiben geheim, gemischte Unterlagen bleiben geheim mit
+   Freigabe-Vorschlag. Markierte Abschnitte (`[SL]`, `Geheim:` …) wandern immer in `gmNotes`.
++  Ab 0.4.12 lassen sie sich während der Runde nachlesen (`…/text` je Seite, `…/file` als Original, abgeschottet mit
++  `Content-Security-Policy: sandbox` und `nosniff`); Rechte wie beim Abruf der Unterlage.
++- **Kapitelplan (ab 0.4.12, `app/routers/plaene.py`):** nur für die SL, für alle anderen 404. Fließt nie in Kapitel,
++  Vorschläge, Gegenprüfung oder Probelauf; nur `names` gehen als Schreibhilfe in die Transkription des Kapitels mit
++  derselben Nummer. Verknüpfte Einträge und Unterlagen werden beim Lesen gegen die Kampagne geprüft, Gelöschtes fällt
++  heraus. Beim Veröffentlichen einer Session wird der Plan derselben Nummer `played`. Pläne gehen beim Umzug mit.
+ - **Charaktere (ab 0.4.7, `app/charaktere.py`):**
+   - Die App ist Ort der Wahrheit. Der Server hält am Mitglied nur eine Kopie und nimmt Änderungen nur von der Person
+diff --git a/migrations/versions/d4e7a1c9b3f6_kapitelplan_0_4_12.py b/migrations/versions/d4e7a1c9b3f6_kapitelplan_0_4_12.py
+new file mode 100644
+index 0000000..5234faa
+--- /dev/null
++++ b/migrations/versions/d4e7a1c9b3f6_kapitelplan_0_4_12.py
+@@ -0,0 +1,43 @@
++"""Kapitelplan der SL (Schnittstelle 0.4.12): chapter_plans
++
++Revision ID: d4e7a1c9b3f6
++Revises: c3d9e1f7a2b5
++Create Date: 2026-10-08 09:00:00
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision: str = 'd4e7a1c9b3f6'
++down_revision: Union[str, Sequence[str], None] = 'c3d9e1f7a2b5'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.create_table('chapter_plans',
++    sa.Column('id', sa.String(length=36), nullable=False),
++    sa.Column('campaign_id', sa.String(length=36), nullable=False),
++    sa.Column('title', sa.String(length=120), nullable=False),
++    sa.Column('session_number', sa.Integer(), nullable=True),
++    sa.Column('state', sa.String(length=16), nullable=False),
++    sa.Column('notes', sa.Text(), nullable=True),
++    sa.Column('scenes', sa.Text(), nullable=False),
++    sa.Column('names', sa.Text(), nullable=False),
++    sa.Column('document_ids', sa.Text(), nullable=False),
++    sa.Column('created_at', sa.DateTime(), nullable=False),
++    sa.Column('updated_at', sa.DateTime(), nullable=False),
++    sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id'], ondelete='CASCADE'),
++    sa.PrimaryKeyConstraint('id')
++    )
++    with op.batch_alter_table('chapter_plans', schema=None) as batch_op:
++        batch_op.create_index(batch_op.f('ix_chapter_plans_campaign_id'), ['campaign_id'], unique=False)
++
++
++def downgrade() -> None:
++    with op.batch_alter_table('chapter_plans', schema=None) as batch_op:
++        batch_op.drop_index(batch_op.f('ix_chapter_plans_campaign_id'))
++    op.drop_table('chapter_plans')
+diff --git a/pyproject.toml b/pyproject.toml
+index cc6e376..88f2616 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.55"
++version = "0.4.56"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 4e763bf..c9ae657 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.55"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.56"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index ae8746f..b619d10 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.55"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.56"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_kapitelplan_0412.py b/tests/test_kapitelplan_0412.py
+new file mode 100644
+index 0000000..90a228a
+--- /dev/null
++++ b/tests/test_kapitelplan_0412.py
+@@ -0,0 +1,206 @@
++"""Schnittstelle 0.4.12: Kapitelpläne der SL, Unterlagen nachlesen (Text je Seite, Originaldatei)."""
++import json
++import uuid
++
++import pytest
++
++from tests.test_step2a import API
++from tests.test_umzug_048 import _exportieren, _importieren, _zip
++from tests.test_step2b import _kleine_teile  # noqa: F401 (Fixture)
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++@pytest.fixture(autouse=True)
++def _sofort(monkeypatch):
++    from app import umzug
++
++    monkeypatch.setattr(umzug, "HINTERGRUND", False)
++
++
++def _eintrag(client, w, name, cid=None, h=None):
++    return client.post(f"{API}/campaigns/{cid or w['cid']}/entries", headers=h or w["gm"], json={
++        "type": "npc", "name": name, "summary": "x", "visibility": "gm_only"}).json()["id"]
++
++
++def _unterlage(client, w, name="brief.txt", text="Seite eins.\n\nNoch mehr.", kind="gm", h=None):
++    r = client.post(f"{API}/campaigns/{w['cid']}/documents", headers=h or w["gm"],
++                    files={"file": (name, text.encode(), "text/plain")}, data={"kind": kind})
++    assert r.status_code == 201, r.text
++    return r.json()["id"]
++
++
++def _szene(titel, eintraege=(), **mehr):
++    return {"id": str(uuid.uuid4()), "title": titel, "entryIds": list(eintraege), **mehr}
++
++
++def test_plaene_nur_fuer_die_sl(client, world):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/plans"
++    assert client.get(url, headers=w["gm"]).json() == []
++    for h in (w["pl"], w["out"]):  # Spieler und Fremde: 404, nicht einmal die Existenz
++        assert client.get(url, headers=h).status_code == 404
++        assert client.post(url, headers=h, json={"title": "x"}).status_code == 404
++    p = client.post(url, headers=w["gm"], json={"title": "Am Hungerstein", "sessionNumber": 3}).json()
++    assert p["state"] == "draft" and p["scenes"] == [] and p["names"] == [] and p["documentIds"] == []
++    for h in (w["pl"], w["out"]):
++        assert client.get(f"{API}/plans/{p['id']}", headers=h).status_code == 404
++        assert client.patch(f"{API}/plans/{p['id']}", headers=h, json={"title": "y"}).status_code == 404
++        assert client.delete(f"{API}/plans/{p['id']}", headers=h).status_code == 404
++    # Die Kampagne verrät Spielern nichts über Pläne
++    assert "plan" not in json.dumps(client.get(f"{API}/campaigns/{w['cid']}", headers=w["pl"]).json()).lower()
++
++
++def test_plan_anlegen_aendern_konflikt_loeschen(client, world, make_user, login):
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/plans"
++    e1, e2 = _eintrag(client, w, "Bolko"), _eintrag(client, w, "Graue Gilde")
++    d1 = _unterlage(client, w)
++    sz = _szene("Ankunft", [e1, e2], notes="Nebel", state="open")
++    p = client.post(url, headers=w["gm"], json={
++        "title": " Kapitel drei ", "sessionNumber": 3, "notes": "Vorbereitung", "scenes": [sz],
++        "names": ["Bolko", "Rabenturm", "Bolko", " "], "documentIds": [d1]}).json()
++    assert p["title"] == "Kapitel drei" and p["names"] == ["Bolko", "Rabenturm"]
++    assert p["scenes"][0]["entryIds"] == [e1, e2] and p["documentIds"] == [d1]
++    # fremde Kampagne → 400 invalid_input
++    make_user("fremd")
++    fremd = login("fremd")
++    andere = client.post(f"{API}/campaigns", json={"title": "Andere"}, headers=fremd).json()
++    e_fremd = _eintrag(client, w, "Fremder", cid=andere["id"], h=fremd)
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"scenes": [_szene("X", [e_fremd])]})
++    assert r.status_code == 400 and r.json()["code"] == "invalid_input"
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"documentIds": ["gibt-es-nicht"]})
++    assert r.status_code == 400 and r.json()["code"] == "invalid_input"
++    # Gleichzeitig auf zwei Geräten: altes updatedAt → 409 conflict
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"state": "ready", "ifUpdatedAt": p["updatedAt"]})
++    assert r.status_code == 200 and r.json()["state"] == "ready"
++    neu = r.json()
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"notes": "alt", "ifUpdatedAt": p["updatedAt"]})
++    assert r.status_code == 409 and r.json()["code"] == "conflict"
++    # Nur Mitgeschicktes ändert sich; Szenen als ganze Liste
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"],
++                     json={"scenes": [_szene("Nur noch eine")], "ifUpdatedAt": neu["updatedAt"]})
++    q = r.json()
++    assert r.status_code == 200 and [s["title"] for s in q["scenes"]] == ["Nur noch eine"]
++    assert q["notes"] == "Vorbereitung" and q["names"] == ["Bolko", "Rabenturm"] and q["state"] == "ready"
++    # Gelöschte Einträge und Unterlagen fallen heraus
++    client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"scenes": [sz]})
++    assert client.delete(f"{API}/entries/{e2}", headers=w["gm"]).status_code == 204
++    assert client.delete(f"{API}/documents/{d1}", headers=w["gm"]).status_code == 204
++    q = client.get(f"{API}/plans/{p['id']}", headers=w["gm"]).json()
++    assert q["scenes"][0]["entryIds"] == [e1] and q["documentIds"] == []
++    # doppelte Szenen-ID → 400
++    r = client.patch(f"{API}/plans/{p['id']}", headers=w["gm"], json={"scenes": [sz, sz]})
++    assert r.status_code == 400
++    assert client.delete(f"{API}/plans/{p['id']}", headers=w["gm"]).status_code == 204
++    assert client.get(f"{API}/plans/{p['id']}", headers=w["gm"]).status_code == 404
++    assert client.get(f"{API}/entries/{e1}", headers=w["gm"]).status_code == 200  # Eintrag bleibt
++
++
++def test_reihenfolge_gespielt_und_schreibhilfe(client, world, dbs):
++    from app.models import Campaign
++    from app.namenshilfe import fuer_kampagne
++    from app.routers.plaene import gespielt_markieren
++
++    w = world
++    url = f"{API}/campaigns/{w['cid']}/plans"
++    for titel, nummer in (("ohne", None), ("fuenf", 5), ("zwei", 2)):
++        client.post(url, headers=w["gm"], json={"title": titel, "sessionNumber": nummer,
++                                                 "names": [f"Name{titel.capitalize()}"]})
++    assert [p["title"] for p in client.get(url, headers=w["gm"]).json()] == ["zwei", "fuenf", "ohne"]
++    c = dbs.get(Campaign, w["cid"])
++    assert fuer_kampagne(dbs, c, 2)[0] == "NameZwei"
++    assert "NameZwei" not in fuer_kampagne(dbs, c, 5) and "NameOhne" not in fuer_kampagne(dbs, c, None)
++    gespielt_markieren(dbs, w["cid"], 5)
++    dbs.commit()
++    zustand = {p["title"]: p["state"] for p in client.get(url, headers=w["gm"]).json()}
++    assert zustand == {"zwei": "draft", "fuenf": "played", "ohne": "draft"}
++
++
++def test_veroeffentlichen_setzt_gespielt(client, world, dbs, tmp_path):
++    """Echter Weg: Kapitel mit Nummer 1 veröffentlichen → Plan für Kapitel 1 ist gespielt."""
++    from tests.test_step2b import transkribiert, zusammenfassen
++
++    w = world
++    p = client.post(f"{API}/campaigns/{w['cid']}/plans", headers=w["gm"],
++                    json={"title": "Erster Abend", "sessionNumber": 1, "state": "ready"}).json()
++    s = transkribiert(client, w, dbs, tmp_path)
++    sid = s["id"]
++    sprecher = client.get(f"{API}/sessions/{sid}/speakers", headers=w["gm"]).json()
++    client.put(f"{API}/sessions/{sid}/speakers", headers=w["gm"],
++               json=[{"speakerId": sprecher[0]["id"], "memberId": w["gm_member"]},
++                     {"speakerId": sprecher[1]["id"], "memberId": w["pl_member"]}])
++    assert zusammenfassen(dbs)
++    r = client.post(f"{API}/sessions/{s['id']}/publish", headers=w["gm"])
++    assert r.status_code == 200, r.text
++    assert client.get(f"{API}/plans/{p['id']}", headers=w["gm"]).json()["state"] == "played"
++
++
++def test_plan_fliesst_nicht_in_die_ki(client, world, dbs, tmp_path):
++    from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
++    from app.models import GameSession
++    from tests.test_step2b import transkribiert
++
++    w = world
++    client.post(f"{API}/campaigns/{w['cid']}/plans", headers=w["gm"], json={
++        "title": "PLAN-GEHEIM", "sessionNumber": 1, "notes": "PLAN-NOTIZ",
++        "scenes": [_szene("PLAN-SZENE", notes="PLAN-SZENENNOTIZ")]})
++    s = transkribiert(client, w, dbs, tmp_path)
++    g = dbs.get(GameSession, s["id"])
++    basis = eingabe_bauen(dbs, g)
++    alles = json.dumps(recap_eingabe(basis), ensure_ascii=False) + json.dumps(vorschlag_eingabe(dbs, g, basis),
++                                                                            ensure_ascii=False)
++    assert "PLAN-" not in alles
++
++
++def test_unterlage_nachlesen(client, world):
++    w = world
++    d = _unterlage(client, w, "notizen.md", "# Kapitel\n\nDer Wirt heißt Bolko.")
++    t = client.get(f"{API}/documents/{d}/text", headers=w["gm"])
++    assert t.status_code == 200 and t.json()["pages"] and "Bolko" in t.json()["pages"][0]["text"]
++    assert t.json()["pages"][0]["page"] == 1
++    f = client.get(f"{API}/documents/{d}/file", headers=w["gm"])
++    assert f.status_code == 200 and "Bolko" in f.text
++    assert f.headers["cache-control"] == "no-store" and f.headers["content-disposition"].startswith("inline;")
++    assert f.headers["x-content-type-options"] == "nosniff" and "sandbox" in f.headers["content-security-policy"]
++    assert f.headers["content-type"].startswith("text/plain")  # nie als HTML
++    for h in (w["pl"], w["out"]):
++        assert client.get(f"{API}/documents/{d}/text", headers=h).status_code == 404
++        assert client.get(f"{API}/documents/{d}/file", headers=h).status_code == 404
++    # Charakterbogen: die Urheberin und die SL; Text gibt es nicht (wird nie ausgelesen)
++    b = _unterlage(client, w, "bogen.txt", "Stärke 14", kind="character_sheet", h=w["pl"])
++    assert client.get(f"{API}/documents/{b}/text", headers=w["pl"]).json() == {"pages": []}
++    assert client.get(f"{API}/documents/{b}/file", headers=w["pl"]).status_code == 200
++    assert client.get(f"{API}/documents/{b}/file", headers=w["gm"]).status_code == 200
++    assert client.get(f"{API}/documents/{b}/file", headers=w["out"]).status_code == 404
++
++
++def test_plaene_beim_umzug(client, world, make_user, login):
++    w = world
++    e1 = _eintrag(client, w, "Bolko")
++    d1 = _unterlage(client, w)
++    sz = _szene("Ankunft", [e1])
++    client.post(f"{API}/campaigns/{w['cid']}/plans", headers=w["gm"], json={
++        "title": "Plan A", "sessionNumber": 2, "scenes": [sz], "names": ["Bolko"], "documentIds": [d1]})
++    _, daten = _exportieren(client, w)
++    import io
++    import zipfile
++
++    inhalt = json.loads(zipfile.ZipFile(io.BytesIO(daten)).read("kampagne.json"))
++    plan = inhalt["plans"][0]
++    assert plan["title"] == "Plan A" and plan["scenes"][0]["entryKeys"] and plan["documentKeys"]
++    assert e1 not in json.dumps(inhalt["plans"]) and d1 not in json.dumps(inhalt["plans"])  # nur Schlüssel
++    make_user("eve")
++    eve = login("eve")
++    st = _importieren(client, eve, daten)
++    assert st["state"] == "done", st
++    neu = client.get(f"{API}/campaigns/{st['campaignId']}/plans", headers=eve).json()
++    assert len(neu) == 1 and neu[0]["title"] == "Plan A" and neu[0]["names"] == ["Bolko"]
++    eintraege = {e["id"]: e["name"] for e in client.get(f"{API}/campaigns/{st['campaignId']}/entries",
++                                                        headers=eve).json()}
++    assert [eintraege[i] for i in neu[0]["scenes"][0]["entryIds"]] == ["Bolko"]
++    assert len(neu[0]["documentIds"]) == 1 and neu[0]["documentIds"][0] != d1
++    # ältere Umzugsdatei ohne Pläne geht weiter
++    alt = _zip({"kampagne.json": json.dumps({"format": "taleward-kampagne/1", "apiVersion": "0.4.8",
++                                             "campaign": {"title": "Alt"}})})
++    assert _importieren(client, eve, alt)["state"] == "done"
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 596495a..7ae3b1d 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.55"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.56"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_schnittstelle_0410.py b/tests/test_schnittstelle_0410.py
+index aa82ea7..c26de76 100644
+--- a/tests/test_schnittstelle_0410.py
++++ b/tests/test_schnittstelle_0410.py
+@@ -191,3 +191,3 @@ def test_stimmen_vor_bestaetigung_ohne_zuordnung(client, world, dbs, tmp_path):
+ 
+ def test_info_meldet_schnittstelle_0411(client):
+-    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.11"
++    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.12"
+diff --git a/tests/test_step1b.py b/tests/test_step1b.py
+index 3430143..cd7fcb2 100644
+--- a/tests/test_step1b.py
++++ b/tests/test_step1b.py
+@@ -23,5 +23,5 @@ def test_info_ist_oeffentlich(client):
+     assert r.status_code == 200
+     i = r.json()
+-    assert i["apiVersion"] == "0.4.11" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
++    assert i["apiVersion"] == "0.4.12" and i["externalTranscription"] is None and i["authMethods"] == ["password"] and i["registration"] == "invite_only"
+ 
+ 
+diff --git a/tests/test_umzug_048.py b/tests/test_umzug_048.py
+index 9113a3f..a599595 100644
+--- a/tests/test_umzug_048.py
++++ b/tests/test_umzug_048.py
+@@ -151,5 +151,5 @@ def test_export_inhalt_und_zugang(client, world, dbs, make_user, login):
+     alles = b"".join(z.read(n) for n in namen)
+     k = json.loads(z.read("kampagne.json"))
+-    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.11"
++    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.12"
+     # nie in der Datei
+     for verboten in (GEHEIM, PRUEF, "Anna", "Ben", "Dora", "anna", "HINTERGRUND-DORIN", "DORA-BOGEN",
+diff --git a/tests/test_verwaltung2.py b/tests/test_verwaltung2.py
+index 50d1668..5f8dbb8 100644
+--- a/tests/test_verwaltung2.py
++++ b/tests/test_verwaltung2.py
+@@ -173,5 +173,5 @@ def test_mindestversion(client, world, admin):  # noqa: F811
+     info = client.get(f"{API}/info").json()  # /info bleibt immer erreichbar
+     assert info["minAppVersion"] == "0.9.0" and info["latestAppVersion"] == "0.9.1"
+-    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.11"
++    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.12"
+     url = f"{API}/campaigns"
+     r = client.get(url, headers=world["gm"])
+diff --git a/tests/test_webapp.py b/tests/test_webapp.py
+index 22df570..51aa831 100644
+--- a/tests/test_webapp.py
++++ b/tests/test_webapp.py
+@@ -107,5 +107,5 @@ def test_info_mit_pruefsumme(client, dbs):
+     info = client.get(f"{API}/info").json()
+     assert info["appDownloadSha256"] == hashlib.sha256(APK).hexdigest() and info["appDownloadSizeBytes"] == len(APK)
+-    assert info["apiVersion"] == "0.4.11"
++    assert info["apiVersion"] == "0.4.12"
+ 
+ 
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 265c4ba..93e7367 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.55"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.56"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 40254d4..7ddaa3f 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.55"
++version = "0.4.56"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
