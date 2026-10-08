@@ -427,3 +427,46 @@ def test_verwaltung_anmeldung(client, dbs, admin):  # noqa: F811
 from tests.test_step2b import _kleine_teile  # noqa: E402,F401 (Fixture)
 from tests.test_step5 import api  # noqa: E402,F401 (Fixture)
 from tests.test_verwaltung import admin, csrf_von  # noqa: E402,F401 (Fixture)
+
+
+def test_ablauf_nur_im_selben_browser(client, world, dienst):
+    """Ein Ablauf, der nicht in diesem Browser begonnen wurde, endet ohne Ticket."""
+    from app import anmeldedienste
+
+    dienst.claims = {"sub": "g-bindung", "email_verified": True}
+    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
+    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    name = anmeldedienste.bindung_cookie(state)
+    gesetzt = r.headers["set-cookie"]
+    assert gesetzt.startswith(name + "=") and "HttpOnly" in gesetzt and "Path=/auth/oidc/" in gesetzt
+    assert "samesite=lax" in gesetzt.lower() and "secure" not in gesetzt.lower()  # Heimnetz ohne HTTPS
+    # anderer Browser: kein Cookie → kein Ticket, Zustand verbraucht
+    client.cookies.clear()
+    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": state}, follow_redirects=False)
+    assert r.headers["location"] == "taleward://auth?error=oidc_failed"
+    assert dienst.token_anfragen == []  # der Code wurde gar nicht erst eingelöst
+    # falsches Geheimnis
+    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    client.cookies.clear()
+    client.cookies.set(anmeldedienste.bindung_cookie(state), "geraten", path="/auth/oidc/")
+    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": state}, follow_redirects=False)
+    assert r.headers["location"] == "taleward://auth?error=oidc_failed"
+    # derselbe Browser: Ticket, Cookie wird entfernt
+    client.cookies.clear()
+    r = client.get(f"{API}/auth/oidc/google/start", params=params, follow_redirects=False)
+    q = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
+    dienst.nonce = q["nonce"]
+    r = client.get("/auth/oidc/google/callback", params={"code": "gut", "state": q["state"]}, follow_redirects=False)
+    assert "ticket=" in r.headers["location"]
+    assert anmeldedienste.bindung_cookie(q["state"]) + '=""' in r.headers["set-cookie"]
+
+
+def test_bindung_ueber_https(client, world, dienst):
+    """Über HTTPS: Secure und SameSite=None, damit Apple (Antwort als Formular von fremder Seite) es mitschickt."""
+    params = {"challenge": challenge_von(VERIFIER), "purpose": "login"}
+    r = client.get(f"https://testserver{API}/auth/oidc/google/start", params=params, follow_redirects=False)
+    gesetzt = r.headers["set-cookie"].lower()
+    assert "secure" in gesetzt and "samesite=none" in gesetzt and "httponly" in gesetzt
+    assert r.headers["cache-control"] == "no-store"

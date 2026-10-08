@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
@@ -279,15 +280,24 @@ def dienst_start(provider: str, request: Request, challenge: str = "", purpose: 
         if returnTo not in webapp.rueckwege(db, basis):  # nur fest hinterlegte Ziele (kein offener Umleiter)
             return RedirectResponse("taleward://auth?error=return_to_not_allowed", status_code=302)
         rueckweg = returnTo
+    geheimnis = secrets.token_urlsafe(32)
     try:
-        ziel = anmeldedienste.start(db, provider, challenge, purpose, linkToken, basis, rueckweg)
+        ziel, zustand = anmeldedienste.start(db, provider, challenge, purpose, linkToken, basis, rueckweg, geheimnis)
     except anmeldedienste.DienstFehler as e:
         db.rollback()
         return RedirectResponse(webapp.mit_parametern(rueckweg, f"error={e.code}"), status_code=302)
-    return RedirectResponse(ziel, status_code=302)
+    antwort = RedirectResponse(ziel, status_code=302)
+    # Bindung an diesen Browser. Apple antwortet per Formular (POST von fremder Seite) → über HTTPS SameSite=None,
+    # sonst (Heimnetz ohne HTTPS) Lax; nur der Rückweg-Pfad bekommt das Cookie.
+    https = basis.startswith("https://")
+    antwort.set_cookie(anmeldedienste.bindung_cookie(zustand), geheimnis,
+                       max_age=int(anmeldedienste.ZUSTAND_GUELTIG.total_seconds()), path="/auth/oidc/",
+                       httponly=True, secure=https, samesite="none" if https else "lax")
+    antwort.headers["Cache-Control"] = "no-store"
+    return antwort
 
 
-def _zur_app(ziel: str, status: int = 303) -> RedirectResponse:
+def _zur_app(ziel: str, status: int = 303, state: str = "") -> RedirectResponse:
     """Weiterleitung in die App; der Text dient nur Browsern, die Weiterleitungen auf taleward:// nicht ausführen."""
     from html import escape
 
@@ -298,13 +308,16 @@ def _zur_app(ziel: str, status: int = 303) -> RedirectResponse:
     antwort.headers["content-length"] = str(len(antwort.body))
     antwort.headers["Cache-Control"] = "no-store"
     antwort.headers["Referrer-Policy"] = "no-referrer"
+    if state:  # Bindung verbraucht – Cookie entfernen
+        antwort.delete_cookie(anmeldedienste.bindung_cookie(state), path="/auth/oidc/")
     return antwort
 
 
 @seiten.get("/auth/oidc/{provider}/callback")
 def dienst_rueckkehr(provider: str, request: Request, db: Session = Depends(get_db)):
-    return _zur_app(anmeldedienste.rueckkehr(db, provider, dict(request.query_params),
-                                             oeffentliche_adresse(db, request)))
+    werte = dict(request.query_params)
+    return _zur_app(anmeldedienste.rueckkehr(db, provider, werte, oeffentliche_adresse(db, request),
+                                             cookies=request.cookies), state=werte.get("state") or "")
 
 
 @seiten.post("/auth/oidc/{provider}/callback")
@@ -313,7 +326,8 @@ def dienst_rueckkehr_formular(provider: str, request: Request, code: str = Form(
     """Apple schickt die Antwort als Formular (response_mode=form_post)."""
     werte = {"code": code, "state": state, "error": error, "user": user}
     return _zur_app(anmeldedienste.rueckkehr(db, provider, {k: v for k, v in werte.items() if v},
-                                             oeffentliche_adresse(db, request)))
+                                             oeffentliche_adresse(db, request), cookies=request.cookies),
+                    state=state)
 
 
 @router.post("/auth/oidc/exchange", response_model=schemas.OidcExchangeResponse)

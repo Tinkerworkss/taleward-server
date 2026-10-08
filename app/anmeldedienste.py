@@ -125,10 +125,24 @@ def challenge_von(verifier: str) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 
 
+# ---------------------------------------------------------------- Bindung an den Browser
+# Der Ablauf gilt nur in dem Browser, in dem er begonnen wurde: Beim Start bekommt der Browser ein zufälliges
+# Geheimnis als Cookie, der Zustand merkt sich dessen Hash. Kommt die Antwort des Dienstes in einem anderen Browser an,
+# gibt es kein Ticket.
+def bindung_cookie(zustand: str) -> str:
+    """Cookie-Name je Ablauf, damit zwei gleichzeitige Anmeldungen sich nicht stören."""
+    return "tw_oidc_" + hashlib.sha256(zustand.encode()).hexdigest()[:16]
+
+
+def _bindung_hash(geheimnis: str) -> str:
+    return hashlib.sha256(geheimnis.encode()).hexdigest()
+
+
 # ---------------------------------------------------------------- 1. Start
 def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: str | None, basis: str,
-          rueckweg: str = "taleward://auth") -> str:
-    """URL beim Dienst. Fehler als DienstFehler (→ Rückweg in die App)."""
+          rueckweg: str = "taleward://auth", bindung: str | None = None) -> tuple[str, str]:
+    """(URL beim Dienst, Zustand). bindung: Geheimnis für das Browser-Cookie (siehe oben). Fehler als DienstFehler
+    (→ Rückweg in die App)."""
     if dienst not in DIENSTE or not konfig(db, dienst).eingerichtet:
         raise DienstFehler("provider_unknown")
     if not CHALLENGE.fullmatch(challenge or "") or purpose not in ("login", "link"):
@@ -141,14 +155,15 @@ def start(db: Session, dienst: str, challenge: str, purpose: str, link_token: st
         user_id = gefunden[0].user_id
     nonce = secrets.token_urlsafe(16)
     zustand = einmal.erzeugen(db, "oidc_zustand", ZUSTAND_GUELTIG, user_id=user_id, dienst=dienst,
-                              challenge=challenge, purpose=purpose, nonce=nonce, rueckweg=rueckweg)
+                              challenge=challenge, purpose=purpose, nonce=nonce, rueckweg=rueckweg,
+                              bindung=_bindung_hash(bindung) if bindung else None)
     db.commit()
     d, k = DIENSTE[dienst], konfig(db, dienst)
     werte = {"client_id": k.client_id, "redirect_uri": rueckleitung(basis, dienst), "response_type": "code",
              "scope": d["scope"], "state": zustand, **d.get("extra", {})}
     if d["art"] == "oidc":
         werte["nonce"] = nonce
-    return f"{d['auth']}?{urlencode(werte)}"
+    return f"{d['auth']}?{urlencode(werte)}", zustand
 
 
 # ---------------------------------------------------------------- 2. Rückkehr vom Dienst
@@ -227,8 +242,9 @@ def identitaet_holen(db: Session, dienst: str, code: str, basis: str, nonce: str
     return Identitaet(dienst, str(daten["sub"]), email.strip().lower() if email and bestaetigt else None, name)
 
 
-def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.Client | None = None) -> str:
-    """Antwort des Dienstes verarbeiten → Adresse taleward://auth?… für den Browser."""
+def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.Client | None = None,
+              cookies: dict | None = None) -> str:
+    """Antwort des Dienstes verarbeiten → Adresse taleward://auth?… für den Browser. cookies: die des Browsers."""
     from app.db import server_id
 
     zustand = einmal.einloesen(db, "oidc_zustand", werte.get("state") or "")
@@ -237,6 +253,10 @@ def rueckkehr(db: Session, dienst: str, werte: dict, basis: str, klient: httpx.C
         return "taleward://auth?" + urlencode({"error": "oidc_failed"})
     z = zustand[1]
     weg = z.get("rueckweg") or "taleward://auth"  # Web-Fassung: https://…/app/#/auth
+    geheimnis = (cookies or {}).get(bindung_cookie(werte.get("state") or ""), "")
+    if not z.get("bindung") or not secrets.compare_digest(_bindung_hash(geheimnis), z["bindung"]):
+        # nicht in diesem Browser begonnen → kein Ticket
+        return f"{weg}?" + urlencode({"error": "oidc_failed"})
     if werte.get("error"):
         code = "cancelled" if werte["error"] in ("access_denied", "user_cancelled_authorize") else "oidc_failed"
         return f"{weg}?" + urlencode({"error": code})
