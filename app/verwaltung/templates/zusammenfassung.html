@@ -36,7 +36,7 @@
       <legend>{{ _("Cloud-API") }}</legend>
       <label>{{ _("Anbieter") }}
         <select name="anbieter" id="anbieter-wahl">
-          {% for a in llm.anbieter %}<option value="{{ a.id }}" data-url="{{ a.url }}" data-modell="{{ a.modell }}" data-eu="{{ 1 if a.eu else 0 }}" {% if llm.gewaehlt == a.id %}selected{% endif %}>{{ a.name }}</option>
+          {% for a in llm.anbieter %}<option value="{{ a.id }}" data-url="{{ a.url }}" data-modell="{{ a.modell }}" data-vorschlaege="{{ a.modell_vorschlaege }}" data-modelle='{{ llm.bekannte[a.id]|tojson }}' data-eu="{{ 1 if a.eu else 0 }}" {% if llm.gewaehlt == a.id %}selected{% endif %}>{{ a.name }}</option>
           {% endfor %}<option value="andere" data-url="" data-modell="" data-eu="0" {% if llm.gewaehlt == "andere" %}selected{% endif %}>{{ _("Anderer (OpenAI-kompatible Schnittstelle)") }}</option>
         </select></label>
       {% for a in llm.anbieter %}
@@ -55,9 +55,18 @@
       </details>
       <label>{{ _("Adresse (nur bei „Anderer“)") }}
         <input type="url" name="api_url" id="anbieter-url" value="{{ k.api_url if llm.gewaehlt == "andere" else '' }}" placeholder="https://…/v1" maxlength="300"></label>
-      <label>{{ _("Modell") }} <input type="text" name="api_modell" id="anbieter-modell" value="{{ k.api_modell }}" maxlength="100" required{% if pruefung and pruefung.modelle %} list="modelle-liste"{% endif %}>
-        {% if pruefung and pruefung.modelle %}<datalist id="modelle-liste">{% for m in pruefung.modelle %}<option value="{{ m }}">{% endfor %}</datalist>{% endif %}
-        <span class="hilfe">{{ _("Beim Wechsel des Anbieters wird das empfohlene Modell eingetragen; „Verbindung prüfen“ zeigt, welche Modelle der Schlüssel nutzen darf.") }}</span></label>
+      <label id="modell-wahl-feld"{% if llm.gewaehlt == "andere" and not llm.modelle %} hidden{% endif %}>{{ _("Modell für das Kapitel") }}
+        <select name="api_modell" id="anbieter-modell">
+          {% for m in llm.modelle %}<option value="{{ m }}" {% if m == k.api_modell %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select></label>
+      <label id="modell-text-feld"{% if not (llm.gewaehlt == "andere" and not llm.modelle) %} hidden{% endif %}>{{ _("Modell (nur bei „Anderer“, solange der Anbieter keine Liste liefert)") }}
+        <input type="text" name="api_modell_text" id="anbieter-modell-text" value="{{ k.api_modell if llm.gewaehlt == 'andere' else '' }}" maxlength="100"></label>
+      <label>{{ _("Modell für die Vorschläge") }}
+        <select name="api_modell_vorschlaege" id="anbieter-modell-vorschlaege">
+          <option value="" {% if not k.api_modell_vorschlaege %}selected{% endif %}>{{ _("wie für das Kapitel") }}</option>
+          {% for m in llm.modelle %}<option value="{{ m }}" {% if m == k.api_modell_vorschlaege %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+        <span class="hilfe">{{ _("Zur Auswahl stehen die bekannten Modelle des Anbieters und – sobald ein Schlüssel hinterlegt ist – alle, die er für diesen Schlüssel freigibt. Beim Wechsel des Anbieters werden die empfohlenen eingetragen. Bei Mistral empfohlen: Kapitel mit mistral-medium-latest, Vorschläge mit mistral-large-latest (Messung an einer langen Runde).") }}</span></label>
       <label>{{ _("API-Schlüssel") }}
         <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
         <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
@@ -99,7 +108,7 @@
   <div class="meldung{% if not pruefung.ok %} meldung--fehler{% endif %}" role="status">{{ pruefung.text }}
     {% if pruefung.modelle %}<details><summary>{{ _("Modelle, die der Schlüssel nutzen darf ({n})", n=pruefung.modelle|length) }}</summary>
       <p class="hilfe">{{ pruefung.modelle|join(", ") }}</p>
-      <p class="hilfe">{{ _("Im Feld „Modell“ oben stehen diese Namen jetzt zur Auswahl; danach speichern und erneut prüfen.") }}</p></details>{% endif %}
+      <p class="hilfe">{{ _("Diese Modelle stehen oben jetzt zur Auswahl; danach speichern und erneut prüfen.") }}</p></details>{% endif %}
   </div>
   {% endif %}
   {% endif %}

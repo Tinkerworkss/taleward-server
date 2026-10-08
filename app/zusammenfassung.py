@@ -286,6 +286,16 @@ def api_klient(k):
     return OpenAIKlient(k.api_url, k.api_key, k.api_modell, cent_pro_mio=preis)
 
 
+def api_klient_vorschlaege(k):
+    """0.4.61: eigener Klient für die Vorschläge, wenn ein anderes Modell gewählt ist (sonst None). Eigene Preise aus
+    der Verwaltung gelten nur für das Kapitel-Modell; hier zählt die Preistabelle."""
+    from app.sprachmodell import OpenAIKlient
+
+    if not k.api_modell_vorschlaege or k.api_modell_vorschlaege == k.api_modell:
+        return None
+    return OpenAIKlient(k.api_url, k.api_key, k.api_modell_vorschlaege)
+
+
 def zusammenfasser(db: Session):
     """Was die Zentrale selbst ausführt: fn(db, session) → (Ergebnis, engine). None = nicht die Zentrale
     (aus, oder lokal – dann holt ein Worker mit Sprachmodell den Auftrag)."""
@@ -300,10 +310,11 @@ def zusammenfasser(db: Session):
         def ueber_api(db_, s):
             klient = api_klient(k)
             basis = eingabe_bauen(db_, s)
-            ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name))
+            ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
+                            vorschlag_klient=api_klient_vorschlaege(k))
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
-            return ergebnis_aus(d, klient.kosten_cent(d["tokensIn"], d["tokensOut"])), "external"
+            return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"
         return ueber_api
     return None
 

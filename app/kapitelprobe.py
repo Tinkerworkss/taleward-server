@@ -62,6 +62,7 @@ class Probe:
     beendet: str | None = None
     campaign_id: str = ""
     besitzer: str = ""  # Benutzer-ID des Verwalterkontos, das gestartet hat
+    bereinigt: list[dict] = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -217,7 +218,7 @@ def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname
     if not recap_ein["transkript"]:
         raise ValueError("leer")
     p = Probe(id=new_id(), session_id=s.id, kampagne=c.title if c else "?", kapitel=s.number, quelle=quelle,
-              zeilen=len(recap_ein["transkript"]), modell=(k.api_modell if k.art == "api" else "Testmodus"),
+              zeilen=len(recap_ein["transkript"]), modell=_modellname(k),
               gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id)
     _aufraeumen()
     _speichern(p)
@@ -235,9 +236,26 @@ def _aufraeumen() -> None:
         shutil.rmtree(ordner(alt.id), ignore_errors=True)
 
 
+# Probeläufe nacheinander: Jeder schickt die ganze Abschrift (oft 200.000 Token und mehr) an den Anbieter; mehrere
+# gleichzeitig überschreiten dessen Grenze je Minute (429). Wer wartet, steht auf „wartet“.
+_REIHE = threading.Lock()
+
+
 def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
+    if not _REIHE.acquire(blocking=False):
+        p.schritt = "wartet"
+        _speichern(p)
+        _REIHE.acquire()
+    try:
+        p.schritt = ""
+        _rechnen_jetzt(p, k, recap_ein, vorschlag_ein, campaign_id, session_id)
+    finally:
+        _REIHE.release()
+
+
+def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
     from app.sprachmodell import Ablauf, SprachmodellFehler
-    from app.zusammenfassung import api_klient, attrappe, gegenpruefen_an
+    from app.zusammenfassung import api_klient, api_klient_vorschlaege, attrappe, gegenpruefen_an
 
     t0 = time.monotonic()
     try:
@@ -256,7 +274,7 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
                 p.schritt = name
                 _speichern(p)
 
-            ablauf = Ablauf(klient, schritt=schritt)
+            ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k))
             with session_factory()() as db:
                 gegen = gegenpruefen_an(db)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
@@ -265,8 +283,9 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
             p.pruefung = d.get("review") or {}
             p.aufrufe = ablauf.zaehler.aufrufe
             p.tokens_ein, p.tokens_aus = d["tokensIn"], d["tokensOut"]
-            p.kosten_cent = klient.kosten_cent(d["tokensIn"], d["tokensOut"])
+            p.kosten_cent = d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))
             p.warnungen = list(getattr(ablauf, "warnungen", []) or [])
+            p.bereinigt = list(ablauf.bereinigt)
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -301,3 +320,11 @@ def _dateien_schreiben(p: Probe) -> None:
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)
+
+
+def _modellname(k) -> str:
+    if k.art != "api":
+        return "Testmodus"
+    if k.api_modell_vorschlaege and k.api_modell_vorschlaege != k.api_modell:
+        return f"{k.api_modell} + Vorschläge {k.api_modell_vorschlaege}"
+    return k.api_modell

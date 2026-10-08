@@ -362,15 +362,20 @@ def test_verwaltung_cloud_anbieter(client, dbs, admin, monkeypatch):  # noqa: F8
     for a in cloudanbieter.ANBIETER:  # jeder Anbieter mit Standort, Training und Schlüsselweg, Stand-Datum
         assert a.name in seite and a.training in seite and a.anmeldung in seite
     assert cloudanbieter.STAND in seite and "ohne Gewähr" in seite
-    basis = {"csrf": admin, "art": "api", "api_modell": "x", "lokal_modell": "auto", "lokal_kontext": "12288",
+    basis = {"csrf": admin, "art": "api", "api_modell_text": "x", "lokal_modell": "auto", "lokal_kontext": "12288",
              "api_key": "sk-abcdefghijklmnop1234"}
+    ionos = cloudanbieter.finden("ionos")
+    # Bekannter Anbieter: Modell nur aus der Auswahl (0.4.61)
+    r = client.post(url, data={**basis, "anbieter": "ionos", "api_modell": "erfunden"})
+    assert r.status_code == 400 and "aus der Liste" in r.text
     # EU-Anbieter: Adresse kommt aus der Tabelle, keine Bestätigung nötig
-    r = client.post(url, data={**basis, "anbieter": "ionos", "api_url": "https://boese.example/v1"},
-                    follow_redirects=False)
+    r = client.post(url, data={**basis, "anbieter": "ionos", "api_url": "https://boese.example/v1",
+                               "api_modell": ionos.modell}, follow_redirects=False)
     assert r.status_code == 303
     k = llm_konfig(dbs)
     assert k.api_url == "https://openai.inference.de-txl.ionos.com/v1" and k.anbieter_id == "ionos"
     # außerhalb der EU und „Anderer“: nur mit Bestätigung
+    basis["api_modell"] = cloudanbieter.finden("openai").modell
     r = client.post(url, data={**basis, "anbieter": "openai"})
     assert r.status_code == 400 and "außerhalb der EU" in r.text
     r = client.post(url, data={**basis, "anbieter": "andere", "api_url": "https://llm.verein.example/v1"})

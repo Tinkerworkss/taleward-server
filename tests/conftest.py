@@ -109,3 +109,11 @@ def _webapp_zwischenspeicher_leeren():
     webapp.vergessen()
     yield
     webapp.vergessen()
+
+
+@pytest.fixture(autouse=True)
+def _keine_modellliste_aus_dem_netz(monkeypatch):
+    """Die Verwaltung holt die Modellliste beim Anbieter (0.4.61) – in Tests nur, wo ein Test es ausdrücklich will."""
+    from app import modellwahl
+
+    monkeypatch.setattr(modellwahl, "HOLEN", False)

@@ -156,6 +156,7 @@ class LlmKonfig:
     lokal_kontext: int
     cent_ein: float | None  # Preis je 1 Mio. Tokens; None = aus der Preistabelle
     cent_aus: float | None
+    api_modell_vorschlaege: str = ""  # 0.4.61: eigenes Modell für die Vorschläge („“ = wie api_modell)
 
     @property
     def ist_mistral(self) -> bool:
@@ -209,4 +210,5 @@ def llm_konfig(db: Session) -> LlmKonfig:
     return LlmKonfig(art=art, api_url=url, api_modell=wert("llm.api_modell", s.llm_api_model) or s.llm_api_model,
                      api_key=key, eigener_key=bool(eigener),
                      lokal_modell=wert("llm.lokal_modell", s.llm_local_model) or s.llm_local_model,
-                     lokal_kontext=kontext, cent_ein=preis("llm.cent_ein"), cent_aus=preis("llm.cent_aus"))
+                     lokal_kontext=kontext, cent_ein=preis("llm.cent_ein"), cent_aus=preis("llm.cent_aus"),
+                     api_modell_vorschlaege=(wert("llm.api_modell_vorschlaege", "") or "").strip())

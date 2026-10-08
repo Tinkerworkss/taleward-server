@@ -29,6 +29,8 @@ class Anbieter:
     hilfe: str = ""  # Adresse der Anbieter-Dokumentation
     anzeige: str = ""  # Name für die App ohne Sprachbezug (Schnittstelle 0.4.11, CloudProviderInfo.name)
     land: str | None = None  # Land der Verarbeitung, ISO-3166-1-alpha-2 (CloudProviderInfo.country)
+    modelle: tuple[str, ...] = ()  # 0.4.61: bekannte Modelle zur Auswahl, bevor der Anbieter seine Liste geliefert hat
+    modell_vorschlaege: str = ""  # 0.4.61: empfohlenes Modell für die Vorschläge („“ = wie modell)
 
     def info(self) -> dict:
         """CloudProviderInfo für ServerInfo (0.4.11): id, name, region, country."""
@@ -37,7 +39,9 @@ class Anbieter:
 
 
 ANBIETER: tuple[Anbieter, ...] = (
-    Anbieter("mistral", "Mistral (EU)", "https://api.mistral.ai/v1", "mistral-large-latest", True,
+    # Empfehlung nach der Messung vom 08.10.2026 (je 6 Läufe, lange Runde): Medium schreibt das bessere Kapitel,
+    # Large die besseren Vorschläge.
+    Anbieter("mistral", "Mistral (EU)", "https://api.mistral.ai/v1", "mistral-medium-latest", True,
              "Frankreich / EU",
              "Im kostenlosen Tarif („Experiment“) darf Mistral Ein- und Ausgaben zum Training nutzen; im bezahlten Tarif "
              "lässt es sich abschalten. Abschalten: admin.mistral.ai → Privacy → „Anonymous improvement data“ aus. Der "
@@ -47,7 +51,9 @@ ANBIETER: tuple[Anbieter, ...] = (
              "einschalten – Guthaben aufladen allein reicht nicht. Im kostenlosen Tarif sind die Grenzen sehr niedrig "
              "(oft Fehler 429), und nicht jedes Modell ist freigeschaltet.",
              "Preise der Mistral-Modelle sind hinterlegt; der Schlüssel der externen Transkription gilt auch hier.",
-             "https://docs.mistral.ai", anzeige="Mistral AI", land="FR"),
+             "https://docs.mistral.ai", anzeige="Mistral AI", land="FR",
+             modelle=("mistral-medium-latest", "mistral-large-latest", "mistral-small-latest"),
+             modell_vorschlaege="mistral-large-latest"),
     Anbieter("ionos", "IONOS AI Model Hub (DE)", "https://openai.inference.de-txl.ionos.com/v1",
              "openai/gpt-oss-120b", True, "Deutschland (Berlin)",
              "Laut IONOS werden Kundendaten nie zum Training genutzt und nicht gespeichert; Vertrag zur "

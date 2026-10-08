@@ -690,7 +690,7 @@ TOKENS_JE_SESSION = (110_000, 5_000)  # 4 Stunden Spiel: Recap- und Vorschlags-A
 def _llm_anzeige(db: Session) -> dict:
     from app.einstellungen import extern_konfig, llm_konfig
     from app.sprachmodell import PREISE
-    from app import cloudanbieter, woerterbuch
+    from app import cloudanbieter, modellwahl, woerterbuch
     from app.zusammenfassung import gegenpruefen_an
 
     k = llm_konfig(db)
@@ -704,14 +704,19 @@ def _llm_anzeige(db: Session) -> dict:
              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
                                   for kn in worker), "gegenpruefen": gegenpruefen_an(db),
              "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")},
-             "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND}
+             "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND,
+             "modelle": modellwahl.auswahl(db, k),
+             "bekannte": {a.id: modellwahl.bekannte(a) for a in cloudanbieter.ANBIETER}}
 
 
 @router.get("/zusammenfassung", response_class=HTMLResponse)
 def zusammenfassung_seite(request: Request, user: User = Depends(verwalter), db: Session = Depends(get_db),
                           fehler: str = "", pruefung: dict | None = None):
     from app import kapitelprobe as probelauf
+    from app import modellwahl
+    from app.einstellungen import llm_konfig
 
+    modellwahl.holen(db, llm_konfig(db))  # Modelle des Anbieters einmal je Adresse holen (für die Auswahl)
     return _seite(request, "zusammenfassung.html", user, db, llm=_llm_anzeige(db), fehler=fehler,
                   runden=_runden_mit_abschrift(db, user), proben=probelauf.eigene(db, user.id)[:10], pruefung=pruefung)
 
@@ -738,6 +743,10 @@ def zusammenfassung_pruefen(request: Request, user: User = Depends(verwalter), d
                 text = _("{modell} antwortet, aber nicht im JSON-Modus – das kann zu Wiederholungen führen.",
                          modell=k.api_modell)
             ergebnis = {"ok": e["json"], "text": text, "modelle": e["modelle"]}
+            from app import modellwahl
+
+            modellwahl.merken(db, k.api_url, e["modelle"])
+            db.commit()
         except SprachmodellFehler as f:
             ergebnis = {"ok": False, "text": _("Prüfung fehlgeschlagen: {grund}", grund=str(f))}
             try:  # Modellliste hilft oft weiter, wenn nur der Modellname nicht stimmt
@@ -793,7 +802,7 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
     p = probelauf.fuer(db, probe_id, user.id)
     if p is None:  # gelöscht, abgeräumt oder fremd – zurück zur Liste statt roher Fehlermeldung
         return _zurueck("/zusammenfassung", "probe_weg")
-    schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
+    schritte = {"wartet": "Wartet auf den vorigen Probelauf", "notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
                 "proposals": "Vorschläge"}
     return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
                   dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
@@ -835,6 +844,7 @@ def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter), db: Sessi
 @router.post("/zusammenfassung", dependencies=[Depends(csrf_pruefen)])
 def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter: str = Form("mistral"),
                               api_url: str = Form(""), api_modell: str = Form(""), api_key: str = Form(""),
+                              api_modell_text: str = Form(""), api_modell_vorschlaege: str = Form(""),
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
@@ -859,9 +869,18 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
         return fehler(_("Die Adresse muss mit https:// beginnen."))
     if art == "api" and (bekannt is None or not bekannt.eu) and not ausserhalb_eu:
         return fehler(_("Bitte bestätigen, dass die Verarbeitung außerhalb der EU bzw. bei einem nicht beschriebenen Anbieter gewollt ist und der Vertrag zur Auftragsverarbeitung geschlossen wird."))  # noqa: E501
-    modell, lokal = api_modell.strip(), lokal_modell.strip()
-    if not modell or not lokal or len(modell) > 100 or len(lokal) > 100:
+    from app import modellwahl
+
+    # Bekannte Anbieter: Modell aus der Auswahl; „Anderer“: freie Eingabe, solange der Anbieter keine Liste geliefert hat
+    modell = (api_modell_text.strip() if bekannt is None and api_modell_text.strip() else api_modell.strip())
+    lokal, fuer_vorschlaege = lokal_modell.strip(), api_modell_vorschlaege.strip()
+    if not modell or not lokal or len(modell) > 100 or len(lokal) > 100 or len(fuer_vorschlaege) > 100:
         return fehler(_("Bitte die Modellnamen angeben."))
+    for m in (modell, fuer_vorschlaege):
+        if m and bekannt is not None and not modellwahl.erlaubt(db, url, bekannt, m):
+            return fehler(_("Bitte ein Modell aus der Liste wählen."))
+    if fuer_vorschlaege == modell:
+        fuer_vorschlaege = ""
     try:
         kontext = int(lokal_kontext)
         if not 4096 <= kontext <= 262144:
@@ -885,6 +904,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     meta_schreiben(db, "llm.art", art)
     meta_schreiben(db, "llm.api_url", url)
     meta_schreiben(db, "llm.api_modell", modell)
+    meta_schreiben(db, "llm.api_modell_vorschlaege", fuer_vorschlaege)
     meta_schreiben(db, "llm.lokal_modell", lokal)
     meta_schreiben(db, "llm.lokal_kontext", str(kontext))
     meta_schreiben(db, "llm.cent_ein", preise[0])

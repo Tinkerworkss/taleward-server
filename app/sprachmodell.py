@@ -86,33 +86,54 @@ def anbieter_meldung(r: httpx.Response) -> str:
     return " ".join(str(text or "").split())[:200]
 
 
+VERSUCHE = 4  # je Aufruf beim Cloud-Anbieter
+
+
+def wartezeit(r: httpx.Response, versuch: int) -> float:
+    """Wie lange vor dem nächsten Versuch warten: „Retry-After“ des Anbieters (Sekunden), sonst 15, 30, 60 s – bei
+    429 begrenzt der Anbieter Token je Minute, wenige Sekunden reichen dann nicht. Höchstens 2 min."""
+    try:
+        sek = float(r.headers.get("retry-after") or "")
+    except ValueError:
+        sek = 15.0 * 2 ** versuch if r.status_code == 429 else 5.0 * (versuch + 1)
+    return max(1.0, min(sek, 120.0))
+
+
 class OpenAIKlient:
     """OpenAI-kompatible Schnittstelle (Mistral, OpenAI, viele andere): POST {url}/chat/completions."""
 
     def __init__(self, url: str, api_key: str, modell: str, client: httpx.Client | None = None,
                  cent_pro_mio: tuple[float, float] | None = None):
         self.url, self.modell = url.rstrip("/"), modell
-        self.client = client or httpx.Client(timeout=httpx.Timeout(600.0, connect=20.0))
+        # Lesegrenze 5 min je Aufruf (Antworten kommen ohne Streaming am Stück; selbst lange Kapitel dauern bei den
+        # Anbietern unter 2 min). Ein Anbieter, der gar nicht antwortet, kostet so höchstens 5 min statt 10.
+        self.client = client or httpx.Client(timeout=httpx.Timeout(300.0, connect=20.0))
         self.headers = {"Authorization": f"Bearer {api_key}"}
         self.cent_pro_mio = cent_pro_mio or PREISE.get(modell, (0, 0))
 
     def chat(self, system: str, nutzer: str) -> Antwort:
         body = {"model": self.modell, "temperature": 0.3, "response_format": {"type": "json_object"},
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": nutzer}]}
-        for versuch in range(3):
+        for versuch in range(VERSUCHE):
+            letzter = versuch == VERSUCHE - 1
             try:
                 r = self.client.post(f"{self.url}/chat/completions", json=body, headers=self.headers)
+            except httpx.TimeoutException as e:
+                if letzter:
+                    raise SprachmodellFehler("Der Anbieter hat nicht rechtzeitig geantwortet.") from e
+                time.sleep(5)
+                continue
             except httpx.HTTPError as e:
-                if versuch == 2:
+                if letzter:
                     raise SprachmodellFehler(f"Sprachmodell nicht erreichbar ({type(e).__name__}).") from e
                 time.sleep(2 * (versuch + 1))
                 continue
             if r.status_code == 429 or r.status_code >= 500:
-                if versuch == 2:
+                if letzter:
                     grund = anbieter_meldung(r)
                     raise SprachmodellFehler(f"Der Anbieter antwortet mit {r.status_code}" + (f": {grund}" if grund
                                                                                               else "."))
-                time.sleep(5 * (versuch + 1))
+                time.sleep(wartezeit(r, versuch))
                 continue
             if r.status_code in (401, 403):
                 grund = anbieter_meldung(r)
@@ -988,6 +1009,10 @@ class Zaehler:
     token_s: list[float] = field(default_factory=list)  # gemessene Geschwindigkeit je Aufruf (lokales Modell)
 
     letzte_antwort: str = ""  # Rohtext der letzten Antwort (nur für die Fehlersuche im Modellvergleich)
+    kosten: float = 0.0  # Cent, je Aufruf mit dem Preis des jeweiligen Klienten (zwei Modelle möglich)
+
+    def kosten_cent(self) -> int:
+        return round(self.kosten)
 
     def aufruf(self, klient: Klient, system: str, nutzer: str, retten: bool = False) -> dict:
         a = self._chat(klient, system, nutzer)
@@ -1003,6 +1028,9 @@ class Zaehler:
         self.tokens_in += a.tokens_in
         self.tokens_out += a.tokens_out
         self.aufrufe += 1
+        preis = getattr(klient, "cent_pro_mio", None)
+        if preis:
+            self.kosten += (a.tokens_in * preis[0] + a.tokens_out * preis[1]) / 1_000_000
         rate = getattr(klient, "token_s", None)
         if rate:
             from app.worker_prozess import taetigkeit
@@ -1096,6 +1124,8 @@ class Ablauf:
     letzte_relationen_nachher: list = field(default_factory=list)
     nachbesserung: bool = True  # Testoption (Modellvergleich): False = Faktenprüfung ohne Umschreiben
     warnungen: list = field(default_factory=list)  # übersprungene Schritte mit Grund und Antwortanfang (Fehlersuche)
+    vorschlag_klient: Klient | None = None  # 0.4.61: eigenes Modell für die Vorschläge (sonst klient)
+    bereinigt: list = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat (app/artefakte.py)
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1445,7 +1475,7 @@ class Ablauf:
                   f"\n\nGeheime Einträge (nur Spielleitung oder nur einzelne Spieler kennen sie):\n{geheim or '(keine)'}\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_VORSCHLAEGE.replace("{sprache}", _sprache(ein)).replace("{max}", str(MAX_VORSCHLAEGE_ROH)))
         self._schritt("proposals")
-        d = self.zaehler.aufruf(self.klient, system, nutzer)
+        d = self.zaehler.aufruf(self.vorschlag_klient or self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
                        namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
@@ -1487,13 +1517,21 @@ class Ablauf:
         except SprachmodellFehler as e:
             log.warning("Vollständigkeitsprüfung übersprungen: %s", e)
         self.letztes_kapitel2 = r["text"]
+        # Artefakte deterministisch entfernen (Du-Form/abgeschriebene SL-Rede, Regelsprache, Kraftausdrücke, Namen am
+        # Tisch, Wiederholungen) – vor der Gegenprüfung, damit sie den Text prüft, den die SL bekommt.
+        from app import artefakte
+
+        geschuetzt = [e["name"] for e in recap_ein.get("bibel") or []]
+        r["text"], self.bereinigt = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt)
+        r["title"] = artefakte.feinschliff(r.get("title") or "")
+        r["openThreads"] = [artefakte.feinschliff(f) for f in r.get("openThreads") or []]
         fortschritt(0.6 if gegenpruefen else 0.8)
         pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         fortschritt(0.8)
-        v = self.vorschlaege(vorschlag_ein, titel, grundlage)
+        v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, titel, grundlage)]
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
-               "tokensOut": self.zaehler.tokens_out}
+               "tokensOut": self.zaehler.tokens_out, "costCents": self.zaehler.kosten_cent()}
         if pruefung is not None:
             aus["review"] = pruefung
         return aus
