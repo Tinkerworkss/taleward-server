@@ -1,0 +1,195 @@
+From 9e9d0b8574ba91c26423e02ffea88cab6b9bdcfc Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 20:21:17 +0200
+Subject: [PATCH] Verwaltung: Probelauf-Meldungen landen wieder auf der
+ richtigen Seite (Server 0.4.60)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/verwaltung/i18n.py       |  1 +
+ app/verwaltung/router.py     | 13 +++++++------
+ pyproject.toml               |  2 +-
+ tests/test_aktualisierung.py |  2 +-
+ tests/test_assistent.py      |  2 +-
+ tests/test_modellablage.py   |  2 +-
+ tests/test_step5.py          | 17 +++++++++++------
+ tests/test_worker_app.py     |  2 +-
+ uv.lock                      |  2 +-
+ 9 files changed, 25 insertions(+), 18 deletions(-)
+
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 8e60517..06c9f87 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -58,4 +58,5 @@ EN: dict[str, str] = {
+     "Diese Runde hat keine Abschrift.": "This session has no transcript.",
+     "Probelauf gelöscht.": "Trial run deleted.",
++    "Diesen Probelauf gibt es nicht mehr – oder er gehört zu einem anderen Konto.": "This trial run no longer exists – or it belongs to another account.",
+     "Automatisch aktualisieren": "Update automatically",
+     "nachts zwischen 3 und 5 Uhr, mit Sicherung vorher. Startet die neue Fassung nicht, geht der Server von selbst auf die alte Fassung und die Daten von vorher zurück.": "at night between 3 and 5 am, with a backup first. If the new version doesn't start, the server goes back to the old version and the data from before by itself.",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index a9d08d2..1647232 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -82,4 +82,5 @@ MELDUNGEN = {
+     "probe_leer": "Diese Runde hat keine Abschrift.",
+     "probe_geloescht": "Probelauf gelöscht.",
++    "probe_weg": "Diesen Probelauf gibt es nicht mehr – oder er gehört zu einem anderen Konto.",
+     "konto_angelegt": "Konto angelegt.",
+     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
+@@ -772,15 +773,15 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
+     s = db.get(GameSession, session.strip()) if session.strip() else None
+     if s is None:
+-        return _zurueck("/verwaltung/zusammenfassung", "probe_runde")
++        return _zurueck("/zusammenfassung", "probe_runde")
+     text, name = None, None
+     if abschrift is not None and abschrift.filename:
+         roh = await abschrift.read()
+         if len(roh) > 5_000_000:
+-            return _zurueck("/verwaltung/zusammenfassung", "probe_datei")
++            return _zurueck("/zusammenfassung", "probe_datei")
+         text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
+     try:
+         p = probelauf.starten(db, s, text, name, user_id=user.id)
+     except ValueError as e:
+-        return _zurueck("/verwaltung/zusammenfassung", f"probe_{e}")
++        return _zurueck("/zusammenfassung", f"probe_{e}")
+     return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)
+ 
+@@ -791,6 +792,6 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
+ 
+     p = probelauf.fuer(db, probe_id, user.id)
+-    if p is None:
+-        raise errors.not_found()
++    if p is None:  # gelöscht, abgeräumt oder fremd – zurück zur Liste statt roher Fehlermeldung
++        return _zurueck("/zusammenfassung", "probe_weg")
+     schritte = {"notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
+                 "proposals": "Vorschläge"}
+@@ -829,5 +830,5 @@ def probelauf_loeschen(probe_id: str, user: User = Depends(verwalter), db: Sessi
+         raise errors.not_found()
+     probelauf.loeschen(probe_id)
+-    return _zurueck("/verwaltung/zusammenfassung", "probe_geloescht")
++    return _zurueck("/zusammenfassung", "probe_geloescht")
+ 
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 9fac57f..c433914 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.59"
++version = "0.4.60"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 9ea9442..a256b1a 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.59"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.60"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 7ab6590..52f0d1e 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.59"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.60"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 65df4ec..57111bb 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.59"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.60"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_step5.py b/tests/test_step5.py
+index 9aa917c..3d0cf0f 100644
+--- a/tests/test_step5.py
++++ b/tests/test_step5.py
+@@ -448,5 +448,5 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     assert s["id"] not in seite and "Rabenfels" not in seite
+     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+-    assert "ok=probe_runde" in r.headers["location"] and not probelauf.alle()
++    assert r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_runde" and not probelauf.alle()
+     from app.models import Campaign, Member, User
+ 
+@@ -456,5 +456,6 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     # Spielleitung, aber die Kampagne erlaubt die Cloud nicht → kein Aufruf beim Anbieter
+     r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"]}, follow_redirects=False)
+-    assert "ok=probe_cloud" in r.headers["location"] and not probelauf.alle() and not api.aufrufe
++    assert r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_cloud" and not probelauf.alle()
++    assert not api.aufrufe and "Cloud-Zusammenfassung nicht freigegeben" in client.get(r.headers["location"]).text
+     dbs.get(Campaign, w["cid"]).allow_cloud_summary = True
+     dbs.commit()
+@@ -478,5 +479,6 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     assert p.titel in seite and "fertig" in seite and "recap.txt" in seite
+     assert client.get(f"/verwaltung/probelauf/{pid}/recap.txt").text.startswith(p.titel)
+-    assert client.get(f"/verwaltung/probelauf/{pid}/../stand.json").status_code in (404, 400)
++    r = client.get(f"/verwaltung/probelauf/{pid}/../stand.json", follow_redirects=False)
++    assert r.status_code in (303, 404, 400) and "besitzer" not in r.text
+     assert client.get(f"/verwaltung/probelauf/{pid}/stand.json").status_code == 404  # nur bekannte Dateien
+     # alles als ZIP
+@@ -492,5 +494,7 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     echt = stand.read_text(encoding="utf-8")
+     stand.write_text(echt.replace(chef.id, "anderes-konto"), encoding="utf-8")
+-    for pfad in ("", "/recap.txt", "/alles.zip"):
++    r = client.get(f"/verwaltung/probelauf/{pid}", follow_redirects=False)
++    assert r.status_code == 303 and r.headers["location"] == "/verwaltung/zusammenfassung?ok=probe_weg"
++    for pfad in ("/recap.txt", "/alles.zip"):
+         assert client.get(f"/verwaltung/probelauf/{pid}{pfad}").status_code == 404
+     assert client.post(f"/verwaltung/probelauf/{pid}/loeschen", data={"csrf": admin}).status_code == 404
+@@ -522,5 +526,5 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     r = client.post(f"/verwaltung/probelauf/{pid2}/loeschen", data={"csrf": admin}, follow_redirects=False)
+     assert r.status_code == 303 and probelauf.lesen(pid2) is None
+-    assert client.get(f"/verwaltung/probelauf/{pid2}").status_code == 404
++    assert client.get(f"/verwaltung/probelauf/{pid2}", follow_redirects=False).status_code == 303
+     # lokales Modell eingestellt → verständlicher Hinweis statt Lauf
+     client.post(url, data={**basis, "art": "lokal"})
+@@ -535,5 +539,6 @@ def test_verwaltung_probelauf(client, world, dbs, tmp_path, admin, api):  # noqa
+     m.left_at = utcnow()
+     dbs.commit()
+-    assert client.get(f"/verwaltung/probelauf/{pid}").status_code == 404 and probelauf.lesen(pid) is None
++    assert client.get(f"/verwaltung/probelauf/{pid}", follow_redirects=False).status_code == 303
++    assert probelauf.lesen(pid) is None
+     p3 = probelauf.Probe(id="00000000-0000-0000-0000-000000000003", session_id=s["id"], kampagne="x", kapitel=1,
+                          quelle="Runde", zeilen=1, modell="m", gestartet="2026-10-08T00:00:00Z",
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index b9d61d9..b806ad8 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.59"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.60"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index a904940..6d197a6 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.59"
++version = "0.4.60"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
