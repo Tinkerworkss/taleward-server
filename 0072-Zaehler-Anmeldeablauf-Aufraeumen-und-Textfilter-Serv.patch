@@ -1389,7 +1389,7 @@ index 7e84e57..6b4d1d9 100644
 @@ -1987,5 +1987,5 @@ wheels = [
  [[package]]
  name = "taleward-server"
- version = "0.4.61"
+-version = "0.4.61"
 +version = "0.4.62"
  source = { editable = "." }
  dependencies = [
