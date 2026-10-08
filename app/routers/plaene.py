@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import errors, schemas
+from app import errors, links, schemas
 from app.access import current_user, membership
 from app.db import get_db, utcnow
 from app.models import CampaignDocument, ChapterPlan, Entry, User
@@ -50,7 +50,7 @@ def plan_out(db: Session, p: ChapterPlan, vorhanden: tuple[set[str], set[str]] |
         szenen.append(schemas.PlanScene.model_validate(sz))
     return schemas.ChapterPlanOut(
         id=p.id, campaign_id=p.campaign_id, title=p.title, session_number=p.session_number, state=p.state,
-        notes=p.notes, scenes=szenen, names=json.loads(p.names or "[]"),
+        notes=p.notes, table_notes=p.table_notes, scenes=szenen, names=json.loads(p.names or "[]"),
         document_ids=[i for i in json.loads(p.document_ids or "[]") if i in unterlagen],
         created_at=p.created_at, updated_at=p.updated_at)
 
@@ -78,6 +78,8 @@ def _setzen(db: Session, p: ChapterPlan, felder: dict) -> None:
         p.state = felder["state"]
     if "notes" in felder:
         p.notes = (felder["notes"] or "").strip() or None
+    if "table_notes" in felder:  # 0.4.13
+        p.table_notes = (felder["table_notes"] or "").strip() or None
     if "scenes" in felder:
         szenen = felder["scenes"]
         ids = [s.id.lower() for s in szenen]
@@ -91,7 +93,8 @@ def _setzen(db: Session, p: ChapterPlan, felder: dict) -> None:
             if not titel:
                 raise errors.bad_request("validation_error", "validation_error.empty", field="title")
             aus.append({"id": s.id.lower(), "title": titel, "notes": (s.notes or "").strip() or None,
-                        "entryIds": _eindeutig(s.entry_ids), "state": s.state})
+                        "entryIds": _eindeutig(s.entry_ids), "state": s.state,
+                        "links": links.pruefen(s.links)})  # 0.4.13
         p.scenes = json.dumps(aus, ensure_ascii=False)
     if "names" in felder:
         namen = _eindeutig([n.strip() for n in felder["names"] if n.strip()])
@@ -121,8 +124,8 @@ def plan_create(campaignId: str, body: schemas.ChapterPlanIn, user: User = Depen
     _sl(db, campaignId, user)
     jetzt = utcnow()
     p = ChapterPlan(campaign_id=campaignId, created_at=jetzt, updated_at=jetzt)
-    _setzen(db, p, {f: getattr(body, f) for f in ("title", "session_number", "state", "notes", "scenes", "names",
-                                                    "document_ids")})
+    _setzen(db, p, {f: getattr(body, f) for f in ("title", "session_number", "state", "notes", "table_notes", "scenes",
+                                                    "names", "document_ids")})
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -144,7 +147,7 @@ def plan_patch(planId: str, body: schemas.ChapterPlanPatchIn, user: User = Depen
         if abs(schemas._as_utc(p.updated_at) - erwartet) > timedelta(milliseconds=1):
             raise errors.conflict("conflict", "conflict.plan")
     felder = {}
-    for f in ("title", "session_number", "state", "notes", "scenes", "names", "document_ids"):
+    for f in ("title", "session_number", "state", "notes", "table_notes", "scenes", "names", "document_ids"):
         if f not in gesetzt:
             continue
         wert = getattr(body, f)

@@ -36,7 +36,7 @@ from pydantic import Field, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app import errors, schemas, storage
+from app import errors, links, schemas, storage
 from app.config import get_settings
 from app.db import utcnow
 from app.models import (
@@ -305,7 +305,7 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
             "key": f"e{i + 1}", "type": e.type, "name": e.name, "summary": summary, "gmNotes": e.gm_notes,
             "status": e.status, "holderSeat": halter, "visibility": e.visibility,
             "hiddenFromSeats": sorted(platz[m] for m in e.hidden_member_ids if m in platz),
-            "pcCharacterId": e.pc_character_id, "origin": herkunft,
+            "pcCharacterId": e.pc_character_id, "origin": herkunft, "links": links.lesen(e.links),
             "createdAt": _z(e.created_at), "updatedAt": _z(e.updated_at), "publicChangedAt": _z(e.public_changed_at),
             "mentions": [{"session": kapitel_schluessel[mn.session_id], "note": mn.note}
                          for mn in e.mentions if mn.session_id in kapitel_schluessel],
@@ -332,10 +332,11 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
     for i, pl in enumerate(db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == c.id)
                                       .order_by(ChapterPlan.created_at, ChapterPlan.id))):
         szenen = [{"id": sz.get("id"), "title": sz.get("title"), "notes": sz.get("notes"), "state": sz.get("state"),
+                   "links": sz.get("links") or [],
                    "entryKeys": [eintrag_schluessel[x] for x in sz.get("entryIds") or [] if x in eintrag_schluessel]}
                   for sz in json.loads(pl.scenes or "[]")]
         plaene.append({"key": f"k{i + 1}", "title": pl.title, "sessionNumber": pl.session_number, "state": pl.state,
-                       "notes": pl.notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
+                       "notes": pl.notes, "tableNotes": pl.table_notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
                        "documentKeys": [unterlage_schluessel[x] for x in json.loads(pl.document_ids or "[]")
                                         if x in unterlage_schluessel],
                        "createdAt": _z(pl.created_at), "updatedAt": _z(pl.updated_at)})
@@ -354,6 +355,7 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
                      "language": c.language, "system": c.system, "systemName": c.system_name,
                      "coverPreset": c.cover_preset, "coverImage": titelbild,
                      "hotwords": namenshilfe._gespeichert(c), "nextSessionAt": _z(c.next_session_at),
+                     "links": links.lesen(c.links),
                      "createdAt": _z(c.created_at)},
         "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen, "plans": plaene,
     }
@@ -553,6 +555,7 @@ class _Eintrag(schemas.ApiModel):
     updated_at: datetime | None = None
     public_changed_at: datetime | None = None
     mentions: list[_Erwaehnung] = Field(default=[], max_length=10000)
+    links: list = Field(default=[], max_length=50)  # 0.4.13; geprüft beim Anlegen
 
 
 class _Unterlage(schemas.ApiModel):
@@ -571,6 +574,7 @@ class _Szene(schemas.ApiModel):
     notes: str | None = Field(default=None, max_length=4000)
     state: Literal["open", "played", "skipped"] = "open"
     entry_keys: list[str] = Field(default=[], max_length=30)
+    links: list = Field(default=[], max_length=50)  # 0.4.13
 
 
 class _Plan(schemas.ApiModel):
@@ -579,6 +583,7 @@ class _Plan(schemas.ApiModel):
     session_number: int | None = Field(default=None, ge=1)
     state: Literal["draft", "ready", "played"] = "draft"
     notes: str | None = Field(default=None, max_length=20000)
+    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
     scenes: list[_Szene] = Field(default=[], max_length=50)
     names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
     document_keys: list[str] = Field(default=[], max_length=20)
@@ -597,6 +602,7 @@ class _Kampagne(schemas.ApiModel):
     cover_image: str | None = None
     hotwords: dict | None = None
     next_session_at: datetime | None = None
+    links: list = Field(default=[], max_length=200)  # 0.4.13
 
 
 class _Datei(schemas.ApiModel):
@@ -773,7 +779,8 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
     c = Campaign(title=k.title.strip()[:200] or "?", description=(k.description or "").strip(),
                  organization_id=org_id, language=k.language, system=k.system,
                  system_name=(k.system_name or "").strip() or None, world_info=(k.world_info or "").strip() or None,
-                 cover_preset=k.cover_preset, next_session_at=k.next_session_at, imported_by_user_id=user.id)
+                 cover_preset=k.cover_preset, next_session_at=k.next_session_at, imported_by_user_id=user.id,
+                 links=links.schreiben(links.bereinigen(k.links, links.MAX_KAMPAGNE)))
     c.allow_external_transcription = c.allow_cloud_summary = betriebsart(db) == "cloud"
     if isinstance(k.hotwords, dict):
         gespeichert = {s: namenshilfe._eindeutig([x for x in (k.hotwords.get(s) or []) if isinstance(x, str)])
@@ -872,7 +879,8 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
                   holder_member_id=halter if e.type in ("item", "pc") else None,
                   pc_character_id=((e.pc_character_id or "").lower() or None) if e.type == "pc" else None,
                   created_at=e.created_at or jetzt, updated_at=e.updated_at or jetzt,
-                  public_changed_at=e.public_changed_at)
+                  public_changed_at=e.public_changed_at,
+                  links=links.schreiben(links.bereinigen(e.links, links.MAX_EINTRAG)))
         if e.origin is not None:
             x.origin_character_id = e.origin.character_id.lower()
             x.origin_entry_id = (e.origin.entry_id or "").lower() or None
@@ -923,9 +931,11 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
                 continue
             gesehen.add(sz.id.lower())
             szenen.append({"id": sz.id.lower(), "title": sz.title.strip() or "?", "notes": sz.notes, "state": sz.state,
-                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu))})
+                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu)),
+                           "links": links.bereinigen(sz.links, links.MAX_SZENE)})
         db.add(ChapterPlan(campaign_id=c.id, title=pl.title.strip() or "?", session_number=pl.session_number,
-                           state=pl.state, notes=pl.notes, scenes=json.dumps(szenen, ensure_ascii=False),
+                           state=pl.state, notes=pl.notes, table_notes=(pl.table_notes or "").strip() or None,
+                           scenes=json.dumps(szenen, ensure_ascii=False),
                            names=json.dumps(list(dict.fromkeys(n.strip() for n in pl.names if n.strip())),
                                             ensure_ascii=False),
                            document_ids=json.dumps(list(dict.fromkeys(unterlage_neu[k] for k in pl.document_keys

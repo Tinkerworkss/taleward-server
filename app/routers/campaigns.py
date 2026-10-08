@@ -195,6 +195,10 @@ def patch_campaign(
         from app import namenshilfe
 
         namenshilfe.setzen(db, c, body.hotwords)
+    if "links" in f and body.links is not None:  # 0.4.13: ganze Liste ersetzen; fehlt das Feld, bleibt alles
+        from app import links
+
+        c.links = links.schreiben(links.pruefen(body.links))
     if "cover_preset" in f:
         from app.bilder import cover_ordner, loeschen
 

@@ -240,6 +240,14 @@ class CampaignSummaryOut(ApiModel):
     date_poll_needs_my_vote: bool
 
 
+class Link(ApiModel):
+    """0.4.13: Verweis nach draußen (Prüfung der Adresse in app/links.py)."""
+    id: str = Field(pattern=UUID_MUSTER)
+    label: str = Field(min_length=1, max_length=60)
+    url: str = Field(min_length=1, max_length=2000)
+    shared: bool = False
+
+
 class CampaignOut(CampaignSummaryOut):
     description: str
     language: ContentLanguage
@@ -249,6 +257,7 @@ class CampaignOut(CampaignSummaryOut):
     allow_external_transcription: bool
     allow_cloud_summary: bool = False
     hotwords: list[str] | None = None  # 0.4.6: nur für die SL, für Spieler weggelassen
+    links: list[Link] = []  # 0.4.13: Spieler nur shared
     gm_notices: list["GmNoticeOut"] | None = None  # 0.4.7: nur für die SL, für Spieler weggelassen
     members: list[MemberOut]
 
@@ -320,6 +329,7 @@ class CampaignPatch(ApiModel):
     allow_cloud_summary: bool | None = None
     archived: bool | None = None
     hotwords: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=200)
+    links: list[Link] | None = Field(default=None, max_length=20)  # 0.4.13: ganze Liste ersetzen
 
 
 class JoinRequest(ApiModel):
@@ -559,6 +569,7 @@ class EntryInput(ApiModel):
     visibility: Visibility | None = None
     gm_notes: str | None = Field(default=None, max_length=20000)
     hidden_from_member_ids: list[str] | None = None
+    links: list[Link] | None = Field(default=None, max_length=3)  # 0.4.13
 
 
 class MentionOut(ApiModel):
@@ -585,6 +596,7 @@ class EntryOut(ApiModel):
     origin_entry_id: str | None = None
     origin_version: int | None = None
     former_holder_member_id: str | None = None  # 0.4.9: nur für die SL, sonst weggelassen
+    links: list[Link] = []  # 0.4.13: Spieler nur shared
 
 
 class EntryAssignIn(ApiModel):
@@ -701,6 +713,7 @@ class PlanScene(ApiModel):
     notes: str | None = Field(default=None, max_length=4000)
     entry_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=30)
     state: Literal["open", "played", "skipped"] = "open"
+    links: list[Link] = Field(default=[], max_length=3)  # 0.4.13
 
 
 class ChapterPlanIn(ApiModel):
@@ -709,6 +722,7 @@ class ChapterPlanIn(ApiModel):
     session_number: int | None = Field(default=None, ge=1)
     state: Literal["draft", "ready", "played"] = "draft"
     notes: str | None = Field(default=None, max_length=20000)
+    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
     scenes: list[PlanScene] = Field(default=[], max_length=50)
     names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
     document_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=20)
@@ -719,6 +733,7 @@ class ChapterPlanPatchIn(ApiModel):
     session_number: int | None = Field(default=None, ge=1)
     state: Literal["draft", "ready", "played"] | None = None
     notes: str | None = Field(default=None, max_length=20000)
+    table_notes: str | None = Field(default=None, max_length=20000)  # 0.4.13
     scenes: list[PlanScene] | None = Field(default=None, max_length=50)
     names: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=100)
     document_ids: list[Annotated[str, Field(max_length=36)]] | None = Field(default=None, max_length=20)
@@ -732,6 +747,7 @@ class ChapterPlanOut(ApiModel):
     session_number: int | None
     state: Literal["draft", "ready", "played"]
     notes: str | None
+    table_notes: str | None = None  # 0.4.13
     scenes: list[PlanScene]
     names: list[str]
     document_ids: list[str]

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.12
+  version: 0.4.13
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -166,6 +166,11 @@ info:
     Schreibhilfe und verknüpfte Unterlagen. Pläne sind nur für die SL und fließen nie in Kapitel oder Vorschläge (nur
     `names` als Schreibhilfe der Transkription). Unterlagen lassen sich während der Runde nachlesen:
     GET /documents/{id}/file (Originaldatei) und GET /documents/{id}/text (Text je Seite).
+    Änderungen in 0.4.13 (Links und Notizen am SL-Schirm): Links (Schema Link: Name, Adresse, geteilt ja/nein) an der
+    Kampagne (Campaign.links, PATCH /campaigns/{id}), an Bibel-Einträgen (EntryInput.links) und an Szenen des Kapitelplans
+    (PlanScene.links). Spieler bekommen nur Links mit shared = true, und nur an Einträgen, die sie ohnehin sehen; Links an
+    Szenen bleiben bei der SL. ChapterPlan.tableNotes: Notizen der SL während der Runde. Links und Notizen fließen nie in
+    Kapitel, Vorschläge oder Schreibhilfe.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -779,6 +784,11 @@ paths:
                   maxItems: 200
                   items: { type: string, maxLength: 40 }
                   description: Namenshilfe ganz ersetzen (nur SL, ab 0.4.6). Doppelte und leere Einträge verwirft der Server.
+                links:
+                  type: array
+                  maxItems: 20
+                  items: { $ref: "#/components/schemas/Link" }
+                  description: Links der Kampagne ganz ersetzen (nur SL, ab 0.4.13), siehe Campaign.links
                 archived:
                   type: boolean
                   description: |
@@ -2948,6 +2958,12 @@ components:
             Nur Anzeige für die SL. Wird eine Session mit derselben Nummer veröffentlicht, setzt der Server `played`
             (die SL kann es zurücksetzen).
         notes: { type: [string, "null"], maxLength: 20000, description: Freie Notiz der SL zum ganzen Kapitel }
+        tableNotes:
+          type: [string, "null"]
+          maxLength: 20000
+          description: |
+            Ab 0.4.13: Notizen der SL während der Runde (Notizzettel am SL-Schirm). Nur für die SL, fließt nie in Kapitel,
+            Vorschläge oder Schreibhilfe. Fehlt bei älteren Servern.
         scenes:
           type: array
           maxItems: 50
@@ -2973,7 +2989,8 @@ components:
         - Der Plan fließt nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf. Ausnahme nur `names` (Schreibhilfe).
         - Verknüpfte Bibel-Einträge ändern ihre Sichtbarkeit dadurch nicht; aufgedeckt wird wie bisher über
           PATCH /entries/{id} (visibility).
-        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt.
+        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt, Links und
+          tableNotes (ab 0.4.13) gehen mit.
       allOf:
         - $ref: "#/components/schemas/ChapterPlanInput"
         - type: object
@@ -2997,6 +3014,24 @@ components:
           items: { type: string }
           description: Bibel-Einträge dieser Kampagne, die in der Szene eine Rolle spielen (gelöschte fallen heraus)
         state: { type: string, enum: [open, played, skipped], default: open }
+        links:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/Link" }
+          description: Ab 0.4.13. Nur für die SL wie der ganze Plan; shared spielt hier keine Rolle.
+
+    Link:
+      type: object
+      required: [id, label, url]
+      description: |
+        Ab 0.4.13. Ein Verweis auf ein anderes Programm oder eine Seite. Öffnet sich außerhalb von Taleward; nichts wird
+        eingebettet, Taleward speichert keine Zugangsdaten. Der Server prüft: nur http:// oder https://, keine
+        Zugangsdaten in der Adresse (user:pass@) → sonst 400 invalid_input. Er ruft die Adresse nie selbst auf.
+      properties:
+        id: { type: string, description: UUID; neue Links bringt die App mit eigener ID }
+        label: { type: string, minLength: 1, maxLength: 60 }
+        url: { type: string, maxLength: 2000, format: uri }
+        shared: { type: boolean, default: false, description: "true = auch Spieler sehen den Link (nicht bei Szenen)" }
 
     CoverPreset:
       type: string
@@ -3176,6 +3211,13 @@ components:
         - type: object
           properties:
             description: { type: string }
+            links:
+              type: array
+              maxItems: 20
+              items: { $ref: "#/components/schemas/Link" }
+              description: |
+                Ab 0.4.13: Links der Kampagne (virtueller Spieltisch, Discord, Karte, Musik …). Die SL bekommt alle,
+                Spieler nur die mit shared = true (Treffpunkt für Online-Runden). Fehlt bei älteren Servern.
             language: { $ref: "#/components/schemas/ContentLanguage" }
             system:
               oneOf:
@@ -3529,6 +3571,14 @@ components:
             Geheimer Teil eines (auch öffentlichen) Eintrags. Für Spieler lässt der Server das Feld weg; die Volltextsuche
             der Spieler durchsucht es nicht. Recap-Pipeline bekommt nur öffentliche Einträge OHNE gmNotes;
             die Vorschlags-Pipeline bekommt die ganze Bibel inklusive gmNotes.
+        links:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/Link" }
+          description: |
+            Ab 0.4.13. Spieler bekommen nur Links mit shared = true, und nur an Einträgen, die sie sehen (ein Link an
+            einem gm_only-Eintrag wird also erst mit dem Aufdecken sichtbar). Wird ein Eintrag aufgedeckt, ändern sich die
+            Links nicht. Links fließen nie in Kapitel oder Vorschläge.
 
     Entry:
       allOf:

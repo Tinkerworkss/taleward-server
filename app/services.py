@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import errors, schemas
+from app import errors, links, schemas
 from app.access import may_see_backstory
 from app.config import get_settings
 from app.db import utcnow
@@ -204,6 +204,7 @@ def campaign_out(db: Session, c: Campaign, me: Member) -> schemas.CampaignOut:
         system_name=c.system_name, world_info=c.world_info,
         allow_external_transcription=c.allow_external_transcription, allow_cloud_summary=c.allow_cloud_summary,
         members=[member_out(m, me) for m in members],
+        links=links.lesen(c.links, nur_geteilt=me.role != "gm"),  # 0.4.13
     )
     if me.role == "gm":  # Namenshilfe (0.4.6) nur für die SL – für Spieler gar nicht im JSON
         from app import namenshilfe
@@ -445,6 +446,7 @@ def entry_out(e: Entry, is_gm: bool, viewer_id: str | None = None) -> schemas.En
         last_session_number=max(numbers) if numbers else None,
         mentions=[schemas.MentionOut(session_number=mn.session.number, note=mn.note) for mn in mentions],
         updated_at=e.updated_at,
+        links=links.lesen(e.links, nur_geteilt=not is_gm),  # 0.4.13
     )
     if is_gm:
         daten["gm_notes"] = e.gm_notes
@@ -466,6 +468,7 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
     """
     vorher = {f: getattr(e, f) for f in _PUBLIC_FIELDS}
     vorher_verborgen = set(e.hidden_member_ids)
+    vorher_geteilt = links.lesen(e.links, nur_geteilt=True)
     fields = data.model_fields_set
     if "type" in fields:
         if data.type is None:
@@ -501,6 +504,8 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
             if gueltig != ids:
                 raise errors.bad_request("hidden_member_unknown")
         e.hidden_from = [EntryHidden(entry_id=e.id, member_id=m) for m in sorted(ids)]
+    if "links" in fields and data.links is not None:  # 0.4.13: ganze Liste ersetzen
+        e.links = links.schreiben(links.pruefen(data.links))
     if require_public_text and e.visibility == "public" and not (e.summary or "").strip():
         raise errors.bad_request("validation_error", "public_text_required")
     if e.type != "quest":
@@ -512,7 +517,8 @@ def apply_entry_input(db: Session, e: Entry, data: schemas.EntryInput, require_p
     now = utcnow()
     e.updated_at = now
     # „Neu“ für Spieler nur, wenn sich am öffentlichen Teil etwas geändert hat
-    geaendert = any(getattr(e, f) != vorher[f] for f in _PUBLIC_FIELDS) or set(e.hidden_member_ids) != vorher_verborgen
+    geaendert = (any(getattr(e, f) != vorher[f] for f in _PUBLIC_FIELDS) or set(e.hidden_member_ids) != vorher_verborgen
+                 or links.lesen(e.links, nur_geteilt=True) != vorher_geteilt)
     if e.visibility == "public" and geaendert:
         e.public_changed_at = now
 

@@ -102,6 +102,8 @@ class Campaign(Base):
     # 0.4.8: aus einer Umzugsdatei angelegt – Platzhalter-Mitglied der importierenden SL bis „Das bin ich“
     imported_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     imported_by_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 0.4.13: Links der Kampagne als JSON [{id, label, url, shared}] (app/links.py)
+    links: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     members: Mapped[list["Member"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
@@ -279,6 +281,8 @@ class Entry(Base):
     origin_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # 0.4.9: NSC aus der Figur eines ausgetretenen Mitglieds – nur die SL sieht, von wem
     former_holder_member_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 0.4.13: Links als JSON [{id, label, url, shared}]; Spieler bekommen nur shared (app/links.py)
+    links: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     mentions: Mapped[list["EntryMention"]] = relationship(cascade="all, delete-orphan")
     hidden_from: Mapped[list["EntryHidden"]] = relationship(cascade="all, delete-orphan")
@@ -585,7 +589,8 @@ class ChapterPlan(Base):
     session_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state: Mapped[str] = mapped_column(String(16), default="draft")  # draft | ready | played
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state}]
+    table_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # 0.4.13: Notizzettel am SL-Schirm
+    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state, links}]
     names: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
     document_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

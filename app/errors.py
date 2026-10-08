@@ -73,6 +73,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
                                 "Bitte neu laden.",
                                 "A linked entry or document doesn't belong to this campaign (any more). Please reload."),
     "invalid_input.plan_scene": ("Zwei Szenen haben dieselbe Kennung.", "Two scenes have the same ID."),
+    # Links (0.4.13)
+    "invalid_input.link_url": ("Die Adresse eines Links muss mit http:// oder https:// beginnen und darf keine "
+                               "Zugangsdaten enthalten.",
+                               "A link address must start with http:// or https:// and must not contain credentials."),
+    "invalid_input.link_label": ("Ein Link braucht einen Namen.", "A link needs a name."),
+    "invalid_input.link_id": ("Zwei Links haben dieselbe Kennung.", "Two links have the same ID."),
     "conflict": ("Das wurde inzwischen geändert.", "This was changed in the meantime."),
     "conflict.plan": ("Der Kapitelplan wurde inzwischen auf einem anderen Gerät geändert. Bitte neu laden.",
                       "The chapter plan was changed on another device in the meantime. Please reload."),
