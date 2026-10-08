@@ -99,6 +99,46 @@ def document_delete(documentId: str, user: User = Depends(current_user), db: Ses
     return Response(status_code=204)
 
 
+# 0.4.12: Nachlesen während der Runde (SL-Schirm). Rechte wie GET /documents/{id}: SL, beim Charakterbogen auch die
+# Urheberin. Die Datei kommt als Anzeige im Browser, aber abgeschottet: Kein Skript in einer Unterlage läuft im
+# Ursprung des Servers (CSP sandbox), der Typ wird nicht erraten (nosniff), nichts wird zwischengespeichert.
+MEDIENTYP = {".pdf": "application/pdf", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+             ".markdown": "text/plain; charset=utf-8",
+             ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+@router.get("/documents/{documentId}/file")
+def document_file(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from urllib.parse import quote
+
+    doc = _dokument(db, documentId, user, eigener_bogen=True)
+    pfad = unterlagen.datei_pfad(doc.id)
+    if pfad is None:
+        raise errors.not_found("document")
+    name = doc.file_name or pfad.name
+    einfach = "".join(z if 32 <= ord(z) < 127 and z not in '"\\' else "_" for z in name) or "unterlage"
+    return Response(pfad.read_bytes(), media_type=MEDIENTYP.get(pfad.suffix.lower(), "application/octet-stream"),
+                    headers={"Content-Disposition": f'inline; filename="{einfach}"; filename*=UTF-8\'\'{quote(name)}',
+                             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                             "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                                                        "img-src data:; object-src 'none'"})
+
+
+@router.get("/documents/{documentId}/text", response_model=schemas.DocumentTextOut)
+def document_text(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    doc = _dokument(db, documentId, user, eigener_bogen=True)
+    seiten = []
+    for i, a in enumerate(unterlagen.text_laden(doc.id)):
+        if not isinstance(a, dict) or not str(a.get("text") or "").strip():
+            continue
+        try:
+            nummer = int(a.get("seite") or 0)
+        except (TypeError, ValueError):
+            nummer = 0
+        seiten.append(schemas.DocumentPageOut(page=nummer if nummer >= 1 else i + 1, text=str(a["text"])))
+    return schemas.DocumentTextOut(pages=seiten)
+
+
 @router.get("/documents/{documentId}/proposals", response_model=list[schemas.ProposalOut],
             response_model_exclude_unset=True)
 def document_proposals(documentId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):

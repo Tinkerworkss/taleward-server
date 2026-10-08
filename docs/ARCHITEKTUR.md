@@ -73,6 +73,12 @@ Der Server setzt durch, wer was sieht – die App zeigt nur an.
   geheimen Teil füllt der Server aus dem bisherigen Eintrag, nie das Modell.
 - **SL-Unterlagen:** Handouts werden öffentlich, SL-Unterlagen bleiben geheim, gemischte Unterlagen bleiben geheim mit
   Freigabe-Vorschlag. Markierte Abschnitte (`[SL]`, `Geheim:` …) wandern immer in `gmNotes`.
+  Ab 0.4.12 lassen sie sich während der Runde nachlesen (`…/text` je Seite, `…/file` als Original, abgeschottet mit
+  `Content-Security-Policy: sandbox` und `nosniff`); Rechte wie beim Abruf der Unterlage.
+- **Kapitelplan (ab 0.4.12, `app/routers/plaene.py`):** nur für die SL, für alle anderen 404. Fließt nie in Kapitel,
+  Vorschläge, Gegenprüfung oder Probelauf; nur `names` gehen als Schreibhilfe in die Transkription des Kapitels mit
+  derselben Nummer. Verknüpfte Einträge und Unterlagen werden beim Lesen gegen die Kampagne geprüft, Gelöschtes fällt
+  heraus. Beim Veröffentlichen einer Session wird der Plan derselben Nummer `played`. Pläne gehen beim Umzug mit.
 - **Charaktere (ab 0.4.7, `app/charaktere.py`):**
   - Die App ist Ort der Wahrheit. Der Server hält am Mitglied nur eine Kopie und nimmt Änderungen nur von der Person
     selbst und nur mit höherer Fassung an.

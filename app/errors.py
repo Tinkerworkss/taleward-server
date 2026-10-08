@@ -66,6 +66,16 @@ MESSAGES: dict[str, tuple[str, str]] = {
                                       "Prüfung wartet.",
                                       "Proposals can only be reviewed and applied while the document is awaiting review."),
     "not_found.document": ("Die Unterlage wurde nicht gefunden.", "Document not found."),
+    # Kapitelplan (0.4.12)
+    "not_found.plan": ("Der Kapitelplan wurde nicht gefunden.", "Chapter plan not found."),
+    "invalid_input": ("Die Eingabe passt nicht zu dieser Kampagne.", "The input doesn't match this campaign."),
+    "invalid_input.plan_link": ("Ein verknüpfter Eintrag oder eine Unterlage gehört nicht (mehr) zu dieser Kampagne. "
+                                "Bitte neu laden.",
+                                "A linked entry or document doesn't belong to this campaign (any more). Please reload."),
+    "invalid_input.plan_scene": ("Zwei Szenen haben dieselbe Kennung.", "Two scenes have the same ID."),
+    "conflict": ("Das wurde inzwischen geändert.", "This was changed in the meantime."),
+    "conflict.plan": ("Der Kapitelplan wurde inzwischen auf einem anderen Gerät geändert. Bitte neu laden.",
+                      "The chapter plan was changed on another device in the meantime. Please reload."),
     "doc.no_text": ("Die Unterlage enthält keinen auslesbaren Text (eingescannt?). Eine Texterkennung gibt es noch nicht.",
                     "The document contains no readable text (scanned?). Text recognition is not available yet."),
     "doc.scanned_pages": ("{n} von {gesamt} Seiten enthalten keinen Text (eingescannt?) und wurden übersprungen – eine "

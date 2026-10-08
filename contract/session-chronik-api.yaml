@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.11
+  version: 0.4.12
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -161,6 +161,11 @@ info:
     ServerInfo.externalTranscriptionInfo (CloudProviderInfo: Name, EU oder nicht, Land). Die App zeigt allen Mitgliedern
     einer Kampagne mit allowCloudSummary bzw. allowExternalTranscription, wer die Kapitel schreibt bzw. transkribiert,
     und nennt es im Einwilligungstext. Fehlen die Felder (ältere Server), zeigt die App nur die Kennung.
+    Änderungen in 0.4.12 (Kapitelplan und SL-Schirm): Die SL legt Kapitelpläne an (GET/POST /campaigns/{id}/plans,
+    GET/PATCH/DELETE /plans/{planId}) – Szenenkarten mit Notiz, verknüpften Bibel-Einträgen und Zustand, dazu Namen als
+    Schreibhilfe und verknüpfte Unterlagen. Pläne sind nur für die SL und fließen nie in Kapitel oder Vorschläge (nur
+    `names` als Schreibhilfe der Transkription). Unterlagen lassen sich während der Runde nachlesen:
+    GET /documents/{id}/file (Originaldatei) und GET /documents/{id}/text (Text je Seite).
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -184,6 +189,7 @@ tags:
   - name: Termine
   - name: Kommentare
   - name: Unterlagen
+  - name: Kapitelplan
   - name: Charaktere
   - name: Umzug
 
@@ -2473,6 +2479,138 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /documents/{documentId}/file:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    get:
+      tags: [Unterlagen]
+      summary: Originaldatei einer Unterlage (ab 0.4.12; nur SL, bei character_sheet auch die Urheberin, sonst 404)
+      description: |
+        Zum Nachlesen während der Runde (SL-Schirm). Antwortet mit dem gespeicherten Inhalt und passendem Content-Type,
+        `Content-Disposition: inline; filename="…"` und `Cache-Control: no-store`. Unterlagen bleiben auf dem Server
+        der Kampagne; die App speichert sie nicht dauerhaft.
+      responses:
+        "200":
+          description: Datei
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /documents/{documentId}/text:
+    parameters: [{ $ref: "#/components/parameters/documentId" }]
+    get:
+      tags: [Unterlagen]
+      summary: Erkannter Text einer Unterlage, je Seite (ab 0.4.12; Rechte wie …/file)
+      description: |
+        Der Text, den der Server bei der Auswertung ohnehin gewinnt, mit Seitenzahlen. Die App zeigt ihn lesbar in einer
+        Spalte und durchsucht ihn. Ist (noch) kein Text vorhanden (Auswertung läuft, eingescannte Seiten ohne
+        Textebene), ist `pages` leer.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pages]
+                properties:
+                  pages:
+                    type: array
+                    items:
+                      type: object
+                      required: [page, text]
+                      properties:
+                        page: { type: integer, minimum: 1, description: "Seite; bei .txt/.md/.docx fortlaufende Abschnitte" }
+                        text: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /campaigns/{campaignId}/plans:
+    parameters: [{ $ref: "#/components/parameters/campaignId" }]
+    get:
+      tags: [Kapitelplan]
+      summary: Kapitelpläne der Kampagne (ab 0.4.12; nur SL – für alle anderen 404)
+      description: |
+        Sortiert nach sessionNumber (ohne Nummer zuletzt), dann nach createdAt. Spieler erfahren nie, ob es Pläne gibt
+        (404 statt 403, keine Anzahl, keine Ungelesen-Zähler).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChapterPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Kapitelplan]
+      summary: Kapitelplan anlegen (nur SL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChapterPlanInput" }
+      responses:
+        "201":
+          description: Angelegt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChapterPlan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /plans/{planId}:
+    parameters: [{ $ref: "#/components/parameters/planId" }]
+    get:
+      tags: [Kapitelplan]
+      summary: Ein Kapitelplan (nur SL, sonst 404)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChapterPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Kapitelplan]
+      summary: Kapitelplan ändern (nur SL)
+      description: |
+        Nur mitgeschickte Felder ändern sich; `scenes`, `names` und `documentIds` werden jeweils als ganze Liste ersetzt
+        (Reihenfolge der Szenen = Reihenfolge der Liste). Neue Szenen schickt die App mit eigener UUID.
+        Gleichzeitige Änderung auf zwei Geräten: Mit `ifUpdatedAt` antwortet der Server 409 `conflict`, wenn der Plan
+        inzwischen geändert wurde; die App lädt dann neu.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ChapterPlanInput"
+                - type: object
+                  properties:
+                    ifUpdatedAt: { type: [string, "null"], format: date-time }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChapterPlan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [Kapitelplan]
+      summary: Kapitelplan löschen (nur SL; verknüpfte Einträge und Unterlagen bleiben)
+      responses:
+        "204": { description: Gelöscht }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /campaigns/{campaignId}/entries:
     parameters: [{ $ref: "#/components/parameters/campaignId" }]
     get:
@@ -2629,6 +2767,7 @@ components:
     memberId: { name: memberId, in: path, required: true, schema: { type: string } }
     pollId: { name: pollId, in: path, required: true, schema: { type: string } }
     documentId: { name: documentId, in: path, required: true, schema: { type: string } }
+    planId: { name: planId, in: path, required: true, schema: { type: string } }
 
   responses:
     Unauthorized:
@@ -2793,6 +2932,71 @@ components:
         worldInfoSuggestion: { type: [string, "null"] }
         uploadedByMemberId: { type: [string, "null"], description: "Ab 0.4.7; bei character_sheet die Urheberin" }
         createdAt: { type: string, format: date-time }
+
+    ChapterPlanInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        sessionNumber:
+          type: [integer, "null"]
+          minimum: 1
+          description: Für welches Kapitel (Nummer der Session). null = noch keinem Kapitel zugeordnet.
+        state:
+          type: string
+          enum: [draft, ready, played]
+          description: |
+            Nur Anzeige für die SL. Wird eine Session mit derselben Nummer veröffentlicht, setzt der Server `played`
+            (die SL kann es zurücksetzen).
+        notes: { type: [string, "null"], maxLength: 20000, description: Freie Notiz der SL zum ganzen Kapitel }
+        scenes:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/PlanScene" }
+        names:
+          type: array
+          maxItems: 100
+          items: { type: string, maxLength: 40 }
+          description: |
+            Namen, die in diesem Kapitel vorkommen werden. Einzige Verbindung des Plans zur KI: Bei der Transkription der
+            Session mit derselben sessionNumber kommen sie zusätzlich zu Campaign.hotwords in die Schreibhilfe – nur die
+            Wörter, nie Inhalte des Plans.
+        documentIds:
+          type: array
+          maxItems: 20
+          items: { type: string }
+          description: Verknüpfte SL-Unterlagen dieser Kampagne (unbekannte IDs → 400 invalid_input; gelöschte fallen heraus)
+
+    ChapterPlan:
+      description: |
+        Kapitelplan (ab 0.4.12). Verbindlich:
+        - Nur für die SL. Für Spieler gibt es keinen Weg dorthin (404), keine Anzahl, keinen Hinweis.
+        - Der Plan fließt nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf. Ausnahme nur `names` (Schreibhilfe).
+        - Verknüpfte Bibel-Einträge ändern ihre Sichtbarkeit dadurch nicht; aufgedeckt wird wie bisher über
+          PATCH /entries/{id} (visibility).
+        - Beim Umzug gehen Pläne mit (wie SL-Unterlagen); entryIds und documentIds werden übersetzt.
+      allOf:
+        - $ref: "#/components/schemas/ChapterPlanInput"
+        - type: object
+          required: [id, campaignId, title, state, scenes, names, documentIds, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            campaignId: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+
+    PlanScene:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string, description: UUID; neue Szenen bringt die App mit eigener ID }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        entryIds:
+          type: array
+          maxItems: 30
+          items: { type: string }
+          description: Bibel-Einträge dieser Kampagne, die in der Szene eine Rolle spielen (gelöschte fallen heraus)
+        state: { type: string, enum: [open, played, skipped], default: open }
 
     CoverPreset:
       type: string

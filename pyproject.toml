@@ -1,6 +1,6 @@
 [project]
 name = "taleward-server"
-version = "0.4.55"
+version = "0.4.56"
 description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]

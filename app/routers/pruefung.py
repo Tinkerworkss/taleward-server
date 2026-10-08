@@ -411,6 +411,9 @@ def publish(sessionId: str, user: User = Depends(current_user), db: Session = De
         s.title = r.title
     s.published_at = utcnow()
     set_state(s, "published")
+    from app.routers.plaene import gespielt_markieren
+
+    gespielt_markieren(db, s.campaign_id, s.number)  # 0.4.12: Kapitelplan dieser Nummer gilt als gespielt
     from app.aufbewahrung import audio_loeschen
 
     audio_loeschen(db, s)  # Recap freigegeben: die Aufnahme wird nicht mehr gebraucht

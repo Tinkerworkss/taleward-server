@@ -30,7 +30,7 @@ import unicodedata
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError
 from sqlalchemy import select, update
@@ -40,7 +40,7 @@ from app import errors, schemas, storage
 from app.config import get_settings
 from app.db import utcnow
 from app.models import (
-    Attendee, Campaign, CampaignDocument, CampaignExport, CampaignImport, Comment, DateOption, DateVote,
+    Attendee, Campaign, CampaignDocument, ChapterPlan, CampaignExport, CampaignImport, Comment, DateOption, DateVote,
     Entry, EntryHidden, EntryMention, GameSession, GmNote, GmNotice, Invite, Member, Proposal, Recap, SessionSeen,
     Speaker, User,
 )
@@ -289,9 +289,10 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
             "comments": kommentare,
         })
 
-    eintraege = []
+    eintraege, eintrag_schluessel = [], {}
     for i, e in enumerate(db.scalars(select(Entry).where(Entry.campaign_id == c.id).order_by(Entry.created_at,
                                                                                                Entry.id))):
+        eintrag_schluessel[e.id] = f"e{i + 1}"
         halter = platz.get(e.holder_member_id or "")
         summary = e.summary or ""
         if e.type == "pc" and e.holder_member_id not in zugestimmt:
@@ -310,7 +311,7 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
                          for mn in e.mentions if mn.session_id in kapitel_schluessel],
         })
 
-    unterlagen = []
+    unterlagen, unterlage_schluessel = [], {}
     for doc in db.scalars(select(CampaignDocument).where(CampaignDocument.campaign_id == c.id)
                           .order_by(CampaignDocument.created_at)):
         if doc.kind == "character_sheet" and doc.uploaded_by_member_id not in zugestimmt:
@@ -319,11 +320,25 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
         if pfad is None:
             continue
         schluessel = f"d{len(unterlagen) + 1}"
+        unterlage_schluessel[doc.id] = schluessel
         name = f"unterlagen/{schluessel}/datei{pfad.suffix.lower()}"
         dateien.append((name, pfad))
         unterlagen.append({"key": schluessel, "title": doc.title, "fileName": doc.file_name, "kind": doc.kind,
                            "file": name, "uploadedBySeat": platz.get(doc.uploaded_by_member_id or ""),
                            "createdAt": _z(doc.created_at)})
+
+    # Kapitelpläne der SL (0.4.12) – Verweise als Schlüssel; was nicht mitgeht, fällt heraus
+    plaene = []
+    for i, pl in enumerate(db.scalars(select(ChapterPlan).where(ChapterPlan.campaign_id == c.id)
+                                      .order_by(ChapterPlan.created_at, ChapterPlan.id))):
+        szenen = [{"id": sz.get("id"), "title": sz.get("title"), "notes": sz.get("notes"), "state": sz.get("state"),
+                   "entryKeys": [eintrag_schluessel[x] for x in sz.get("entryIds") or [] if x in eintrag_schluessel]}
+                  for sz in json.loads(pl.scenes or "[]")]
+        plaene.append({"key": f"k{i + 1}", "title": pl.title, "sessionNumber": pl.session_number, "state": pl.state,
+                       "notes": pl.notes, "scenes": szenen, "names": json.loads(pl.names or "[]"),
+                       "documentKeys": [unterlage_schluessel[x] for x in json.loads(pl.document_ids or "[]")
+                                        if x in unterlage_schluessel],
+                       "createdAt": _z(pl.created_at), "updatedAt": _z(pl.updated_at)})
 
     titelbild = None
     if c.cover_image_updated_at:
@@ -340,7 +355,7 @@ def packliste(db: Session, c: Campaign, zugestimmt: set[str]) -> tuple[dict, lis
                      "coverPreset": c.cover_preset, "coverImage": titelbild,
                      "hotwords": namenshilfe._gespeichert(c), "nextSessionAt": _z(c.next_session_at),
                      "createdAt": _z(c.created_at)},
-        "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen,
+        "seats": plaetze, "sessions": kapitel, "entries": eintraege, "documents": unterlagen, "plans": plaene,
     }
     return daten, dateien
 
@@ -550,6 +565,27 @@ class _Unterlage(schemas.ApiModel):
     created_at: datetime | None = None
 
 
+class _Szene(schemas.ApiModel):
+    id: str = Field(pattern=schemas.UUID_MUSTER)
+    title: str = Field(min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    state: Literal["open", "played", "skipped"] = "open"
+    entry_keys: list[str] = Field(default=[], max_length=30)
+
+
+class _Plan(schemas.ApiModel):
+    key: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=1, max_length=120)
+    session_number: int | None = Field(default=None, ge=1)
+    state: Literal["draft", "ready", "played"] = "draft"
+    notes: str | None = Field(default=None, max_length=20000)
+    scenes: list[_Szene] = Field(default=[], max_length=50)
+    names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
+    document_keys: list[str] = Field(default=[], max_length=20)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class _Kampagne(schemas.ApiModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=20000)
@@ -571,6 +607,7 @@ class _Datei(schemas.ApiModel):
     sessions: list[_Kapitel] = Field(default=[], max_length=10000)
     entries: list[_Eintrag] = Field(default=[], max_length=100000)
     documents: list[_Unterlage] = Field(default=[], max_length=10000)
+    plans: list[_Plan] = Field(default=[], max_length=1000)  # 0.4.12; ältere Dateien haben keine
 
 
 def _fassung(text: str) -> tuple[int, ...]:
@@ -638,7 +675,7 @@ def zip_pruefen(pfad: Path) -> tuple[zipfile.ZipFile, _Datei]:
 
 def _verweise_pruefen(d: _Datei) -> None:
     """Schlüssel eindeutig, Verweise zeigen auf Vorhandenes, Kapitelnummern eindeutig."""
-    for liste in (d.seats, d.sessions, d.entries, d.documents):
+    for liste in (d.seats, d.sessions, d.entries, d.documents, d.plans):
         schluessel = [x.key for x in liste]
         if len(schluessel) != len(set(schluessel)):
             raise ImportFehler("import_format")
@@ -826,6 +863,7 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
     imp.progress = 0.5
 
     # Bibel
+    eintrag_neu: dict[str, str] = {}
     for e in d.entries:
         halter = platz[e.holder_seat].id if e.holder_seat else None
         x = Entry(campaign_id=c.id, type=e.type, name=e.name.strip()[:300] or "?", summary=e.summary or "",
@@ -842,6 +880,7 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
             x.origin_member_id = platz[e.origin.seat].id if e.origin.seat in platz else None
         db.add(x)
         db.flush()
+        eintrag_neu[e.key] = x.id
         for schluessel in sorted(set(e.hidden_from_seats)):
             db.add(EntryHidden(entry_id=x.id, member_id=platz[schluessel].id))
         for mn in e.mentions:
@@ -851,6 +890,7 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
     # Unterlagen der SL – geprüft wie beim Hochladen, der Text wird neu ausgelesen
     from app import unterlagen
 
+    unterlage_neu: dict[str, str] = {}
     for u in d.documents:
         daten = _lesen(z, u.file)
         if daten is None or len(daten) > unterlagen.MAX_BYTES:
@@ -868,11 +908,29 @@ def _anlegen(db: Session, user: User, z: zipfile.ZipFile, d: _Datei, angelegt: l
                                else ich.id, state="done", created_at=u.created_at or jetzt)
         db.add(doc)
         db.flush()
+        unterlage_neu[u.key] = doc.id
         ordner = unterlagen.ordner(doc.id)
         angelegt.append(ordner)
         storage.write_atomic(ordner / f"datei{Path(name).suffix.lower()}", daten)
         if x is not None:
             storage.write_atomic(ordner / "text.json", json.dumps(x.abschnitte, ensure_ascii=False).encode())
+
+    # Kapitelpläne (0.4.12): Verweise übersetzen; was nicht angelegt wurde, fällt heraus
+    for pl in d.plans:
+        szenen, gesehen = [], set()
+        for sz in pl.scenes:
+            if sz.id.lower() in gesehen:
+                continue
+            gesehen.add(sz.id.lower())
+            szenen.append({"id": sz.id.lower(), "title": sz.title.strip() or "?", "notes": sz.notes, "state": sz.state,
+                           "entryIds": list(dict.fromkeys(eintrag_neu[k] for k in sz.entry_keys if k in eintrag_neu))})
+        db.add(ChapterPlan(campaign_id=c.id, title=pl.title.strip() or "?", session_number=pl.session_number,
+                           state=pl.state, notes=pl.notes, scenes=json.dumps(szenen, ensure_ascii=False),
+                           names=json.dumps(list(dict.fromkeys(n.strip() for n in pl.names if n.strip())),
+                                            ensure_ascii=False),
+                           document_ids=json.dumps(list(dict.fromkeys(unterlage_neu[k] for k in pl.document_keys
+                                                                      if k in unterlage_neu))),
+                           created_at=pl.created_at or jetzt, updated_at=pl.updated_at or jetzt))
     return c, offen
 
 

@@ -169,6 +169,12 @@ def auslesen(art: str, daten: bytes) -> Extrakt:
     return x
 
 
+def datei_pfad(doc_id: str) -> Path | None:
+    """Gespeicherte Originaldatei (datei.<endung>) oder None."""
+    treffer = sorted(ordner(doc_id).glob("datei*"))
+    return treffer[0] if treffer else None
+
+
 def text_laden(doc_id: str) -> list[dict]:
     try:
         return json.loads((ordner(doc_id) / "text.json").read_text(encoding="utf-8"))

@@ -172,7 +172,7 @@ def test_mindestversion(client, world, admin):  # noqa: F811
     assert "Gespeichert" in r.text
     info = client.get(f"{API}/info").json()  # /info bleibt immer erreichbar
     assert info["minAppVersion"] == "0.9.0" and info["latestAppVersion"] == "0.9.1"
-    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.11"
+    assert info["releaseNotes"] == "Neue Einladungen." and info["apiVersion"] == "0.4.12"
     url = f"{API}/campaigns"
     r = client.get(url, headers=world["gm"])
     assert r.status_code == 426 and "0.9.0" in r.json()["message"]

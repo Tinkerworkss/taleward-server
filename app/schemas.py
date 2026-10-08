@@ -685,6 +685,60 @@ class DocumentApplyIn(ApiModel):
     apply_world_info: bool = False
 
 
+# ---------------------------------------------------------------- Kapitelplan (0.4.12)
+class DocumentPageOut(ApiModel):
+    page: int
+    text: str
+
+
+class DocumentTextOut(ApiModel):
+    pages: list[DocumentPageOut]
+
+
+class PlanScene(ApiModel):
+    id: str = Field(pattern=UUID_MUSTER)
+    title: str = Field(min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    entry_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=30)
+    state: Literal["open", "played", "skipped"] = "open"
+
+
+class ChapterPlanIn(ApiModel):
+    """POST: title ist Pflicht. PATCH (ChapterPlanPatchIn): nur mitgeschickte Felder ändern sich."""
+    title: str = Field(min_length=1, max_length=120)
+    session_number: int | None = Field(default=None, ge=1)
+    state: Literal["draft", "ready", "played"] = "draft"
+    notes: str | None = Field(default=None, max_length=20000)
+    scenes: list[PlanScene] = Field(default=[], max_length=50)
+    names: list[Annotated[str, Field(max_length=40)]] = Field(default=[], max_length=100)
+    document_ids: list[Annotated[str, Field(max_length=36)]] = Field(default=[], max_length=20)
+
+
+class ChapterPlanPatchIn(ApiModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    session_number: int | None = Field(default=None, ge=1)
+    state: Literal["draft", "ready", "played"] | None = None
+    notes: str | None = Field(default=None, max_length=20000)
+    scenes: list[PlanScene] | None = Field(default=None, max_length=50)
+    names: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=100)
+    document_ids: list[Annotated[str, Field(max_length=36)]] | None = Field(default=None, max_length=20)
+    if_updated_at: datetime | None = None
+
+
+class ChapterPlanOut(ApiModel):
+    id: str
+    campaign_id: str
+    title: str
+    session_number: int | None
+    state: Literal["draft", "ready", "played"]
+    notes: str | None
+    scenes: list[PlanScene]
+    names: list[str]
+    document_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
 # ---------- Qualitätsprüfung (0.4.6) ----------
 class CorrectionIn(ApiModel):
     heard: str = Field(min_length=1, max_length=100)

@@ -572,6 +572,26 @@ class CampaignDocument(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class ChapterPlan(Base):
+    """Kapitelplan der SL (Schnittstelle 0.4.12): Szenen mit Notiz und verknüpften Einträgen, Namen als Schreibhilfe,
+    verknüpfte Unterlagen. Nur die SL sieht ihn; er fließt nie in Kapitel, Vorschläge, Gegenprüfung oder Probelauf –
+    einzige Ausnahme sind `names` als Schreibhilfe der Transkription des Kapitels mit derselben Nummer.
+    Szenen, Namen und Unterlagen liegen als JSON im Plan (immer als ganze Liste ersetzt)."""
+
+    __tablename__ = "chapter_plans"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(120))
+    session_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[str] = mapped_column(String(16), default="draft")  # draft | ready | played
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scenes: Mapped[str] = mapped_column(Text, default="[]")  # JSON [{id, title, notes, entryIds, state}]
+    names: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
+    document_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON [str]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 # ---------------------------------------------------------------- Miteinander (Kommentare, Termine)
 class Comment(Base):
     """Kommentar zu einem Kapitel: öffentlich (recipient None) oder privat zwischen zwei Mitgliedern.

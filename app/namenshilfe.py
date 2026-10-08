@@ -117,10 +117,14 @@ def ignoriert(campaign: Campaign) -> set[str]:
     return {x.casefold() for x in _gespeichert(campaign)["ignoriert"]}
 
 
-def fuer_kampagne(db: Session, campaign: Campaign) -> list[str]:
-    """Was der Worker als hotwords bekommt: Namenshilfe der Kampagne, dann die Begriffsliste des Systems – begrenzt,
-    weil Whisper nur einen kurzen Vorspann nutzt."""
-    namen = _eindeutig(anzeige(db, campaign) + list(systembegriffe(campaign.system)))
+def fuer_kampagne(db: Session, campaign: Campaign, kapitel: int | None = None) -> list[str]:
+    """Was der Worker als hotwords bekommt: Namen aus dem Kapitelplan für dieses Kapitel (0.4.12, nur die Wörter),
+    dann die Namenshilfe der Kampagne, dann die Begriffsliste des Systems – begrenzt, weil Whisper nur einen kurzen
+    Vorspann nutzt. Die Plan-Namen stehen vorn, weil die SL sie ausdrücklich für diese Runde eingetragen hat."""
+    from app.routers.plaene import namen_fuer
+
+    namen = _eindeutig(namen_fuer(db, campaign.id, kapitel) + anzeige(db, campaign)
+                       + list(systembegriffe(campaign.system)))
     ergebnis, laenge = [], 0
     for n in namen[:MAX_BEGRIFFE]:
         if laenge + len(n) + 2 > MAX_ZEICHEN:
