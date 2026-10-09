@@ -26,13 +26,14 @@ def test_nur_absaetze_mit_hinweis_aendern_sich():
     assert list(neu) == [0] and verworfen == [{"absatz": 3, "grund": "ohne Hinweis geändert"}]
 
 
-def test_was_fehlt_genau_ein_absatz_und_nicht_kuerzer():
+def test_freier_hinweis_aendert_hoechstens_so_viele_absaetze_wie_er_saetze_hat():
     d = {"absaetze": [{"nr": 2, "text": TEILE[1] + " Unterwegs erzählte sie vom Leuchtturm."},
                       {"nr": 3, "text": TEILE[2] + " Dort schliefen sie."}]}
     neu, verworfen = sm.korrektur_anwenden(d, TEILE, {}, "Hanna erzählt vom Leuchtturm.")
-    assert list(neu) == [1] and verworfen[0]["absatz"] == 3
-    neu, verworfen = sm.korrektur_anwenden({"absaetze": [{"nr": 2, "text": "Hanna wartete."}]}, TEILE, {}, "x")
-    assert not neu and verworfen == [{"absatz": 2, "grund": "beim Ergänzen gekürzt"}]
+    assert list(neu) == [1] and verworfen == [{"absatz": 3, "grund": "ohne Hinweis geändert"}]
+    neu, verworfen = sm.korrektur_anwenden(d, TEILE, {}, "Hanna erzählt vom Leuchtturm. Im Kloster schlafen sie.")
+    assert list(neu) == [1, 2] and not verworfen
+    assert sm.hinweis_saetze("Das Boot war ein Floß. Mara überlebt.\nEs fehlt die Ankunft") == 3
 
 
 def test_aushoehlen_und_abschreiben_wird_verworfen():
@@ -63,7 +64,7 @@ def test_ablauf_korrigieren_laesst_den_rest_zeichengleich():
                                                    "[1:00] Hanna bringt die Gruppe mit dem Boot über den Fluss.")
     teile = text.split("\n\n")
     assert teile[0] == TEILE[0] and teile[2] == TEILE[2] and "Floß" in teile[1]
-    assert bericht == {"hinweise": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
+    assert bericht == {"anzahl": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
     assert "Absatz 2: Es war ein Floß" in anbieter.nutzer and "bei Widerspruch gilt der Hinweis" in anbieter.nutzer
 
 
@@ -85,7 +86,7 @@ def test_korrektur_im_probelauf(client, world, dbs, tmp_path, admin):  # noqa: F
             break
         time.sleep(0.05)
     seite = client.get(f"/verwaltung/probelauf/{pid}").text
-    assert 'name="h0"' in seite and 'name="fehlt"' in seite and "Korrigieren lassen" in seite
+    assert 'name="h0"' in seite and 'name="fehlt"' in seite and "Stimmt etwas nicht oder fehlt etwas?" in seite
     leer = client.post(f"/verwaltung/probelauf/{pid}/korrektur", data={"csrf": admin, "h0": "  "})
     assert "Bitte mindestens einen Hinweis eintragen." in leer.text
     vorher = probelauf.lesen(pid).text.split("\n\n")
@@ -109,3 +110,32 @@ def test_korrektur_im_probelauf(client, world, dbs, tmp_path, admin):  # noqa: F
 def test_kuerzen_nennt_untergrenze():
     assert "{unten} bis {ziel} Wörter (nicht weniger)" in sm.SYSTEM_KUERZEN
     assert sm.untergrenze({"transkript": [{"start": 9000}]}, True) == 900
+
+
+def test_bericht_ueberschreibt_die_hinweise_nicht(client, world, dbs, tmp_path, admin, monkeypatch):  # noqa: F811
+    """Mit Cloud-API: Der Durchgang speichert die Hinweise als Liste und die Anzahl getrennt (die Seite zeigt beides)."""
+    from app import kapitelprobe as probelauf
+    from app.kapitelprobe import Probe
+
+    class Klient:
+        modell = "m"
+
+        def kosten_cent(self, *_a):
+            return 0
+
+    def korrigieren(self, ein, text, hinweise, frei="", notizen=""):
+        teile = text.split("\n\n")
+        teile[0] += " Richtig."
+        return "\n\n".join(teile), {"anzahl": 2, "geaendert": [1], "verworfen": [], "ohne_aenderung": []}
+
+    monkeypatch.setattr(sm.Ablauf, "korrigieren", korrigieren)
+    monkeypatch.setattr("app.zusammenfassung.api_klient", lambda _k: Klient())
+    p = Probe(id="11111111-1111-1111-1111-111111111111", session_id="s", kampagne="K", kapitel=1, quelle="Runde",
+              zeilen=1, modell="m", gestartet="2026-10-09T00:00:00Z", zustand="fertig", text=TEXT, campaign_id="c",
+              besitzer="b")
+    probelauf._speichern(p)
+    k = type("K", (), {"art": "api"})()
+    probelauf._korrigieren(p, k, {}, {0: "Stimmt nicht."}, "Es fehlt etwas.")
+    runde = probelauf.lesen(p.id).korrekturen[0]
+    assert runde["hinweise"] == [{"absatz": 1, "text": "Stimmt nicht."}] and runde["anzahl"] == 2
+    assert probelauf.aktueller_text(probelauf.lesen(p.id)).startswith(TEILE[0] + " Richtig.")

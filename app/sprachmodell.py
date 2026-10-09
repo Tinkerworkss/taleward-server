@@ -774,8 +774,9 @@ SYSTEM_KORREKTUR = """Du überarbeitest das Kapitel einer Pen-&-Paper-Session na
 Spielleitung war dabei und hat immer recht: Was in einem Hinweis steht, gilt, auch wenn die Notizen etwas anderes sagen.
 - Ein Hinweis zu einem Absatz: Schreib genau diesen Absatz neu. Stell die beanstandete Stelle richtig oder streich \
 sie; alles andere im Absatz bleibt, wie es ist.
-- Ein Hinweis unter „Was fehlt“: Wähle genau einen Absatz, in den das Fehlende nach der Reihenfolge des Geschehens \
-gehört, und füg es dort knapp ein. Der Rest des Absatzes bleibt.
+- Hinweise ohne Absatzangabe (Fehler oder Fehlendes): Ordne jeden selbst dem Absatz zu, den er betrifft – Fehlendes \
+dem Absatz, in den es nach der Reihenfolge des Geschehens gehört – und ändere nur diese Absätze. Fehlendes knapp \
+einfügen, der Rest des Absatzes bleibt.
 - Ein Hinweis ist eine Anweisung, kein Text zum Abschreiben: Ins Kapitel kommt nur, was die Spielleitung darin sehen \
 will, ohne Wörter wie „Hinweis“ oder „Spielleitung“. Nichts darüber hinaus erfinden.
 Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, reiner Text ohne Markdown. \
@@ -783,16 +784,23 @@ Keine Regeln, Würfe oder Punkte.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]} – nur die geänderten Absätze. Sprache: {sprache}."""
 KORREKTUR_NOTIZEN_ZEICHEN = 60_000  # Notizen als Hintergrund, gekürzt
 KORREKTUR_MINDESTENS = 0.3  # ein Absatz darf beim Richtigstellen nicht auf weniger als 30 % schrumpfen
+KORREKTUR_FREI_HOECHSTENS = 5  # so viele Absätze darf ein Hinweistext ohne Absatzangabe höchstens ändern
 _META = re.compile(r"\b(?:Hinweis|Spielleitung|Spielleiter|game master|hint)\b", re.I)
 
 
-def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehlt: str) -> tuple[dict[int, str], list[dict]]:
-    """Antwort des Modells prüfen, ohne Modell: Nur Absätze mit Hinweis ändern sich, bei „Was fehlt“ höchstens ein
-    weiterer. Ein Absatz darf nicht ausgehöhlt werden, ein ergänzter nicht kürzer, und kein Hinweis darf als Wortlaut
-    („laut Hinweis …“) ins Kapitel. Liefert ({Index: neuer Text}, [verworfen mit Grund])."""
+def hinweis_saetze(frei: str) -> int:
+    """Wie viele Hinweise stecken in einem freien Text? Ein Satz bzw. eine Zeile je Hinweis."""
+    return len([x for x in re.split(r"(?<=[.!?])\s+|\n+", frei or "") if len(x.split()) >= 2])
+
+
+def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], frei: str) -> tuple[dict[int, str], list[dict]]:
+    """Antwort des Modells prüfen, ohne Modell: Absätze mit Hinweis dürfen sich ändern; ein Hinweistext ohne
+    Absatzangabe (0.4.70, ein Feld wie in der App geplant) höchstens so viele weitere, wie er Sätze hat (bis
+    KORREKTUR_FREI_HOECHSTENS). Ein Absatz darf nicht ausgehöhlt werden, und kein Hinweis darf als Wortlaut („laut
+    Hinweis …“) ins Kapitel. Liefert ({Index: neuer Text}, [verworfen mit Grund])."""
     neu: dict[int, str] = {}
     verworfen: list[dict] = []
-    fehlt_ziel: int | None = None
+    frei_rest = min(max(hinweis_saetze(frei), 1), KORREKTUR_FREI_HOECHSTENS) if frei.strip() else 0
     for a in d.get("absaetze") or d.get("paragraphs") or []:
         if not isinstance(a, dict):
             continue
@@ -803,20 +811,17 @@ def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehl
         t = " ".join(klartext(a.get("text")).split()) if isinstance(a.get("text"), str) else ""
         if not (0 <= i < len(teile)) or not t or i in neu or t == teile[i]:
             continue
-        if i not in hinweise:
-            if not fehlt or fehlt_ziel is not None:
-                verworfen.append({"absatz": i + 1, "grund": "ohne Hinweis geändert"})
-                continue
-            if len(t) < len(teile[i]):
-                verworfen.append({"absatz": i + 1, "grund": "beim Ergänzen gekürzt"})
-                continue
-            fehlt_ziel = i
-        elif len(t) < len(teile[i]) * KORREKTUR_MINDESTENS:
+        if i not in hinweise and frei_rest <= 0:
+            verworfen.append({"absatz": i + 1, "grund": "ohne Hinweis geändert"})
+            continue
+        if len(t) < len(teile[i]) * KORREKTUR_MINDESTENS:
             verworfen.append({"absatz": i + 1, "grund": "zu stark gekürzt"})
             continue
         if _META.search(t) and not _META.search(teile[i]):
             verworfen.append({"absatz": i + 1, "grund": "Hinweis abgeschrieben"})
             continue
+        if i not in hinweise:
+            frei_rest -= 1
         neu[i] = t
     return neu, verworfen
 
@@ -1748,7 +1753,7 @@ class Ablauf:
         self.letzte_kuerzung.update(angenommen=True, grund="")
         return neu
 
-    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], fehlt: str = "", notizen: str = ""
+    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], frei: str = "", notizen: str = ""
                     ) -> tuple[str, dict]:
         """0.4.69: Ein Durchgang „Korrektur per Hinweis“. hinweise: {Absatz-Index (0-basiert): Text der SL}. Alle
         anderen Absätze bleiben zeichengleich (sie werden nie neu zusammengesetzt). Liefert (Text, Bericht)."""
@@ -1756,13 +1761,14 @@ class Ablauf:
 
         teile = absaetze(text)
         hinweise = {i: h.strip() for i, h in hinweise.items() if 0 <= i < len(teile) and h.strip()}
-        fehlt = fehlt.strip()
-        bericht = {"hinweise": len(hinweise) + bool(fehlt), "geaendert": [], "verworfen": [], "ohne_aenderung": []}
-        if not hinweise and not fehlt:
+        frei = frei.strip()
+        bericht = {"anzahl": len(hinweise) + (max(hinweis_saetze(frei), 1) if frei else 0), "geaendert": [],
+                   "verworfen": [], "ohne_aenderung": []}
+        if not hinweise and not frei:
             return text, bericht
         liste = [f"- Absatz {i + 1}: {h}" for i, h in sorted(hinweise.items())]
-        if fehlt:
-            liste.append(f"- Was fehlt: {fehlt}")
+        if frei:
+            liste.append(f"- Ohne Absatzangabe: {frei}")
         grund = (f"Szenennotizen (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
                  f"{notizen[:KORREKTUR_NOTIZEN_ZEICHEN]}\n\n") if notizen.strip() else ""
         nutzer = (f"{_kopf(ein)}\n\n{grund}Kapitel, Absatz für Absatz:\n"
@@ -1770,7 +1776,7 @@ class Ablauf:
                   + "\n\nHinweise der Spielleitung:\n" + "\n".join(liste))
         self._schritt("revision")
         d = self.zaehler.aufruf(self.klient, SYSTEM_KORREKTUR.replace("{sprache}", _sprache(ein)), nutzer)
-        neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, fehlt)
+        neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, frei)
         geschuetzt = [e["name"] for e in ein.get("bibel") or []]
         for i, t in list(neu.items()):
             sauber, _befunde = artefakte.kapitel(t, ein.get("personen") or [], geschuetzt)

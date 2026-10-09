@@ -139,7 +139,13 @@ version_setzen "$NEU"
 # Server mit frischem Grundbild; ein eingebauter Worker (COMPOSE_PROFILES) ohne --pull, damit sein mehrere GB großes
 # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
 # Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
-if docker compose build --pull server >"$BAULOG" 2>&1 && docker compose build >>"$BAULOG" 2>&1 \
+# Ist Docker Hub gerade nicht erreichbar oder begrenzt (429 Too Many Requests), mit dem vorhandenen Grundbild bauen
+grundbild_bauen() {
+  docker compose build --pull server >"$BAULOG" 2>&1 && return 0
+  echo "--- Grundbild nicht abrufbar, baue mit dem vorhandenen ---" >>"$BAULOG"
+  docker compose build server >>"$BAULOG" 2>&1
+}
+if grundbild_bauen && docker compose build >>"$BAULOG" 2>&1 \
    && { docker compose pull --ignore-buildable --quiet >>"$BAULOG" 2>&1 || true; } \
    && docker compose up -d && gesund; then
   melden "aktualisiert" "$ALT" "$NEU" ""

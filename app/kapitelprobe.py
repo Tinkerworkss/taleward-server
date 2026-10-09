@@ -393,8 +393,9 @@ KORREKTUR_ZEICHEN = 1000  # je Hinweis
 
 
 def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt: str, user_id: str) -> None:
-    """Einen Korrekturdurchgang im Hintergrund starten. Die Hinweise sind wie SL-Notizen nur für die SL; sie landen nur
-    in diesem Probelauf. Wirft ValueError mit einem Code für die Meldung."""
+    """Einen Korrekturdurchgang im Hintergrund starten. hinweise: je Absatz (optional); fehlt: ein freier Text ohne
+    Absatzangabe (0.4.70: das eine Feld, wie in der App geplant). Die Hinweise sind wie SL-Notizen nur für die SL; sie
+    landen nur in diesem Probelauf. Wirft ValueError mit einem Code für die Meldung."""
     from app.einstellungen import llm_konfig
     from app.models import Campaign
     from app.zusammenfassung import eingabe_bauen, recap_eingabe
@@ -426,12 +427,13 @@ def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt: 
 
 
 def _korrigieren(p: Probe, k, ein: dict, hinweise: dict[int, str], fehlt: str) -> None:
-    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze
+    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze, hinweis_saetze
 
     vorher = aktueller_text(p)
     runde = {"nr": len(p.korrekturen) + 1, "gestartet": utcnow().isoformat().replace("+00:00", "Z"),
              "hinweise": [{"absatz": i + 1, "text": h} for i, h in sorted(hinweise.items())], "fehlt": fehlt,
              "vorher": vorher, "nachher": "", "geaendert": [], "verworfen": [], "ohne_aenderung": [],
+             "anzahl": len(hinweise) + (max(hinweis_saetze(fehlt), 1) if fehlt else 0),
              "woerter_vorher": len(vorher.split()), "kosten_cent": 0, "fehler": None}
     with _REIHE:
         t0 = time.monotonic()
