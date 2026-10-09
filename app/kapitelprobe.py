@@ -66,6 +66,9 @@ class Probe:
     weg: str = "abschrift"  # 0.4.63: „abschrift“ (wie echte Runden) oder „notizen“ (Notizen zuerst, zum Vergleich)
     notizen: str = ""  # 0.4.63: Szenennotizen des Wegs „notizen“ (Datei notizen.txt)
     stand: list[str] = field(default_factory=list)  # 0.4.63: laufender Stand am Ende (Datei stand.txt)
+    auswahl: list[dict] = field(default_factory=list)  # 0.4.65: Pflichtpunkte (Datei auswahl.txt)
+    pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte (Datei pflicht.json)
+    entwurf: str = ""  # 0.4.65: erster Entwurf vor der Nachbesserung (Datei entwurf.txt)
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -173,7 +176,8 @@ def datei(probe_id: str, name: str) -> Path | None:
     return p if p.is_file() else None
 
 
-DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "transkript.txt", "ergebnis.json")
+DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
+           "entwurf.txt", "transkript.txt", "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -315,6 +319,9 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
             p.warnungen = list(getattr(ablauf, "warnungen", []) or [])
             p.bereinigt = list(ablauf.bereinigt)
             p.notizen, p.stand = ablauf.letzte_notizen, list(ablauf.letzter_stand)
+            p.auswahl, p.pflicht = list(ablauf.letzte_auswahl), dict(ablauf.letzte_pflicht)
+            if p.pflicht.get("nachgebessert"):
+                p.entwurf = ablauf.letztes_kapitel1
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -348,8 +355,19 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "notizen.txt").write_text(p.notizen + "\n", encoding="utf-8")
             if p.stand:
                 (o / "stand.txt").write_text("\n".join(f"- {s}" for s in p.stand) + "\n", encoding="utf-8")
+            if p.auswahl:
+                from app.sprachmodell import auswahl_text
+
+                (o / "auswahl.txt").write_text(
+                    "\n".join(f"{z} ({a['rang']})" for z, a in zip(auswahl_text(p.auswahl).split("\n"), p.auswahl))
+                    + "\n", encoding="utf-8")
+            if p.pflicht:
+                (o / "pflicht.json").write_text(json.dumps(p.pflicht, ensure_ascii=False, indent=2), encoding="utf-8")
+            if p.entwurf:
+                (o / "entwurf.txt").write_text(p.entwurf + "\n", encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
-                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen")},
+                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
+                                                                  "pflicht", "entwurf")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)

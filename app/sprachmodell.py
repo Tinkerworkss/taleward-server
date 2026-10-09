@@ -651,6 +651,9 @@ kommt in der Grundlage gar nicht vor), "widerspricht" (die Grundlage sagt ausdr�
 - Erzählerische Ausschmückung (Gefühle, Aussehen, Gerüche, Wetter, Gedanken, Übergänge) ist erlaubt und kein Grund \
 für "teilweise", "unbelegt" oder "widerspricht". Kommt etwas in der Grundlage nur nicht vor, ist das nie \
 "widerspricht".
+- Eine einzige Aussage, die der Grundlage widerspricht, macht den ganzen Absatz "widerspricht", auch wenn alles andere \
+stimmt – nie "teilweise": eine Figur stirbt, obwohl sie überlebt (oder umgekehrt); die falsche Person rettet, gibt, \
+bekommt oder verspricht etwas; zwei Figuren werden zu einer; ein Ereignis geschieht, das nur angedroht war.
 - Prüfe jede Beziehung einzeln, nicht nur, ob die Wörter vorkommen: Wer tut was wem? Wer gibt wem was, und wer hat es \
 danach? War jemand schon verletzt, oder wird er es durch die erzählte Handlung? Wer verspricht wem was, gegen welche \
 Gegenleistung? Ist eine Figur in der Szene anwesend oder wird nur über sie gesprochen? Ist etwas beobachtet, behauptet, \
@@ -689,6 +692,91 @@ Spielleitung ist keine Figur. Erzählt kein Absatz die Nachbarn, lass das Ereign
 ändere keine vorhandenen Aussagen, erfinde nichts über die Notiz hinaus. Gib nur die Absätze zurück, die du geändert \
 hast, jeweils vollständig. Reiner Text ohne Markdown.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+
+# 0.4.65, Weg „Notizen zuerst“: erst auswählen, dann schreiben, dann gegen die Auswahl prüfen
+SYSTEM_AUSWAHL = """Du bereitest das Kapitel zu einer langen Pen-&-Paper-Session vor. Du bekommst die Szenennotizen \
+(mit Zeitstempeln) und den Stand am Ende der Runde. Wähle die Ereignisse aus, die im Kapitel auf keinen Fall fehlen \
+dürfen – höchstens {hoechstens}, in der Reihenfolge des Geschehens.
+Wichtig ist, was einem Spieler vor der nächsten Runde Wissen nehmen würde, wenn es fehlt oder falsch ist:
+- Wer gefangen, verurteilt, befreit, gerettet (von wem), verletzt oder getötet wird – und wer überlebt.
+- Wer wem was gibt, verspricht oder schuldet; Abmachungen mit ihren Bedingungen; Schwüre und Aufträge.
+- Visionen und Botschaften mit ihrem Inhalt; bestehende Beziehungen, die etwas bewirken („kennt ihn seit der Kindheit“).
+- Wendepunkte der Lage (Katastrophen, Flucht, Ankunft an einem neuen Ort) und entscheidende Informationen.
+Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.
+Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
+Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
+der Stand am Ende), rang ("kritisch" oder "wichtig"). Die Spielleitung ist keine Figur. Erfinde nichts.
+Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
+Sprache: {sprache}."""
+AUSWAHL_HOECHSTENS = 20
+
+SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
+vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor) oder \
+"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). absatz: die Nummer \
+des Absatzes, in dem es steht bzw. in den es nach der Reihenfolge des Geschehens gehört. begruendung: bei "fehlt" und \
+"widerspricht" ein kurzer Satz für die Spielleitung, ohne Zitat, sonst leer. Bewerte nur die Liste, nicht den Stil.
+Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "begruendung": "…"}]}. Sprache: {sprache}."""
+
+SYSTEM_PFLICHT_NACH = """Du überarbeitest einzelne Absätze im Kapitel einer Pen-&-Paper-Session. Je Absatz steht \
+dabei, welches Ereignis darin fehlt oder falsch erzählt ist, mit dem richtigen Ausgang.
+Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen. Alles andere \
+im Absatz bleibt, wie es ist. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
+reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
+Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
+                  "fehlt": "fehlt", "missing": "fehlt", "widerspricht": "widerspricht", "contradicts": "widerspricht",
+                  "contradicted": "widerspricht"}
+
+
+def auswahl_lesen(d: dict) -> list[dict]:
+    """Antwort der Auswahl → [{zeit, ereignis, ausgang, rang}], höchstens AUSWAHL_HOECHSTENS, ohne Leeres und Doppeltes,
+    nach Zeit sortiert."""
+    aus, gesehen = [], set()
+    for e in d.get("ereignisse") or d.get("events") or []:
+        if not isinstance(e, dict):
+            continue
+        ereignis = klartext(e.get("ereignis") or e.get("event") or "")[:300]
+        if not ereignis or ereignis.casefold() in gesehen or _SPIELLEITUNG.search(ereignis):
+            continue
+        gesehen.add(ereignis.casefold())
+        rang = str(e.get("rang") or e.get("rank") or "").strip().lower()
+        aus.append({"zeit": zeit_lesen(e.get("zeit") if e.get("zeit") is not None else e.get("time")),
+                    "ereignis": ereignis, "ausgang": klartext(e.get("ausgang") or e.get("outcome") or "")[:300],
+                    "rang": "kritisch" if rang in ("kritisch", "critical") else "wichtig"})
+    aus = aus[:AUSWAHL_HOECHSTENS]
+    return sorted(aus, key=lambda e: (e["zeit"] is None, e["zeit"] or 0.0))
+
+
+def auswahl_text(punkte: list[dict]) -> str:
+    return "\n".join(f"{i + 1}. [{_zeit(p['zeit']) if p['zeit'] is not None else '?'}] {p['ereignis']}"
+                     + (f" – Ausgang: {p['ausgang']}" if p["ausgang"] else "") for i, p in enumerate(punkte))
+
+
+def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int) -> list[dict]:
+    """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), begruendung}. Fehlende Punkte
+    gelten als ungeprüft und lösen nichts aus."""
+    nach_nr = {}
+    for a in d.get("punkte") or d.get("points") or []:
+        if not isinstance(a, dict):
+            continue
+        try:
+            nr = int(a.get("nr") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= nr <= anzahl_punkte and nr not in nach_nr:
+            nach_nr[nr] = a
+    aus = []
+    for nr in range(1, anzahl_punkte + 1):
+        a = nach_nr.get(nr) or {}
+        try:
+            absatz = int(a.get("absatz") or a.get("paragraph") or 0) - 1
+        except (TypeError, ValueError):
+            absatz = -1
+        aus.append({"nr": nr, "status": PFLICHT_STATUS.get(str(a.get("status") or "").strip().lower(), "ungeprueft"),
+                    "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
+                    "begruendung": klartext(a.get("begruendung") or a.get("reason") or "")[:300]})
+    return aus
+
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
 ERGAENZEN_RAENGE = ("kritisch", "wichtig")  # nur diese Ränge werden ergänzt
@@ -742,6 +830,21 @@ def hinweise_eintragen(pruefung: dict, befunde: list[dict], sprache: str | None)
             continue
         zitat = f["text"] if len(f["text"]) <= TISCH_ZITAT else f["text"][:TISCH_ZITAT].rsplit(" ", 1)[0] + " …“"
         b["verdict"], b["note"] = "off_game", vorsatz + zitat
+
+
+def pflicht_eintragen(pruefung: dict, befund: list[dict], anzahl: int) -> None:
+    """0.4.65: Was nach der Nachbesserung noch einem ausgewählten Ereignis widerspricht, markiert den Absatz als
+    „widerspricht“ – mit der Begründung der Pflichtprüfung, falls die Gegenprüfung keine eigene hat."""
+    absaetze_ = {b.get("index"): b for b in pruefung.get("paragraphs") or []}
+    for f in befund:
+        if f.get("status") != "widerspricht" or f.get("absatz") is None or not (0 <= f["absatz"] < anzahl):
+            continue
+        b = absaetze_.get(f["absatz"])
+        if b is None:
+            continue
+        if not (b.get("verdict") == "contradicted" and b.get("note")):
+            b["note"] = f["begruendung"] or None
+        b["verdict"] = "contradicted"
 
 
 def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
@@ -1182,6 +1285,8 @@ class Ablauf:
     letzte_notizen: str = ""
     letzter_stand: list = field(default_factory=list)
     letztes_transkript: str = ""
+    letzte_auswahl: list = field(default_factory=list)  # 0.4.65: Pflichtpunkte des Wegs „Notizen zuerst“
+    letzte_pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte, vorher/nachher
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1437,6 +1542,71 @@ class Ablauf:
             return None
         return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
 
+    def auswahl(self, ein: dict, notizen: str) -> list[dict]:
+        """0.4.65: die entscheidenden Ereignisse mit Ausgang, bevor das Kapitel geschrieben wird."""
+        stand = "\n".join(f"- {s}" for s in self.letzter_stand) or "(kein Stand)"
+        nutzer = (f"{_kopf(ein)}\n\nSzenennotizen der Runde:\n{notizen}\n\nStand am Ende der Runde (mit dem Zeitpunkt "
+                  f"der Änderung):\n{stand}")
+        system = (SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein))
+                  .replace("{hoechstens}", str(AUSWAHL_HOECHSTENS)))
+        self._schritt("recap")
+        return auswahl_lesen(self.zaehler.aufruf(self.klient, system, nutzer))
+
+    def pflicht_pruefen(self, ein: dict, punkte: list[dict], text: str) -> list[dict]:
+        teile = absaetze(text)
+        nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel, Absatz für Absatz:\n"
+                  + "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile)))
+        self._schritt("review")
+        return pflicht_lesen(self.zaehler.aufruf(self.klient, SYSTEM_PFLICHT.replace("{sprache}", _sprache(ein)), nutzer),
+                             len(punkte), len(teile))
+
+    def pflicht_nachbessern(self, ein: dict, punkte: list[dict], befund: list[dict], text: str) -> str | None:
+        """Genau eine Nachbesserung, nur für Absätze mit fehlenden oder falsch erzählten Pflichtpunkten. Ein Absatz
+        bleibt ein Absatz; fehlt etwas, darf er nicht kürzer werden, sonst höchstens um ein Drittel."""
+        teile = absaetze(text)
+        je_absatz: dict[int, list[str]] = {}
+        for b in befund:
+            if b["status"] in ("fehlt", "widerspricht") and b["absatz"] is not None:
+                p = punkte[b["nr"] - 1]
+                art = "fehlt" if b["status"] == "fehlt" else "falsch erzählt"
+                je_absatz.setdefault(b["absatz"], []).append(
+                    f"- {art}: {p['ereignis']}" + (f" – richtiger Ausgang: {p['ausgang']}" if p["ausgang"] else ""))
+        if not je_absatz:
+            return None
+        liste = "\n\n".join(f"Absatz {i + 1}:\n{teile[i]}\nZu tun:\n" + "\n".join(je_absatz[i])
+                              for i in sorted(je_absatz))
+        self._schritt("revision")
+        d = self.zaehler.aufruf(self.klient, SYSTEM_PFLICHT_NACH.replace("{sprache}", _sprache(ein)),
+                                f"{_kopf(ein)}\n\n{liste}")
+        neu = {}
+        for a in d.get("absaetze") or d.get("paragraphs") or []:
+            try:
+                nr = int(a.get("nr") or a.get("index") or 0) - 1
+            except (TypeError, ValueError, AttributeError):
+                continue
+            t = " ".join(klartext(a.get("text")).split()) if isinstance(a.get("text"), str) else ""
+            if nr not in je_absatz or not t:
+                continue
+            nur_fehlend = all(z.startswith("- fehlt") for z in je_absatz[nr])
+            if len(t) < (len(teile[nr]) if nur_fehlend else len(teile[nr]) * 2 / 3):
+                continue
+            neu[nr] = t
+        if not neu:
+            return None
+        return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
+
+    def pflicht(self, ein: dict, punkte: list[dict], r: dict) -> list[dict]:
+        """Kapitel gegen die Pflichtpunkte prüfen, einmal nachbessern, noch einmal prüfen. Liefert den letzten Befund."""
+        vorher = self.pflicht_pruefen(ein, punkte, r["text"])
+        self.letzte_pflicht = {"vorher": vorher, "nachher": [], "nachgebessert": False}
+        neu = self.pflicht_nachbessern(ein, punkte, vorher, r["text"])
+        if not neu:
+            return vorher
+        r["text"], self.letzte_pflicht["nachgebessert"] = neu, True
+        nachher = self.pflicht_pruefen(ein, punkte, neu)
+        self.letzte_pflicht["nachher"] = nachher
+        return nachher
+
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
         """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die
         Gegenprüfung belegt hat. Szenennotizen können selbst schon falsch sein; das Transkript nicht. Liefert je
@@ -1599,22 +1769,39 @@ class Ablauf:
         elif titel.startswith("Szenennotizen"):
             stand = ("\n\nStand am Ende der Runde (Zustände, Besitz, Beziehungen, Abmachungen – mit dem Zeitpunkt der "
                      "Änderung):\n" + "\n".join(f"- {s}" for s in self.letzter_stand)) if self.letzter_stand else ""
+            pflicht = ""
+            if self.notizen_zuerst:
+                try:
+                    self.letzte_auswahl = self.auswahl(recap_ein, grundlage)
+                except SprachmodellFehler as e:
+                    log.warning("Auswahl übersprungen: %s", e)
+                    self.warnungen.append({"schritt": "auswahl", "fehler": str(e),
+                                           "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
+                if self.letzte_auswahl:
+                    pflicht = ("\n\nDiese Ereignisse müssen im Kapitel vorkommen, jedes mit genau diesem Ausgang, in "
+                               "dieser Reihenfolge. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne Versuche) "
+                               "höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
-                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand)
+                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand + pflicht)
         else:
             r = self.recap(recap_ein, titel, grundlage)
         self.letztes_kapitel1 = r["text"]
         # Erst Fehlendes ergänzen, dann Falsches prüfen – sonst prüft man einen Text, der gleich wieder wächst.
         # Die Vollständigkeitsprüfung sieht dieselbe Grundlage wie der Recap; ihre Punkte zählen nur, wenn sie dort
         # wiederzufinden sind (fehlend_lesen), damit der Prüfer nichts erfindet.
+        pflicht_rest: list[dict] = []
         try:
-            grund_titel, grund_text = (("Szenennotizen der Runde in Zeitabschnitten", self.gegliedert(grundlage))
-                                       if titel.startswith("Szenennotizen") and not verlauf else (titel, grundlage))
-            self.letzter_befund_fehlend = self.vollstaendigkeit(recap_ein, grund_titel, grund_text, r["text"])
-            neu = self.ergaenzen(recap_ein, r["text"], self.letzter_befund_fehlend)
-            if neu:
-                r["text"] = neu
+            if self.letzte_auswahl:
+                # 0.4.65: statt der allgemeinen Vollständigkeitsprüfung gezielt gegen die ausgewählten Ereignisse
+                pflicht_rest = self.pflicht(recap_ein, self.letzte_auswahl, r)
+            else:
+                grund_titel, grund_text = (("Szenennotizen der Runde in Zeitabschnitten", self.gegliedert(grundlage))
+                                           if titel.startswith("Szenennotizen") and not verlauf else (titel, grundlage))
+                self.letzter_befund_fehlend = self.vollstaendigkeit(recap_ein, grund_titel, grund_text, r["text"])
+                neu = self.ergaenzen(recap_ein, r["text"], self.letzter_befund_fehlend)
+                if neu:
+                    r["text"] = neu
         except SprachmodellFehler as e:
             log.warning("Vollständigkeitsprüfung übersprungen: %s", e)
         self.letztes_kapitel2 = r["text"]
@@ -1633,6 +1820,7 @@ class Ablauf:
             self.bereinigt += [b for b in nachher if b["art"] not in ("tischgespraech", "erzaehlstimme")]
         if pruefung is not None:
             hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
+            pflicht_eintragen(pruefung, pflicht_rest, len(absaetze(r["text"])))
         fortschritt(0.8)
         v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, *self._vorschlag_grundlage(titel, grundlage))]
         fortschritt(1.0)

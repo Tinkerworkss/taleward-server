@@ -28,6 +28,9 @@ OHNE_STELLE = {"de": "Keine Belegstelle im Transkript gefunden.", "en": "No supp
 MAX_BELEGE = 3
 NOTIZ_HOECHSTENS = 220  # Zeichen
 _SATZGRENZE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ„\"])")
+# 0.4.65: „teilweise“ mit einer Begründung, die eine Richtigstellung ist („stirbt nicht, sondern überlebt“), ist ein
+# Widerspruch – das Modell vergibt dafür trotz Anweisung manchmal „teilweise“, und die App zeigt „teilweise“ nicht an.
+_RICHTIGSTELLUNG = re.compile(r"\b(sondern|anstatt|statt|instead|rather than)\b", re.I)
 _VORSPANN = re.compile(r"^\s*(?:absatz|paragraph)\s*\d+\s*[:.–-]\s*", re.I)
 
 
@@ -126,6 +129,8 @@ def bauen(roh: dict | None, text: str, stellen: Stellen, sprache: str = "de") ->
             notiz = notiz or OHNE_STELLE.get(sprache, OHNE_STELLE["de"])
         elif urteil == "supported":
             notiz = None
+        elif urteil == "partial" and notiz and _RICHTIGSTELLUNG.search(notiz):
+            urteil = "contradicted"
         elif urteil == "unsupported" and gefunden:
             urteil = "partial"  # das Modell nennt selbst eine Stelle, die es im Transkript gibt
         absaetze_aus.append({"index": i, "verdict": urteil, "note": notiz,
