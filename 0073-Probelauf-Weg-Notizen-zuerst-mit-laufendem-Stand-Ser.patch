@@ -1,0 +1,508 @@
+From 1a26bc817949bc36591149906647c11b2beae225 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 07:21:29 +0200
+Subject: [PATCH] Probelauf: Weg Notizen zuerst mit laufendem Stand (Server
+ 0.4.63)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/kapitelprobe.py                           |  23 +++-
+ app/sprachmodell.py                           |  93 +++++++++++--
+ app/verwaltung/i18n.py                        |   6 +
+ app/verwaltung/router.py                      |   5 +-
+ app/verwaltung/templates/probelauf.html       |   2 +-
+ app/verwaltung/templates/zusammenfassung.html |   4 +
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_notizen_zuerst.py                  | 123 ++++++++++++++++++
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 13 files changed, 246 insertions(+), 22 deletions(-)
+ create mode 100644 tests/test_notizen_zuerst.py
+
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+index f76b82b..34947cc 100644
+--- a/app/kapitelprobe.py
++++ b/app/kapitelprobe.py
+@@ -64,4 +64,7 @@ class Probe:
+     besitzer: str = ""  # Benutzer-ID des Verwalterkontos, das gestartet hat
+     bereinigt: list[dict] = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat
++    weg: str = "abschrift"  # 0.4.63: „abschrift“ (wie echte Runden) oder „notizen“ (Notizen zuerst, zum Vergleich)
++    notizen: str = ""  # 0.4.63: Szenennotizen des Wegs „notizen“ (Datei notizen.txt)
++    stand: list[str] = field(default_factory=list)  # 0.4.63: laufender Stand am Ende (Datei stand.txt)
+ 
+ 
+@@ -171,5 +174,5 @@ def datei(probe_id: str, name: str) -> Path | None:
+ 
+ 
+-DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "transkript.txt", "ergebnis.json")
++DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "transkript.txt", "ergebnis.json")
+ 
+ 
+@@ -208,6 +211,9 @@ def abschrift_lesen(text: str) -> list[dict]:
+ 
+ 
++WEGE = ("abschrift", "notizen")
++
++
+ def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname: str | None = None,
+-            user_id: str = "") -> Probe:
++            user_id: str = "", weg: str = "abschrift") -> Probe:
+     """Legt die Probe an und rechnet im Hintergrund. Wirft ValueError mit verständlicher Meldung, wenn nichts zu tun ist."""
+     from app.einstellungen import llm_konfig
+@@ -239,5 +245,6 @@ def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname
+     p = Probe(id=new_id(), session_id=s.id, kampagne=c.title if c else "?", kapitel=s.number, quelle=quelle,
+               zeilen=len(recap_ein["transkript"]), modell=_modellname(k),
+-              gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id)
++              gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id,
++              weg=weg if weg in WEGE else "abschrift")
+     _aufraeumen()
+     _speichern(p)
+@@ -295,5 +302,6 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+ 
+             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
+-                            nachbesserung=k.art != "api")  # 0.4.62: wie im echten Ablauf
++                            nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
++                            notizen_zuerst=p.weg == "notizen")  # 0.4.63: nur im Probelauf wählbar
+             with session_factory()() as db:
+                 gegen = gegenpruefen_an(db)
+@@ -307,4 +315,5 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+             p.warnungen = list(getattr(ablauf, "warnungen", []) or [])
+             p.bereinigt = list(ablauf.bereinigt)
++            p.notizen, p.stand = ablauf.letzte_notizen, list(ablauf.letzter_stand)
+             with session_factory()() as db:
+                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
+@@ -336,6 +345,10 @@ def _dateien_schreiben(p: Probe) -> None:
+             (o / "vorschlaege.json").write_text(json.dumps(p.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
+             (o / "pruefung.json").write_text(json.dumps(p.pruefung, ensure_ascii=False, indent=2), encoding="utf-8")
++            if p.notizen:
++                (o / "notizen.txt").write_text(p.notizen + "\n", encoding="utf-8")
++            if p.stand:
++                (o / "stand.txt").write_text("\n".join(f"- {s}" for s in p.stand) + "\n", encoding="utf-8")
+         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
+-                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer")},
++                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen")},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+     except OSError:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index cc0ea4f..4b36ff6 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -501,10 +501,11 @@ def _zeit_vorn(zeile: str) -> float | None:
+ 
+ 
+-def woerter(ein: dict) -> str:
+-    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
++def woerter(ein: dict, lang: bool = False) -> str:
++    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene.
++    lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen."""
+     zeilen = ein.get("transkript") or []
+     minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
+     if minuten > 120:
+-        return "600–1200"
++        return "900–1500" if lang else "600–1200"
+     if minuten > 60:
+         return "400–900"
+@@ -549,5 +550,5 @@ Anführungszeichen.
+ Fragen.
+ - Auch Nebensätze mit Folgen: der Tod einer Nebenfigur („der ist tot“), bestehende Beziehungen („wir kennen uns, seit \
+-…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Lostriana“ statt \
++…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Eisenwind“ statt \
+ „ein Schwert“ – mit dem Namen, der gesagt wird), und bei mehreren Personen in einer Szene, wer genau was tut.
+ Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
+@@ -566,4 +567,16 @@ des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfin
+ Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
+ 
++# 0.4.63, Weg „Notizen zuerst“: laufender Stand von Abschnitt zu Abschnitt
++ZUSATZ_STAND = """
++Außerdem führst du einen kurzen Stand der Runde. Vor dem Abschnitt steht der bisherige Stand (falls es schon einen \
++gibt). Gib ihn aktualisiert zurück: wer bei der Gruppe ist, wer verletzt, gefangen oder tot ist, wer welchen \
++benannten Gegenstand hat, wer wen kennt oder wem etwas schuldet, welche Abmachungen gelten, welche Fragen offen sind. \
++Eine kurze Zeile je Tatsache. Ändert sich etwas, ersetze die alte Zeile und schreib den Zeitstempel der Änderung \
++dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. Höchstens {stand_hoechstens} Zeilen. Nur, \
++was am Tisch gesagt wurde.
++Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
++Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
++STAND_HOECHSTENS = 40
++
+ SYSTEM_TEIL = """Du hilfst bei der Nachbereitung einer langen Pen-&-Paper-Rollenspielsession. Du bekommst die \
+ Szenennotizen zu einem Teil der Runde (mit Zeitstempeln). Fasse diesen Teil in 4 bis 8 Sätzen zusammen, in der \
+@@ -1106,4 +1119,14 @@ def _teile_nach_zeit(notizen: list[str]) -> list[str]:
+ 
+ 
++def _zeilen_davor(zeilen: list[str], sekunden: float, hoechstens: int = 60) -> list[str]:
++    """Die letzten Zeilen eines Abschnitts aus den letzten `sekunden` (nach Zeitstempel), höchstens `hoechstens`."""
++    zeiten = [_zeit_vorn(z) for z in zeilen]
++    ende = max((t for t in zeiten if t is not None), default=None)
++    if ende is None or sekunden <= 0:
++        return []
++    aus = [z for z, t in zip(zeilen, zeiten) if t is not None and t >= ende - sekunden]
++    return aus[-hoechstens:]
++
++
+ def _ohne_doppelte(notizen: list[str]) -> list[str]:
+     """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
+@@ -1140,4 +1163,13 @@ class Ablauf:
+     vorschlag_klient: Klient | None = None  # 0.4.61: eigenes Modell für die Vorschläge (sonst klient)
+     bereinigt: list = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat (app/artefakte.py)
++    # 0.4.63, Weg „Notizen zuerst“ (vorerst nur im Probelauf): Notizen auch dann, wenn die Abschrift ins Modell passt;
++    # größere Abschnitte mit Überlappung als Lesekontext und laufendem Stand; mehr Platz für lange Runden.
++    notizen_zuerst: bool = False
++    notiz_stueck: int = 15_000  # Token Abschrift je Abschnitt im Weg „Notizen zuerst“
++    notizen_je_stueck: int = 40
++    ueberlappung_s: float = 120.0  # so viele Sekunden vor der Grenze sieht der nächste Abschnitt als Lesekontext
++    letzte_notizen: str = ""
++    letzter_stand: list = field(default_factory=list)
++    letztes_transkript: str = ""
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1156,6 +1188,9 @@ class Ablauf:
+         zeilen = transkript_zeilen(ein["transkript"])
+         text = "\n".join(zeilen)
+-        if tokens(text) <= self.max_transkript_tokens:
++        self.letztes_transkript = text
++        if tokens(text) <= self.max_transkript_tokens and not self.notizen_zuerst:
+             return "Transkript", text
++        if self.notizen_zuerst:
++            return self._notizen_mit_stand(ein, zeilen, fortschritt)
+         kopf = _kopf(ein)
+         system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(NOTIZEN_HOECHSTENS))
+@@ -1182,4 +1217,34 @@ class Ablauf:
+         return "Szenennotizen (aus dem Transkript verdichtet)", text
+ 
++    def _notizen_mit_stand(self, ein: dict, zeilen: list[str], fortschritt: Callable[[float], None]) -> tuple[str, str]:
++        """Weg „Notizen zuerst“: Abschnitte von notiz_stueck Token, nacheinander. Jeder sieht den laufenden Stand und die
++        letzten ueberlappung_s Sekunden davor als Lesekontext (dazu keine Notizen – so entstehen an der Grenze keine
++        zwei Fassungen derselben Szene). Ändert sich etwas, steht im Stand die Zeit der Änderung: aus „X ist hier“ und
++        „X ist dort“ wird eine Abfolge, kein Widerspruch."""
++        kopf = _kopf(ein)
++        system = (SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(self.notizen_je_stueck))
++                  + ZUSATZ_STAND.replace("{stand_hoechstens}", str(STAND_HOECHSTENS)))
++        self._schritt("notes")
++        teile = [t.split("\n") for t in stuecke(zeilen, self.notiz_stueck)]
++        notizen: list[str] = []
++        self.letzter_stand = []
++        for i, teil in enumerate(teile):
++            vorspann = kopf
++            if self.letzter_stand:
++                vorspann += "\n\nStand bisher:\n" + "\n".join(f"- {s}" for s in self.letzter_stand)
++            if i > 0:
++                davor = _zeilen_davor(teile[i - 1], self.ueberlappung_s)
++                if davor:
++                    vorspann += "\n\nUnmittelbar davor (nur zum Verständnis, dazu keine Notizen):\n" + "\n".join(davor)
++            self._stand_neu = None
++            notizen += self._notizen(system, f"{vorspann}\n\nAbschnitt {i + 1} von {len(teile)} des Transkripts:\n",
++                                     teil)
++            if self._stand_neu:
++                self.letzter_stand = self._stand_neu[:STAND_HOECHSTENS]
++            fortschritt(min(0.6, 0.6 * (i + 1) / len(teile)))
++        notizen = _ohne_doppelte(notizen)
++        self.letzte_notizen = "\n".join(notizen)
++        return "Szenennotizen (aus dem Transkript verdichtet)", self.letzte_notizen
++
+     def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0, erinnert: bool = False) -> list[str]:
+         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
+@@ -1204,4 +1269,7 @@ class Ablauf:
+                 self.klient.temperatur = vorher
+         gerettet = bool(d.pop("_gerettet", False))
++        stand = d.get("stand")
++        if isinstance(stand, list) and stand:  # Weg „Notizen zuerst“: der zuletzt gelieferte Stand gilt
++            self._stand_neu = [klartext(str(s))[:300] for s in stand if klartext(str(s))]
+         kopien = _zeilenkerne(zeilen)
+         notizen, zuletzt = [], None
+@@ -1287,5 +1355,5 @@ class Ablauf:
+                   f"\n\n{titel}:\n{grundlage}")
+         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
+-                  .replace("{woerter}", woerter(ein)))
++                  .replace("{woerter}", woerter(ein, self.notizen_zuerst)))
+         self._schritt("recap")
+         d = self.zaehler.aufruf(self.klient, system, nutzer)
+@@ -1494,4 +1562,11 @@ class Ablauf:
+                        namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
+ 
++    def _vorschlag_grundlage(self, titel: str, grundlage: str) -> tuple[str, str]:
++        """Weg „Notizen zuerst“: Die Vorschläge sehen weiter die ganze Abschrift, wenn sie ins Modell passt – dort
++        waren sie gemessen gut (Large Ø 8,8/10); nur das Kapitel entsteht aus den Notizen."""
++        if self.notizen_zuerst and self.letztes_transkript and tokens(self.letztes_transkript) <= self.max_transkript_tokens:
++            return "Transkript", self.letztes_transkript
++        return titel, grundlage
++
+     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
+                    fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
+@@ -1512,7 +1587,9 @@ class Ablauf:
+                                       "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
+         elif titel.startswith("Szenennotizen"):
++            stand = ("\n\nStand am Ende der Runde (Zustände, Besitz, Beziehungen, Abmachungen – mit dem Zeitpunkt der "
++                     "Änderung):\n" + "\n".join(f"- {s}" for s in self.letzter_stand)) if self.letzter_stand else ""
+             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
+                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
+-                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage))
++                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand)
+         else:
+             r = self.recap(recap_ein, titel, grundlage)
+@@ -1547,5 +1624,5 @@ class Ablauf:
+             hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
+         fortschritt(0.8)
+-        v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, titel, grundlage)]
++        v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, *self._vorschlag_grundlage(titel, grundlage))]
+         fortschritt(1.0)
+         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index c245942..c0e83d0 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -72,4 +72,10 @@ EN: dict[str, str] = {
+     "Wiederholung": "Repetition",
+     "Vom Filter bereinigt ({n})": "Cleaned up by the filter ({n})",
++    "Weg": "Approach",
++    "Ganze Abschrift (wie bei echten Runden)": "Whole transcript (as for real sessions)",
++    "Erst Notizen je Abschnitt, dann das Kapitel (zum Vergleich)": "Notes per section first, then the chapter (for comparison)",
++    "Der zweite Weg teilt die Abschrift in Abschnitte, führt einen laufenden Stand mit und gibt langen Runden mehr Platz. Notizen und Stand liegen danach in der ZIP-Datei. Echte Runden nutzen ihn noch nicht.": "The second approach splits the transcript into sections, carries a running state along and gives long sessions more room. Notes and state are included in the ZIP file afterwards. Real sessions do not use it yet.",
++    "Erst Notizen, dann Kapitel": "Notes first, then chapter",
++    "Ganze Abschrift": "Whole transcript",
+     "Hinweis: klingt nach Gespräch am Tisch (bleibt stehen)": "Note: sounds like table talk (left in place)",
+     "Hinweis: Erzählstimme in der Du-/Ihr-Form, nichts gelöscht (Sätze)": "Note: narrated in the second person, nothing removed (sentences)",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 226595c..1df5946 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -775,5 +775,6 @@ def _runden_mit_abschrift(db: Session, user: User) -> list[dict]:
+ @router.post("/probelauf", dependencies=[Depends(csrf_pruefen)])
+ async def probelauf_starten(request: Request, session: str = Form(""), abschrift: UploadFile | None = File(None),
+-                            user: User = Depends(verwalter), db: Session = Depends(get_db)):
++                            weg: str = Form("abschrift"), user: User = Depends(verwalter),
++                            db: Session = Depends(get_db)):
+     """Kapitel und Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern."""
+     from app import kapitelprobe as probelauf
+@@ -791,5 +792,5 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
+         text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
+     try:
+-        p = probelauf.starten(db, s, text, name, user_id=user.id)
++        p = probelauf.starten(db, s, text, name, user_id=user.id, weg=weg)
+     except ValueError as e:
+         return _zurueck("/zusammenfassung", f"probe_{e}")
+diff --git a/app/verwaltung/templates/probelauf.html b/app/verwaltung/templates/probelauf.html
+index fb07317..52b1943 100644
+--- a/app/verwaltung/templates/probelauf.html
++++ b/app/verwaltung/templates/probelauf.html
+@@ -7,5 +7,5 @@
+ <div class="karte">
+   <h2>{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}</h2>
+-  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
++  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("Weg") }}: {{ _("Erst Notizen, dann Kapitel") if p.weg == "notizen" else _("Ganze Abschrift") }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
+   {% if p.zustand == "läuft" %}
+     <p><span class="marke-status marke-status--warten">{{ _("läuft") }}</span> {% if schritt %}{{ _("Schritt") }}: {{ _(schritt) }}{% endif %} · <span class="leise">{{ _("Die Seite lädt alle 10 Sekunden neu. Ein Kapitel aus einer langen Runde braucht einige Minuten.") }}</span></p>
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index c8430bb..94cd409 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -129,4 +129,8 @@
+     <label>{{ _("Abschrift aus Datei (optional)") }} <input type="file" name="abschrift" accept=".txt,text/plain">
+       <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
++    <fieldset><legend>{{ _("Weg") }}</legend>
++      <label class="haken"><input type="radio" name="weg" value="abschrift" checked> {{ _("Ganze Abschrift (wie bei echten Runden)") }}</label>
++      <label class="haken"><input type="radio" name="weg" value="notizen"> {{ _("Erst Notizen je Abschnitt, dann das Kapitel (zum Vergleich)") }}</label>
++      <span class="hilfe">{{ _("Der zweite Weg teilt die Abschrift in Abschnitte, führt einen laufenden Stand mit und gibt langen Runden mehr Platz. Notizen und Stand liegen danach in der ZIP-Datei. Echte Runden nutzen ihn noch nicht.") }}</span></fieldset>
+     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
+   </form>
+diff --git a/pyproject.toml b/pyproject.toml
+index a6e1d14..c9ff241 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.62"
++version = "0.4.63"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 5a65527..6a0bb1e 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.62"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.63"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 3b7c303..d01db2a 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.62"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.63"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 35d8d52..ad7e89f 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.62"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.63"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_notizen_zuerst.py b/tests/test_notizen_zuerst.py
+new file mode 100644
+index 0000000..14ecf3e
+--- /dev/null
++++ b/tests/test_notizen_zuerst.py
+@@ -0,0 +1,123 @@
++"""Server 0.4.63: Weg „Notizen zuerst“ (nur im Probelauf wählbar) – Abschnitte nacheinander mit laufendem Stand und
++Überlappung als Lesekontext, Stand am Ende für das Kapitel, Vorschläge weiter aus der ganzen Abschrift, mehr Platz für
++lange Runden."""
++import json
++import re
++import time
++
++import httpx
++import pytest
++
++from app import sprachmodell as sm
++from tests.test_step2b import _kleine_teile, transkribiert  # noqa: F401
++from tests.test_verwaltung import admin  # noqa: F401
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++
++class Anbieter:
++    def __init__(self):
++        self.aufrufe = []
++
++    def antwort(self, system: str, nutzer: str) -> dict:
++        if "Schreibe Szenennotizen" in system:
++            n = len([a for a in self.aufrufe if "Schreibe Szenennotizen" in a["system"]])
++            eigen = nutzer.split("des Transkripts:\n")[1]
++            zeiten = re.findall(r"^\[(\d+:\d{2}(?::\d{2})?)\]", eigen, re.M)
++            return {"notizen": [f"[{zeiten[0]}] Ereignis in Abschnitt {n} mit Folgen für die Gruppe.",
++                                f"[{zeiten[-1]}] Ende von Abschnitt {n}, alle ziehen weiter."],
++                    "stand": [f"Kano: tot (seit [{zeiten[0]}])"] if n >= 2 else ["Kano: gefangen"]}
++        if system.startswith("Du schreibst den Recap"):
++            return {"title": "Kapitel 1", "text": "Die Gruppe ritt los.", "openThreads": []}
++        if "Kampagnen-Bibel" in system:
++            return {"proposals": []}
++        return {}
++
++    def __call__(self, request: httpx.Request) -> httpx.Response:
++        body = json.loads(request.content)
++        system, nutzer = body["messages"][0]["content"], body["messages"][1]["content"]
++        self.aufrufe.append({"system": system, "nutzer": nutzer})
++        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(self.antwort(system, nutzer),
++                                                                                         ensure_ascii=False)}}],
++                                         "usage": {"prompt_tokens": 1000, "completion_tokens": 100}})
++
++
++def _eingabe(client, world, dbs, tmp_path):
++    from app.models import GameSession
++    from app.zusammenfassung import eingabe_bauen, recap_eingabe, vorschlag_eingabe
++
++    s = transkribiert(client, world, dbs, tmp_path)
++    basis = eingabe_bauen(dbs, dbs.get(GameSession, s["id"]))
++    recap_ein, vorschlag_ein = recap_eingabe(basis), vorschlag_eingabe(dbs, dbs.get(GameSession, s["id"]), basis)
++    # 150 Minuten, eine Zeile je Minute, abwechselnde Sprecher
++    zeilen = [{"start": m * 60.0, "sprecher": "Anna" if m % 2 else "Ben",
++               "text": f"Zeile {m}: " + "Die Gruppe zieht weiter durch die Stadt und redet. " * 4} for m in range(150)]
++    recap_ein["transkript"] = vorschlag_ein["transkript"] = zeilen
++    return recap_ein, vorschlag_ein
++
++
++def test_notizen_zuerst_mit_stand_und_ueberlappung(client, world, dbs, tmp_path):
++    recap_ein, vorschlag_ein = _eingabe(client, world, dbs, tmp_path)
++    anbieter = Anbieter()
++    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "m", httpx.Client(transport=httpx.MockTransport(anbieter)))
++    ablauf = sm.Ablauf(klient, schritt=lambda _n: None, nachbesserung=False, notizen_zuerst=True, notiz_stueck=2000)
++    d = ablauf.ausfuehren(recap_ein, vorschlag_ein)
++    notizaufrufe = [a for a in anbieter.aufrufe if "Schreibe Szenennotizen" in a["system"]]
++    assert len(notizaufrufe) >= 3
++    assert "„stand“" not in notizaufrufe[0]["system"] and '"stand"' in notizaufrufe[0]["system"]
++    # Abschnitt 1 ohne Vorgeschichte, ab Abschnitt 2 mit Stand und Lesekontext aus den letzten 2 Minuten davor
++    assert "Stand bisher" not in notizaufrufe[0]["nutzer"] and "Unmittelbar davor" not in notizaufrufe[0]["nutzer"]
++    zweiter = notizaufrufe[1]["nutzer"]
++    assert "Stand bisher:\n- Kano: gefangen" in zweiter
++    davor = zweiter.split("Unmittelbar davor (nur zum Verständnis, dazu keine Notizen):\n")[1].split("\n\nAbschnitt")[0]
++    assert 1 <= len(davor.split("\n")) <= 3  # Zeilen je Minute → höchstens die letzten 2 Minuten
++    eigene = zweiter.split("des Transkripts:\n")[1]
++    assert davor.split("\n")[-1] not in eigene  # der Lesekontext gehört nicht zum Abschnitt selbst
++    # Stand mit Zeitpunkt der Änderung geht ans Kapitel; die Vorschläge sehen die ganze Abschrift
++    assert ablauf.letzter_stand[0].startswith("Kano: tot (seit [")
++    recap = next(a for a in anbieter.aufrufe if a["system"].startswith("Du schreibst den Recap"))
++    assert "Stand am Ende der Runde" in recap["nutzer"] and "Kano: tot" in recap["nutzer"]
++    assert "900–1500" in recap["system"]
++    vorschlag = next(a for a in anbieter.aufrufe if "Kampagnen-Bibel" in a["system"])
++    assert "\nTranskript:\n" in vorschlag["nutzer"] and "Zeile 149:" in vorschlag["nutzer"]
++    assert ablauf.letzte_notizen.count("Ereignis in Abschnitt") == len(notizaufrufe)
++    assert all("Abschnitt" in a["nutzer"] for a in notizaufrufe)
++    assert d["text"] == "Die Gruppe ritt los."
++
++
++def test_ohne_schalter_bleibt_alles_wie_bisher(client, world, dbs, tmp_path):
++    recap_ein, vorschlag_ein = _eingabe(client, world, dbs, tmp_path)
++    anbieter = Anbieter()
++    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "m", httpx.Client(transport=httpx.MockTransport(anbieter)))
++    sm.Ablauf(klient, schritt=lambda _n: None, nachbesserung=False).ausfuehren(recap_ein, vorschlag_ein)
++    assert not any("Schreibe Szenennotizen" in a["system"] for a in anbieter.aufrufe)
++    recap = next(a for a in anbieter.aufrufe if a["system"].startswith("Du schreibst den Recap"))
++    assert "600–1200" in recap["system"] and "Stand am Ende" not in recap["nutzer"]
++
++
++def test_probelauf_mit_weg(client, world, dbs, tmp_path, admin):  # noqa: F811
++    from app import kapitelprobe as probelauf
++    from app.models import Campaign, Member, User
++    from tests.test_step5 import einstellen
++
++    s = transkribiert(client, world, dbs, tmp_path)
++    einstellen(dbs, art="attrappe")
++    chef = dbs.query(User).filter_by(username="chef").one()
++    dbs.add(Member(campaign_id=world["cid"], user_id=chef.id, role="gm"))
++    dbs.get(Campaign, world["cid"]).allow_cloud_summary = True
++    dbs.commit()
++    seite = client.get("/verwaltung/zusammenfassung").text
++    assert 'name="weg" value="notizen"' in seite
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"], "weg": "notizen"},
++                    follow_redirects=False)
++    pid = r.headers["location"].rsplit("/", 1)[1]
++    assert probelauf.lesen(pid).weg == "notizen"
++    for _ in range(100):
++        if probelauf.lesen(pid).zustand != "läuft":
++            break
++        time.sleep(0.05)
++    assert "Erst Notizen, dann Kapitel" in client.get(f"/verwaltung/probelauf/{pid}").text
++    r = client.post("/verwaltung/probelauf", data={"csrf": admin, "session": s["id"], "weg": "unsinn"},
++                    follow_redirects=False)
++    assert probelauf.lesen(r.headers["location"].rsplit("/", 1)[1]).weg == "abschrift"
++    assert "notizen.txt" in probelauf.DATEIEN and "stand.txt" in probelauf.DATEIEN
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index d35dd5a..5bd0159 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.62"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.63"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 6b4d1d9..8d29678 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.62"
++version = "0.4.63"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
