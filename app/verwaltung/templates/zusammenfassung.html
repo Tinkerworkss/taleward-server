@@ -128,6 +128,10 @@
       </select></label>
     <label>{{ _("Abschrift aus Datei (optional)") }} <input type="file" name="abschrift" accept=".txt,text/plain">
       <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
+    <fieldset><legend>{{ _("Weg") }}</legend>
+      <label class="haken"><input type="radio" name="weg" value="abschrift" checked> {{ _("Ganze Abschrift (wie bei echten Runden)") }}</label>
+      <label class="haken"><input type="radio" name="weg" value="notizen"> {{ _("Erst Notizen je Abschnitt, dann das Kapitel (zum Vergleich)") }}</label>
+      <span class="hilfe">{{ _("Der zweite Weg teilt die Abschrift in Abschnitte, führt einen laufenden Stand mit und gibt langen Runden mehr Platz. Notizen und Stand liegen danach in der ZIP-Datei. Echte Runden nutzen ihn noch nicht.") }}</span></fieldset>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
   </form>
   {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift in deinen Kampagnen.") }}</p>{% endif %}

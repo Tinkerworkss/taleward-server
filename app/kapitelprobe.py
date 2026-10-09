@@ -63,6 +63,9 @@ class Probe:
     campaign_id: str = ""
     besitzer: str = ""  # Benutzer-ID des Verwalterkontos, das gestartet hat
     bereinigt: list[dict] = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat
+    weg: str = "abschrift"  # 0.4.63: „abschrift“ (wie echte Runden) oder „notizen“ (Notizen zuerst, zum Vergleich)
+    notizen: str = ""  # 0.4.63: Szenennotizen des Wegs „notizen“ (Datei notizen.txt)
+    stand: list[str] = field(default_factory=list)  # 0.4.63: laufender Stand am Ende (Datei stand.txt)
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -170,7 +173,7 @@ def datei(probe_id: str, name: str) -> Path | None:
     return p if p.is_file() else None
 
 
-DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "transkript.txt", "ergebnis.json")
+DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "transkript.txt", "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -207,8 +210,11 @@ def abschrift_lesen(text: str) -> list[dict]:
     return zeilen
 
 
+WEGE = ("abschrift", "notizen")
+
+
 def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname: str | None = None,
-            user_id: str = "") -> Probe:
+            user_id: str = "", weg: str = "abschrift") -> Probe:
     """Legt die Probe an und rechnet im Hintergrund. Wirft ValueError mit verständlicher Meldung, wenn nichts zu tun ist."""
     from app.einstellungen import llm_konfig
     from app.models import Campaign
@@ -238,7 +244,8 @@ def starten(db: Session, s: GameSession, abschrift: str | None = None, dateiname
         raise ValueError("leer")
     p = Probe(id=new_id(), session_id=s.id, kampagne=c.title if c else "?", kapitel=s.number, quelle=quelle,
               zeilen=len(recap_ein["transkript"]), modell=_modellname(k),
-              gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id)
+              gestartet=utcnow().isoformat().replace("+00:00", "Z"), campaign_id=s.campaign_id, besitzer=user_id,
+              weg=weg if weg in WEGE else "abschrift")
     _aufraeumen()
     _speichern(p)
     if abschrift is not None:
@@ -294,7 +301,8 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
                 _speichern(p)
 
             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
-                            nachbesserung=k.art != "api")  # 0.4.62: wie im echten Ablauf
+                            nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
+                            notizen_zuerst=p.weg == "notizen")  # 0.4.63: nur im Probelauf wählbar
             with session_factory()() as db:
                 gegen = gegenpruefen_an(db)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
@@ -306,6 +314,7 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
             p.kosten_cent = d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))
             p.warnungen = list(getattr(ablauf, "warnungen", []) or [])
             p.bereinigt = list(ablauf.bereinigt)
+            p.notizen, p.stand = ablauf.letzte_notizen, list(ablauf.letzter_stand)
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -335,8 +344,12 @@ def _dateien_schreiben(p: Probe) -> None:
             (o / "recap.txt").write_text(text, encoding="utf-8")
             (o / "vorschlaege.json").write_text(json.dumps(p.vorschlaege, ensure_ascii=False, indent=2), encoding="utf-8")
             (o / "pruefung.json").write_text(json.dumps(p.pruefung, ensure_ascii=False, indent=2), encoding="utf-8")
+            if p.notizen:
+                (o / "notizen.txt").write_text(p.notizen + "\n", encoding="utf-8")
+            if p.stand:
+                (o / "stand.txt").write_text("\n".join(f"- {s}" for s in p.stand) + "\n", encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
-                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer")},
+                                                      if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)

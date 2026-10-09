@@ -500,12 +500,13 @@ def _zeit_vorn(zeile: str) -> float | None:
     return zeit_lesen(m.group(1)) if m else None
 
 
-def woerter(ein: dict) -> str:
-    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene."""
+def woerter(ein: dict, lang: bool = False) -> str:
+    """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene.
+    lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen."""
     zeilen = ein.get("transkript") or []
     minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
     if minuten > 120:
-        return "600–1200"
+        return "900–1500" if lang else "600–1200"
     if minuten > 60:
         return "400–900"
     return "250–600"
@@ -548,7 +549,7 @@ Anführungszeichen.
 - Orte mit Namen, Nichtspielercharaktere mit Namen und Rolle, Gegenstände, Aufträge, Entscheidungen der Gruppe, offene \
 Fragen.
 - Auch Nebensätze mit Folgen: der Tod einer Nebenfigur („der ist tot“), bestehende Beziehungen („wir kennen uns, seit \
-…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Lostriana“ statt \
+…“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Eisenwind“ statt \
 „ein Schwert“ – mit dem Namen, der gesagt wird), und bei mehreren Personen in einer Szene, wer genau was tut.
 Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
 nicht getan.
@@ -564,6 +565,18 @@ Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätss
 des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
 „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
 Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
+
+# 0.4.63, Weg „Notizen zuerst“: laufender Stand von Abschnitt zu Abschnitt
+ZUSATZ_STAND = """
+Außerdem führst du einen kurzen Stand der Runde. Vor dem Abschnitt steht der bisherige Stand (falls es schon einen \
+gibt). Gib ihn aktualisiert zurück: wer bei der Gruppe ist, wer verletzt, gefangen oder tot ist, wer welchen \
+benannten Gegenstand hat, wer wen kennt oder wem etwas schuldet, welche Abmachungen gelten, welche Fragen offen sind. \
+Eine kurze Zeile je Tatsache. Ändert sich etwas, ersetze die alte Zeile und schreib den Zeitstempel der Änderung \
+dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. Höchstens {stand_hoechstens} Zeilen. Nur, \
+was am Tisch gesagt wurde.
+Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
+Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
+STAND_HOECHSTENS = 40
 
 SYSTEM_TEIL = """Du hilfst bei der Nachbereitung einer langen Pen-&-Paper-Rollenspielsession. Du bekommst die \
 Szenennotizen zu einem Teil der Runde (mit Zeitstempeln). Fasse diesen Teil in 4 bis 8 Sätzen zusammen, in der \
@@ -1105,6 +1118,16 @@ def _teile_nach_zeit(notizen: list[str]) -> list[str]:
     return teile
 
 
+def _zeilen_davor(zeilen: list[str], sekunden: float, hoechstens: int = 60) -> list[str]:
+    """Die letzten Zeilen eines Abschnitts aus den letzten `sekunden` (nach Zeitstempel), höchstens `hoechstens`."""
+    zeiten = [_zeit_vorn(z) for z in zeilen]
+    ende = max((t for t in zeiten if t is not None), default=None)
+    if ende is None or sekunden <= 0:
+        return []
+    aus = [z for z, t in zip(zeilen, zeiten) if t is not None and t >= ende - sekunden]
+    return aus[-hoechstens:]
+
+
 def _ohne_doppelte(notizen: list[str]) -> list[str]:
     """Gleiche Notizen aus verschiedenen Aufrufen (Rest nachgeholt, Abschnitt geteilt) nur einmal."""
     gesehen, aus = set(), []
@@ -1139,6 +1162,15 @@ class Ablauf:
     warnungen: list = field(default_factory=list)  # übersprungene Schritte mit Grund und Antwortanfang (Fehlersuche)
     vorschlag_klient: Klient | None = None  # 0.4.61: eigenes Modell für die Vorschläge (sonst klient)
     bereinigt: list = field(default_factory=list)  # 0.4.61: was der Artefakt-Filter entfernt hat (app/artefakte.py)
+    # 0.4.63, Weg „Notizen zuerst“ (vorerst nur im Probelauf): Notizen auch dann, wenn die Abschrift ins Modell passt;
+    # größere Abschnitte mit Überlappung als Lesekontext und laufendem Stand; mehr Platz für lange Runden.
+    notizen_zuerst: bool = False
+    notiz_stueck: int = 15_000  # Token Abschrift je Abschnitt im Weg „Notizen zuerst“
+    notizen_je_stueck: int = 40
+    ueberlappung_s: float = 120.0  # so viele Sekunden vor der Grenze sieht der nächste Abschnitt als Lesekontext
+    letzte_notizen: str = ""
+    letzter_stand: list = field(default_factory=list)
+    letztes_transkript: str = ""
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1155,8 +1187,11 @@ class Ablauf:
         """Transkript oder – wenn zu lang – Szenennotizen daraus. Liefert (Überschrift, Text)."""
         zeilen = transkript_zeilen(ein["transkript"])
         text = "\n".join(zeilen)
-        if tokens(text) <= self.max_transkript_tokens:
+        self.letztes_transkript = text
+        if tokens(text) <= self.max_transkript_tokens and not self.notizen_zuerst:
             return "Transkript", text
+        if self.notizen_zuerst:
+            return self._notizen_mit_stand(ein, zeilen, fortschritt)
         kopf = _kopf(ein)
         system = SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(NOTIZEN_HOECHSTENS))
         self._schritt("notes")
@@ -1181,6 +1216,36 @@ class Ablauf:
             zeilen = notizen
         return "Szenennotizen (aus dem Transkript verdichtet)", text
 
+    def _notizen_mit_stand(self, ein: dict, zeilen: list[str], fortschritt: Callable[[float], None]) -> tuple[str, str]:
+        """Weg „Notizen zuerst“: Abschnitte von notiz_stueck Token, nacheinander. Jeder sieht den laufenden Stand und die
+        letzten ueberlappung_s Sekunden davor als Lesekontext (dazu keine Notizen – so entstehen an der Grenze keine
+        zwei Fassungen derselben Szene). Ändert sich etwas, steht im Stand die Zeit der Änderung: aus „X ist hier“ und
+        „X ist dort“ wird eine Abfolge, kein Widerspruch."""
+        kopf = _kopf(ein)
+        system = (SYSTEM_NOTIZEN.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(self.notizen_je_stueck))
+                  + ZUSATZ_STAND.replace("{stand_hoechstens}", str(STAND_HOECHSTENS)))
+        self._schritt("notes")
+        teile = [t.split("\n") for t in stuecke(zeilen, self.notiz_stueck)]
+        notizen: list[str] = []
+        self.letzter_stand = []
+        for i, teil in enumerate(teile):
+            vorspann = kopf
+            if self.letzter_stand:
+                vorspann += "\n\nStand bisher:\n" + "\n".join(f"- {s}" for s in self.letzter_stand)
+            if i > 0:
+                davor = _zeilen_davor(teile[i - 1], self.ueberlappung_s)
+                if davor:
+                    vorspann += "\n\nUnmittelbar davor (nur zum Verständnis, dazu keine Notizen):\n" + "\n".join(davor)
+            self._stand_neu = None
+            notizen += self._notizen(system, f"{vorspann}\n\nAbschnitt {i + 1} von {len(teile)} des Transkripts:\n",
+                                     teil)
+            if self._stand_neu:
+                self.letzter_stand = self._stand_neu[:STAND_HOECHSTENS]
+            fortschritt(min(0.6, 0.6 * (i + 1) / len(teile)))
+        notizen = _ohne_doppelte(notizen)
+        self.letzte_notizen = "\n".join(notizen)
+        return "Szenennotizen (aus dem Transkript verdichtet)", self.letzte_notizen
+
     def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0, erinnert: bool = False) -> list[str]:
         """Szenennotizen zu einem Abschnitt. Liefert das Modell nichts Brauchbares, wird der Abschnitt geteilt
         (höchstens zweimal). Kommen die Notizen ohne Zeitstempel, werden sie einmal neu angefordert (ohne Zeiten
@@ -1203,6 +1268,9 @@ class Ablauf:
             if hasattr(self.klient, "temperatur"):
                 self.klient.temperatur = vorher
         gerettet = bool(d.pop("_gerettet", False))
+        stand = d.get("stand")
+        if isinstance(stand, list) and stand:  # Weg „Notizen zuerst“: der zuletzt gelieferte Stand gilt
+            self._stand_neu = [klartext(str(s))[:300] for s in stand if klartext(str(s))]
         kopien = _zeilenkerne(zeilen)
         notizen, zuletzt = [], None
         for n in d.get("notizen") or []:
@@ -1286,7 +1354,7 @@ class Ablauf:
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"\n\n{titel}:\n{grundlage}")
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
-                  .replace("{woerter}", woerter(ein)))
+                  .replace("{woerter}", woerter(ein, self.notizen_zuerst)))
         self._schritt("recap")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         text = recap_text(d)
@@ -1493,6 +1561,13 @@ class Ablauf:
                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
                        namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
 
+    def _vorschlag_grundlage(self, titel: str, grundlage: str) -> tuple[str, str]:
+        """Weg „Notizen zuerst“: Die Vorschläge sehen weiter die ganze Abschrift, wenn sie ins Modell passt – dort
+        waren sie gemessen gut (Large Ø 8,8/10); nur das Kapitel entsteht aus den Notizen."""
+        if self.notizen_zuerst and self.letztes_transkript and tokens(self.letztes_transkript) <= self.max_transkript_tokens:
+            return "Transkript", self.letztes_transkript
+        return titel, grundlage
+
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
                    fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
         """Das ganze Ergebnis. Die Grundlage (Transkript bzw. Notizen) ist für beide gleich; die Notizen entstehen
@@ -1511,9 +1586,11 @@ class Ablauf:
             r = self.recap(recap_ein, "Verlauf der Runde in Teilen (jeder Teil gehört in den Recap, in dieser "
                                       "Reihenfolge, jeder mit etwa gleich viel Raum)", verlauf)
         elif titel.startswith("Szenennotizen"):
+            stand = ("\n\nStand am Ende der Runde (Zustände, Besitz, Beziehungen, Abmachungen – mit dem Zeitpunkt der "
+                     "Änderung):\n" + "\n".join(f"- {s}" for s in self.letzter_stand)) if self.letzter_stand else ""
             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
-                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage))
+                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand)
         else:
             r = self.recap(recap_ein, titel, grundlage)
         self.letztes_kapitel1 = r["text"]
@@ -1546,7 +1623,7 @@ class Ablauf:
         if pruefung is not None:
             hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
         fortschritt(0.8)
-        v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, titel, grundlage)]
+        v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, *self._vorschlag_grundlage(titel, grundlage))]
         fortschritt(1.0)
         aus = {**r, "proposals": v, "model": self.klient.modell, "tokensIn": self.zaehler.tokens_in,
                "tokensOut": self.zaehler.tokens_out, "costCents": self.zaehler.kosten_cent()}

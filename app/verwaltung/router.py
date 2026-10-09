@@ -774,7 +774,8 @@ def _runden_mit_abschrift(db: Session, user: User) -> list[dict]:
 # ---------- Probelauf der Zusammenfassung ----------
 @router.post("/probelauf", dependencies=[Depends(csrf_pruefen)])
 async def probelauf_starten(request: Request, session: str = Form(""), abschrift: UploadFile | None = File(None),
-                            user: User = Depends(verwalter), db: Session = Depends(get_db)):
+                            weg: str = Form("abschrift"), user: User = Depends(verwalter),
+                            db: Session = Depends(get_db)):
     """Kapitel und Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern."""
     from app import kapitelprobe as probelauf
     from app.models import GameSession
@@ -790,7 +791,7 @@ async def probelauf_starten(request: Request, session: str = Form(""), abschrift
             return _zurueck("/zusammenfassung", "probe_datei")
         text, name = roh.decode("utf-8", errors="replace"), abschrift.filename
     try:
-        p = probelauf.starten(db, s, text, name, user_id=user.id)
+        p = probelauf.starten(db, s, text, name, user_id=user.id, weg=weg)
     except ValueError as e:
         return _zurueck("/zusammenfassung", f"probe_{e}")
     return RedirectResponse(f"/verwaltung/probelauf/{p.id}", status_code=303)

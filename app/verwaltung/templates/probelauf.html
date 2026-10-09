@@ -6,7 +6,7 @@
 <p class="leise"><a href="/verwaltung/zusammenfassung">{{ _("Zurück zur Zusammenfassung") }}</a></p>
 <div class="karte">
   <h2>{{ p.kampagne }} · {{ _("Kapitel {n}", n=p.kapitel) }}</h2>
-  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
+  <p>{{ _("Grundlage") }}: {{ _("Abschrift der Runde") if p.quelle == "Runde" else p.quelle }} ({{ _("{n} Zeilen", n=p.zeilen) }}) · {{ _("Modell") }}: {{ p.modell }} · {{ _("Weg") }}: {{ _("Erst Notizen, dann Kapitel") if p.weg == "notizen" else _("Ganze Abschrift") }} · {{ _("gestartet") }} {{ p.gestartet[:16]|replace("T", " ") }} UTC</p>
   {% if p.zustand == "läuft" %}
     <p><span class="marke-status marke-status--warten">{{ _("läuft") }}</span> {% if schritt %}{{ _("Schritt") }}: {{ _(schritt) }}{% endif %} · <span class="leise">{{ _("Die Seite lädt alle 10 Sekunden neu. Ein Kapitel aus einer langen Runde braucht einige Minuten.") }}</span></p>
   {% elif p.zustand == "fehler" %}
