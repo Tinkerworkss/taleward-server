@@ -574,6 +574,7 @@ benannten Gegenstand hat, wer wen kennt oder wem etwas schuldet, welche Abmachun
 Eine kurze Zeile je Tatsache. Ändert sich etwas, ersetze die alte Zeile und schreib den Zeitstempel der Änderung \
 dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. Höchstens {stand_hoechstens} Zeilen. Nur, \
 was am Tisch gesagt wurde.
+Für Notizen und Stand gilt außerdem (0.4.68): Eine Zusage, Abmachung, ein Kauf, ein Tod oder ein Besitzwechsel steht nur da, wenn er am Tisch ausdrücklich gesagt oder gezeigt wird (ein Ja, „abgemacht“, Handschlag, Übergabe, „der ist tot“). Eine höfliche, ausweichende oder unterbrochene Antwort ist keine Zusage – schreib dann „Antwort offen“ und was stattdessen geschieht. Gibt sich eine Figur als jemand anderes aus oder nennt einen erfundenen Namen, ist das keine neue Person: „X gibt sich als Y aus“.
 Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
 Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
 STAND_HOECHSTENS = 40
@@ -705,24 +706,63 @@ Wichtig ist, was einem Spieler vor der nächsten Runde Wissen nehmen würde, wen
 Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.
 Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
 Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
-der Stand am Ende), rang ("kritisch" oder "wichtig"). Die Spielleitung ist keine Figur. Erfinde nichts.
+der Stand am Ende), rang ("kritisch" oder "wichtig"). Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
 Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
 Sprache: {sprache}."""
 AUSWAHL_HOECHSTENS = 20
 
 SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
 vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor) oder \
-"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). absatz: die Nummer \
+"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind kein Widerspruch. absatz: die Nummer \
 des Absatzes, in dem es steht bzw. in den es nach der Reihenfolge des Geschehens gehört. begruendung: bei "fehlt" und \
 "widerspricht" ein kurzer Satz für die Spielleitung, ohne Zitat, sonst leer. Bewerte nur die Liste, nicht den Stil.
 Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "begruendung": "…"}]}. Sprache: {sprache}."""
 
 SYSTEM_PFLICHT_NACH = """Du überarbeitest einzelne Absätze im Kapitel einer Pen-&-Paper-Session. Je Absatz steht \
 dabei, welches Ereignis darin fehlt oder falsch erzählt ist, mit dem richtigen Ausgang.
-Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen. Alles andere \
+Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen – die falsche Aussage wird ersetzt, nicht zusätzlich stehen gelassen. Alles andere \
 im Absatz bleibt, wie es ist. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
 reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+# 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
+# danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
+# lange Fassung (Benjamin 09.10.: kürzen nur, wenn keine Informationen verloren gehen).
+SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session auf höchstens {ziel} Wörter, damit es vorlesbar \
+bleibt. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
+nichts Neues sagt, Wiederholungen. Alles andere bleibt: jede Handlung mit ihrem Ausgang und mit den richtigen Personen, \
+jeder Name, jeder benannte Gegenstand, jede Abmachung und jede Information, in derselben Reihenfolge. Die Ereignisse \
+der Liste kommen alle mit genau diesem Ausgang vor. Verändere keine Aussage, füge nichts hinzu. Gleicher Ton, \
+Vergangenheit, Absätze durch Leerzeilen getrennt, reiner Text ohne Markdown.
+Antworte nur mit JSON: {"text": "…"}. Sprache: {sprache}."""
+KUERZEN_AB = 1.2  # erst ab 20 % über der oberen Grenze kürzen
+KUERZEN_MINDESTENS = 0.1  # weniger als 10 % gespart: lohnt nicht, lange Fassung bleibt
+_NAMENSFOLGE = re.compile(r"(?<=[a-zäöüß,;:–] )[A-ZÄÖÜ][\w’'-]+(?: [A-ZÄÖÜ][\w’'-]+)+")
+
+
+def obergrenze(ein: dict, lang: bool = False) -> int:
+    """Obere Grenze der Längenvorgabe in Wörtern („900–1500“ → 1500)."""
+    return int(woerter(ein, lang).split("–")[-1])
+
+
+def namen_im_text(text: str, extra: list[str] | tuple = ()) -> set[str]:
+    """Eigennamen eines Kapitels als Wortstämme: Folgen großgeschriebener Wörter mitten im Satz („Du Yuesheng“,
+    „Madame Xue“, „Richard Wilhelm“) und bekannte Namen (Figuren, Bibel), soweit sie im Text stehen."""
+    aus = set()
+    for folge in _NAMENSFOLGE.findall(text):
+        aus.update(w.casefold()[:5] for w in folge.split() if len(w) >= 3)
+    klein = text.casefold()
+    for name in extra:
+        for w in re.findall(r"\w+", name or ""):
+            if len(w) >= 3 and re.search(rf"\b{re.escape(w.casefold())}", klein):
+                aus.add(w.casefold()[:5])
+    return aus
+
+
+def _namen_fehlen(lang: str, kurz: str, extra: list[str]) -> list[str]:
+    kurz_klein = kurz.casefold()
+    return sorted(n for n in namen_im_text(lang, extra) if not re.search(rf"\b{re.escape(n)}", kurz_klein))
+
+
 PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
                   "fehlt": "fehlt", "missing": "fehlt", "widerspricht": "widerspricht", "contradicts": "widerspricht",
                   "contradicted": "widerspricht"}
@@ -1287,6 +1327,8 @@ class Ablauf:
     letztes_transkript: str = ""
     letzte_auswahl: list = field(default_factory=list)  # 0.4.65: Pflichtpunkte des Wegs „Notizen zuerst“
     letzte_pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte, vorher/nachher
+    letzte_kuerzung: dict = field(default_factory=dict)  # 0.4.68: Kürzung eines zu langen Kapitels (angenommen?)
+    letztes_lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1607,6 +1649,47 @@ class Ablauf:
         self.letzte_pflicht["nachher"] = nachher
         return nachher
 
+    def kuerzen(self, ein: dict, punkte: list[dict], r: dict, befund: list[dict]) -> list[dict] | None:
+        """0.4.68: Kapitel weit über der Längenvorgabe kürzen. Übernommen nur, wenn alle bisher erzählten Pflichtpunkte
+        erzählt bleiben, kein neuer Widerspruch dazukommt und kein Name fehlt. Liefert den neuen Befund oder None."""
+        n = len(r["text"].split())
+        grenze = obergrenze(ein, True)
+        self.letzte_kuerzung = {"woerter": n, "grenze": grenze, "angenommen": False}
+        if n <= grenze * KUERZEN_AB:
+            self.letzte_kuerzung["grund"] = "nicht zu lang"
+            return None
+        nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
+        self._schritt("revision")
+        d = self.zaehler.aufruf(self.klient, SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein))
+                                .replace("{ziel}", str(grenze)), nutzer)
+        t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
+        if "\n\n" not in t and "\n" in t:
+            t = re.sub(r"\n+", "\n\n", t)
+        t = absaetze_teilen(t) if t else ""
+        m = len(t.split())
+        self.letzte_kuerzung["woerter_neu"] = m
+        if not t or m > n * (1 - KUERZEN_MINDESTENS) or m < grenze * 0.5:
+            self.letzte_kuerzung["grund"] = "Länge passt nicht"
+            return None
+        extra = [p.get("charakter") or "" for p in ein.get("personen") or []] + \
+                [e.get("name") or "" for e in ein.get("bibel") or []]
+        fehlen = _namen_fehlen(r["text"], t, extra)
+        if fehlen:
+            self.letzte_kuerzung["grund"] = "Namen fehlen: " + ", ".join(fehlen[:10])
+            return None
+        neu = self.pflicht_pruefen(ein, punkte, t)
+        alt_erz = {b["nr"] for b in befund if b["status"] == "erzaehlt"}
+        neu_erz = {b["nr"] for b in neu if b["status"] == "erzaehlt"}
+        alt_wid = {b["nr"] for b in befund if b["status"] == "widerspricht"}
+        neu_wid = {b["nr"] for b in neu if b["status"] == "widerspricht"}
+        if not alt_erz <= neu_erz or not neu_wid <= alt_wid:
+            self.letzte_kuerzung["grund"] = ("Pflichtpunkte verloren: "
+                                             + ", ".join(str(x) for x in sorted((alt_erz - neu_erz) | (neu_wid - alt_wid))))
+            return None
+        self.letztes_lang, r["text"] = r["text"], t
+        self.letzte_kuerzung.update(angenommen=True, grund="")
+        return neu
+
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
         """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die
         Gegenprüfung belegt hat. Szenennotizen können selbst schon falsch sein; das Transkript nicht. Liefert je
@@ -1795,6 +1878,10 @@ class Ablauf:
             if self.letzte_auswahl:
                 # 0.4.65: statt der allgemeinen Vollständigkeitsprüfung gezielt gegen die ausgewählten Ereignisse
                 pflicht_rest = self.pflicht(recap_ein, self.letzte_auswahl, r)
+                gekuerzt = self.kuerzen(recap_ein, self.letzte_auswahl, r, pflicht_rest)
+                if gekuerzt is not None:
+                    pflicht_rest = gekuerzt
+                self.letzte_pflicht["kuerzung"] = self.letzte_kuerzung
             else:
                 grund_titel, grund_text = (("Szenennotizen der Runde in Zeitabschnitten", self.gegliedert(grundlage))
                                            if titel.startswith("Szenennotizen") and not verlauf else (titel, grundlage))

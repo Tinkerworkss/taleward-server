@@ -69,6 +69,7 @@ class Probe:
     auswahl: list[dict] = field(default_factory=list)  # 0.4.65: Pflichtpunkte (Datei auswahl.txt)
     pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte (Datei pflicht.json)
     entwurf: str = ""  # 0.4.65: erster Entwurf vor der Nachbesserung (Datei entwurf.txt)
+    lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung (Datei lang.txt)
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -177,7 +178,7 @@ def datei(probe_id: str, name: str) -> Path | None:
 
 
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
-           "entwurf.txt", "transkript.txt", "ergebnis.json")
+           "entwurf.txt", "lang.txt", "transkript.txt", "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -322,6 +323,7 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
             p.auswahl, p.pflicht = list(ablauf.letzte_auswahl), dict(ablauf.letzte_pflicht)
             if p.pflicht.get("nachgebessert"):
                 p.entwurf = ablauf.letztes_kapitel1
+            p.lang = ablauf.letztes_lang
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -365,9 +367,11 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "pflicht.json").write_text(json.dumps(p.pflicht, ensure_ascii=False, indent=2), encoding="utf-8")
             if p.entwurf:
                 (o / "entwurf.txt").write_text(p.entwurf + "\n", encoding="utf-8")
+            if p.lang:
+                (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
-                                                                  "pflicht", "entwurf")},
+                                                                  "pflicht", "entwurf", "lang")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)
