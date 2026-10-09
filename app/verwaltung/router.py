@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from datetime import timedelta
@@ -82,6 +83,10 @@ MELDUNGEN = {
     "probe_leer": "Diese Runde hat keine Abschrift.",
     "probe_geloescht": "Probelauf gelöscht.",
     "probe_weg": "Diesen Probelauf gibt es nicht mehr – oder er gehört zu einem anderen Konto.",
+    "probe_korrektur_leer": "Bitte mindestens einen Hinweis eintragen.",
+    "probe_korrektur_laeuft": "Es läuft schon ein Korrekturdurchgang – bitte warten, bis er fertig ist.",
+    "probe_korrektur_genug": "Für diesen Probelauf sind die zehn Korrekturdurchgänge verbraucht.",
+    "probe_korrektur": "Korrekturdurchgang gestartet.",
     "konto_angelegt": "Konto angelegt.",
     "passwort": "Passwort geändert. Das Konto ist auf allen Geräten abgemeldet.",
     "verwalter": "Verwalter-Recht geändert.",
@@ -807,7 +812,32 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
     schritte = {"wartet": "Wartet auf den vorigen Probelauf", "notes": "Szenennotizen", "recap": "Kapitel", "review": "Prüfung", "revision": "Nachbesserung",
                 "proposals": "Vorschläge"}
     return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
+                  aktuell=probelauf.aktueller_text(p),
                   dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
+
+
+@router.post("/probelauf/{probe_id}/korrektur", dependencies=[Depends(csrf_pruefen)])
+async def probelauf_korrektur(request: Request, probe_id: str, user: User = Depends(verwalter),
+                              db: Session = Depends(get_db)):
+    """0.4.69: Korrektur per Hinweis messen – je Absatz ein Feld „h<Nummer>“ und ein Feld „fehlt“."""
+    from app import kapitelprobe as probelauf
+
+    p = probelauf.fuer(db, probe_id, user.id)
+    if p is None:
+        return _zurueck("/zusammenfassung", "probe_weg")
+    form = await request.form()
+    hinweise = {}
+    for name, wert in form.items():
+        m = re.fullmatch(r"h(\d{1,3})", name)
+        if m and isinstance(wert, str) and wert.strip():
+            hinweise[int(m.group(1))] = wert
+    fehlt = form.get("fehlt")
+    try:
+        probelauf.korrigieren_starten(db, p, hinweise, fehlt if isinstance(fehlt, str) else "", user.id)
+    except ValueError as e:
+        code = str(e)
+        return _zurueck(f"/probelauf/{p.id}", f"probe_{code}")
+    return _zurueck(f"/probelauf/{p.id}", "probe_korrektur")
 
 
 @router.get("/probelauf/{probe_id}/alles.zip")

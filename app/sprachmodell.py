@@ -726,9 +726,9 @@ reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung is
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 # 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
 # danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
-# lange Fassung (Benjamin 09.10.: kürzen nur, wenn keine Informationen verloren gehen).
-SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session auf höchstens {ziel} Wörter, damit es vorlesbar \
-bleibt. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
+# lange Fassung: gekürzt wird nur, wenn keine Information verloren geht.
+SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session auf {unten} bis {ziel} Wörter (nicht weniger), \
+damit es vorlesbar bleibt. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
 nichts Neues sagt, Wiederholungen. Alles andere bleibt: jede Handlung mit ihrem Ausgang und mit den richtigen Personen, \
 jeder Name, jeder benannte Gegenstand, jede Abmachung und jede Information, in derselben Reihenfolge. Die Ereignisse \
 der Liste kommen alle mit genau diesem Ausgang vor. Verändere keine Aussage, füge nichts hinzu. Gleicher Ton, \
@@ -737,6 +737,11 @@ Antworte nur mit JSON: {"text": "…"}. Sprache: {sprache}."""
 KUERZEN_AB = 1.2  # erst ab 20 % über der oberen Grenze kürzen
 KUERZEN_MINDESTENS = 0.1  # weniger als 10 % gespart: lohnt nicht, lange Fassung bleibt
 _NAMENSFOLGE = re.compile(r"(?<=[a-zäöüß,;:–] )[A-ZÄÖÜ][\w’'-]+(?: [A-ZÄÖÜ][\w’'-]+)+")
+
+
+def untergrenze(ein: dict, lang: bool = False) -> int:
+    """Untere Grenze der Längenvorgabe in Wörtern („900–1500“ → 900)."""
+    return int(woerter(ein, lang).split("–")[0])
 
 
 def obergrenze(ein: dict, lang: bool = False) -> int:
@@ -761,6 +766,59 @@ def namen_im_text(text: str, extra: list[str] | tuple = ()) -> set[str]:
 def _namen_fehlen(lang: str, kurz: str, extra: list[str]) -> list[str]:
     kurz_klein = kurz.casefold()
     return sorted(n for n in namen_im_text(lang, extra) if not re.search(rf"\b{re.escape(n)}", kurz_klein))
+
+
+# 0.4.69: Korrektur per Hinweis der Spielleitung (vorerst nur zum Messen im Probelauf). Nur genannte Absätze ändern
+# sich; die SL hat immer recht.
+SYSTEM_KORREKTUR = """Du überarbeitest das Kapitel einer Pen-&-Paper-Session nach Hinweisen der Spielleitung. Die \
+Spielleitung war dabei und hat immer recht: Was in einem Hinweis steht, gilt, auch wenn die Notizen etwas anderes sagen.
+- Ein Hinweis zu einem Absatz: Schreib genau diesen Absatz neu. Stell die beanstandete Stelle richtig oder streich \
+sie; alles andere im Absatz bleibt, wie es ist.
+- Ein Hinweis unter „Was fehlt“: Wähle genau einen Absatz, in den das Fehlende nach der Reihenfolge des Geschehens \
+gehört, und füg es dort knapp ein. Der Rest des Absatzes bleibt.
+- Ein Hinweis ist eine Anweisung, kein Text zum Abschreiben: Ins Kapitel kommt nur, was die Spielleitung darin sehen \
+will, ohne Wörter wie „Hinweis“ oder „Spielleitung“. Nichts darüber hinaus erfinden.
+Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, reiner Text ohne Markdown. \
+Keine Regeln, Würfe oder Punkte.
+Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]} – nur die geänderten Absätze. Sprache: {sprache}."""
+KORREKTUR_NOTIZEN_ZEICHEN = 60_000  # Notizen als Hintergrund, gekürzt
+KORREKTUR_MINDESTENS = 0.3  # ein Absatz darf beim Richtigstellen nicht auf weniger als 30 % schrumpfen
+_META = re.compile(r"\b(?:Hinweis|Spielleitung|Spielleiter|game master|hint)\b", re.I)
+
+
+def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehlt: str) -> tuple[dict[int, str], list[dict]]:
+    """Antwort des Modells prüfen, ohne Modell: Nur Absätze mit Hinweis ändern sich, bei „Was fehlt“ höchstens ein
+    weiterer. Ein Absatz darf nicht ausgehöhlt werden, ein ergänzter nicht kürzer, und kein Hinweis darf als Wortlaut
+    („laut Hinweis …“) ins Kapitel. Liefert ({Index: neuer Text}, [verworfen mit Grund])."""
+    neu: dict[int, str] = {}
+    verworfen: list[dict] = []
+    fehlt_ziel: int | None = None
+    for a in d.get("absaetze") or d.get("paragraphs") or []:
+        if not isinstance(a, dict):
+            continue
+        try:
+            i = int(a.get("nr") or a.get("index") or 0) - 1
+        except (TypeError, ValueError):
+            continue
+        t = " ".join(klartext(a.get("text")).split()) if isinstance(a.get("text"), str) else ""
+        if not (0 <= i < len(teile)) or not t or i in neu or t == teile[i]:
+            continue
+        if i not in hinweise:
+            if not fehlt or fehlt_ziel is not None:
+                verworfen.append({"absatz": i + 1, "grund": "ohne Hinweis geändert"})
+                continue
+            if len(t) < len(teile[i]):
+                verworfen.append({"absatz": i + 1, "grund": "beim Ergänzen gekürzt"})
+                continue
+            fehlt_ziel = i
+        elif len(t) < len(teile[i]) * KORREKTUR_MINDESTENS:
+            verworfen.append({"absatz": i + 1, "grund": "zu stark gekürzt"})
+            continue
+        if _META.search(t) and not _META.search(teile[i]):
+            verworfen.append({"absatz": i + 1, "grund": "Hinweis abgeschrieben"})
+            continue
+        neu[i] = t
+    return neu, verworfen
 
 
 PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
@@ -1661,7 +1719,7 @@ class Ablauf:
         nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
         self._schritt("revision")
         d = self.zaehler.aufruf(self.klient, SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein))
-                                .replace("{ziel}", str(grenze)), nutzer)
+                                .replace("{ziel}", str(grenze)).replace("{unten}", str(untergrenze(ein, True))), nutzer)
         t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
         if "\n\n" not in t and "\n" in t:
             t = re.sub(r"\n+", "\n\n", t)
@@ -1689,6 +1747,42 @@ class Ablauf:
         self.letztes_lang, r["text"] = r["text"], t
         self.letzte_kuerzung.update(angenommen=True, grund="")
         return neu
+
+    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], fehlt: str = "", notizen: str = ""
+                    ) -> tuple[str, dict]:
+        """0.4.69: Ein Durchgang „Korrektur per Hinweis“. hinweise: {Absatz-Index (0-basiert): Text der SL}. Alle
+        anderen Absätze bleiben zeichengleich (sie werden nie neu zusammengesetzt). Liefert (Text, Bericht)."""
+        from app import artefakte
+
+        teile = absaetze(text)
+        hinweise = {i: h.strip() for i, h in hinweise.items() if 0 <= i < len(teile) and h.strip()}
+        fehlt = fehlt.strip()
+        bericht = {"hinweise": len(hinweise) + bool(fehlt), "geaendert": [], "verworfen": [], "ohne_aenderung": []}
+        if not hinweise and not fehlt:
+            return text, bericht
+        liste = [f"- Absatz {i + 1}: {h}" for i, h in sorted(hinweise.items())]
+        if fehlt:
+            liste.append(f"- Was fehlt: {fehlt}")
+        grund = (f"Szenennotizen (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
+                 f"{notizen[:KORREKTUR_NOTIZEN_ZEICHEN]}\n\n") if notizen.strip() else ""
+        nutzer = (f"{_kopf(ein)}\n\n{grund}Kapitel, Absatz für Absatz:\n"
+                  + "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))
+                  + "\n\nHinweise der Spielleitung:\n" + "\n".join(liste))
+        self._schritt("revision")
+        d = self.zaehler.aufruf(self.klient, SYSTEM_KORREKTUR.replace("{sprache}", _sprache(ein)), nutzer)
+        neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, fehlt)
+        geschuetzt = [e["name"] for e in ein.get("bibel") or []]
+        for i, t in list(neu.items()):
+            sauber, _befunde = artefakte.kapitel(t, ein.get("personen") or [], geschuetzt)
+            sauber = " ".join(sauber.split())
+            if not sauber:
+                bericht["verworfen"].append({"absatz": i + 1, "grund": "vom Filter geleert"})
+                del neu[i]
+            else:
+                neu[i] = sauber
+        bericht["geaendert"] = [i + 1 for i in sorted(neu)]
+        bericht["ohne_aenderung"] = [i + 1 for i in sorted(hinweise) if i not in neu]
+        return "\n\n".join(neu.get(i, a) for i, a in enumerate(teile)), bericht
 
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
         """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die

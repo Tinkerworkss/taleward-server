@@ -70,6 +70,16 @@ class Probe:
     pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte (Datei pflicht.json)
     entwurf: str = ""  # 0.4.65: erster Entwurf vor der Nachbesserung (Datei entwurf.txt)
     lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung (Datei lang.txt)
+    korrekturen: list[dict] = field(default_factory=list)  # 0.4.69: Durchgänge „Korrektur per Hinweis“ (korrektur.json)
+    korrektur_laeuft: bool = False
+
+
+def aktueller_text(p: Probe) -> str:
+    """Kapitel nach dem letzten erfolgreichen Korrekturdurchgang, sonst das ursprüngliche."""
+    for k in reversed(p.korrekturen):
+        if k.get("nachher"):
+            return k["nachher"]
+    return p.text
 
 
 def ordner(probe_id: str | None = None) -> Path:
@@ -178,7 +188,7 @@ def datei(probe_id: str, name: str) -> Path | None:
 
 
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
-           "entwurf.txt", "lang.txt", "transkript.txt", "ergebnis.json")
+           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "transkript.txt", "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -371,10 +381,105 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
-                                                                  "pflicht", "entwurf", "lang")},
+                                                                  "pflicht", "entwurf", "lang", "korrekturen")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)
+
+
+# ---------- 0.4.69: Korrektur per Hinweis (nur Messung, ohne Schnittstelle) ----------
+KORREKTUR_DURCHGAENGE = 10  # je Probelauf, wie die geplante Obergrenze je Kapitel und Tag
+KORREKTUR_ZEICHEN = 1000  # je Hinweis
+
+
+def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt: str, user_id: str) -> None:
+    """Einen Korrekturdurchgang im Hintergrund starten. Die Hinweise sind wie SL-Notizen nur für die SL; sie landen nur
+    in diesem Probelauf. Wirft ValueError mit einem Code für die Meldung."""
+    from app.einstellungen import llm_konfig
+    from app.models import Campaign
+    from app.zusammenfassung import eingabe_bauen, recap_eingabe
+
+    if p.zustand != "fertig" or p.korrektur_laeuft:
+        raise ValueError("korrektur_laeuft")
+    if len(p.korrekturen) >= KORREKTUR_DURCHGAENGE:
+        raise ValueError("korrektur_genug")
+    hinweise = {i: h.strip()[:KORREKTUR_ZEICHEN] for i, h in hinweise.items() if h.strip()}
+    fehlt = fehlt.strip()[:KORREKTUR_ZEICHEN]
+    if not hinweise and not fehlt:
+        raise ValueError("korrektur_leer")
+    if not ist_sl(db, user_id, p.campaign_id):
+        raise ValueError("weg")
+    k = llm_konfig(db)
+    if k.art in ("lokal", "aus") or (k.art == "api" and not k.api_key):
+        raise ValueError("aus" if k.art != "lokal" else "lokal")
+    c = db.get(Campaign, p.campaign_id)
+    if k.art == "api" and (c is None or not c.allow_cloud_summary):
+        raise ValueError("cloud")
+    s = db.get(GameSession, p.session_id)
+    if s is None:
+        raise ValueError("weg")
+    ein = recap_eingabe(eingabe_bauen(db, s))
+    p.korrektur_laeuft = True
+    _speichern(p)
+    threading.Thread(target=_korrigieren, args=(p, k, ein, hinweise, fehlt), name=f"korrektur-{p.id[:8]}",
+                     daemon=True).start()
+
+
+def _korrigieren(p: Probe, k, ein: dict, hinweise: dict[int, str], fehlt: str) -> None:
+    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze
+
+    vorher = aktueller_text(p)
+    runde = {"nr": len(p.korrekturen) + 1, "gestartet": utcnow().isoformat().replace("+00:00", "Z"),
+             "hinweise": [{"absatz": i + 1, "text": h} for i, h in sorted(hinweise.items())], "fehlt": fehlt,
+             "vorher": vorher, "nachher": "", "geaendert": [], "verworfen": [], "ohne_aenderung": [],
+             "woerter_vorher": len(vorher.split()), "kosten_cent": 0, "fehler": None}
+    with _REIHE:
+        t0 = time.monotonic()
+        try:
+            if k.art == "attrappe":  # Testmodus: hängt an jeden genannten Absatz eine Markierung
+                teile = absaetze(vorher)
+                for i in hinweise:
+                    if 0 <= i < len(teile):
+                        teile[i] += " (Testmodus: korrigiert)"
+                runde["nachher"] = "\n\n".join(teile)
+                runde["geaendert"] = [i + 1 for i in sorted(hinweise) if 0 <= i < len(teile)]
+            else:
+                from app.zusammenfassung import api_klient
+
+                klient = api_klient(k)
+                ablauf = Ablauf(klient)
+                text, bericht = ablauf.korrigieren(ein, vorher, hinweise, fehlt, p.notizen)
+                runde.update(bericht)
+                runde["nachher"] = text if bericht["geaendert"] else ""
+                runde["kosten_cent"] = ablauf.zaehler.kosten_cent()
+                runde["tokens_ein"], runde["tokens_aus"] = ablauf.zaehler.tokens_in, ablauf.zaehler.tokens_out
+                with session_factory()() as db:
+                    db.add(UsageLog(campaign_id=p.campaign_id, session_id=p.session_id, kind="probe", engine="external",
+                                    model=klient.modell, tokens_in=ablauf.zaehler.tokens_in,
+                                    tokens_out=ablauf.zaehler.tokens_out, cost_cents=runde["kosten_cent"],
+                                    compute_seconds=time.monotonic() - t0))
+                    db.commit()
+        except SprachmodellFehler as e:
+            runde["fehler"] = str(e)
+        except Exception as e:  # noqa: BLE001 – ein Probelauf darf nie etwas anderes mitreißen
+            log.exception("Korrektur im Probelauf %s fehlgeschlagen", p.id)
+            runde["fehler"] = f"{type(e).__name__}: {e}"
+        finally:
+            runde["woerter_nachher"] = len((runde["nachher"] or vorher).split())
+            frisch = lesen(p.id) or p  # die Seite kann inzwischen nichts geändert haben, aber sicher ist sicher
+            frisch.korrekturen = [*frisch.korrekturen, runde]
+            frisch.korrektur_laeuft = False
+            _speichern(frisch)
+            _korrektur_dateien(frisch)
+
+
+def _korrektur_dateien(p: Probe) -> None:
+    o = ordner(p.id)
+    try:
+        (o / "korrektur.json").write_text(json.dumps(p.korrekturen, ensure_ascii=False, indent=2), encoding="utf-8")
+        (o / "recap-korrigiert.txt").write_text(f"{p.titel}\n\n{aktueller_text(p)}\n", encoding="utf-8")
+    except OSError:
+        log.warning("Probelauf %s: Korrektur-Dateien konnten nicht geschrieben werden", p.id)
 
 
 def _modellname(k) -> str:
