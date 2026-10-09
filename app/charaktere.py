@@ -125,6 +125,17 @@ def neuzugang(db: Session, me: Member) -> None:
                         entry_ids=json.dumps(sorted(betroffen))))
 
 
+def beitritt_melden(db: Session, me: Member) -> None:
+    """0.4.14 (member_joined): Die SL erfährt von jedem Beitritt, auch vom Wiedereintritt und vom Beitritt mit
+    Platz-Code, und kann den Hinweis erledigen oder die Person entfernen."""
+    beitritt_vergessen(db, me.id)
+    db.add(GmNotice(campaign_id=me.campaign_id, code="member_joined", member_id=me.id, entry_ids="[]"))
+
+
+def beitritt_vergessen(db: Session, member_id: str) -> None:
+    db.execute(GmNotice.__table__.delete().where(GmNotice.member_id == member_id, GmNotice.code == "member_joined"))
+
+
 def hinweise(db: Session, c: Campaign) -> list[schemas.GmNoticeOut]:
     vorhanden = set(db.scalars(select(Entry.id).where(Entry.campaign_id == c.id)))
     return [schemas.GmNoticeOut(id=n.id, code=n.code, member_id=n.member_id, created_at=n.created_at,

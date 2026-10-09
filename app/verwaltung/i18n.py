@@ -26,7 +26,7 @@ EN: dict[str, str] = {
     "Probelauf starten": "Start trial run",
     "Noch keine Runde mit Abschrift in deinen Kampagnen.": "No session with a transcript in your campaigns yet.",
     "Alle Dateien als ZIP": "All files as ZIP",
-    "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App auf der Übersicht der Kampagne unter „Die Welt“ → „Bearbeiten“.": "Cloud summaries are not allowed for this campaign. The game master decides this in the app on the campaign overview under “The world” → “Edit”.",
+    "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App auf der Übersicht der Kampagne unter „Kampagne verwalten“ → „Cloud-Dienste“.": "Cloud summaries are not allowed for this campaign. The game master decides this in the app on the campaign overview under “Manage campaign” → “Cloud services”.",
     'Zur Wahl stehen nur Runden aus Kampagnen, in denen du selbst Spielleitung bist. Mit der Cloud-API gehen Abschrift und Bibel der Kampagne an den Anbieter – nur, wenn die Kampagne die Cloud-Zusammenfassung erlaubt. Deine Probeläufe sieht nur dein Konto.': "Only sessions from campaigns in which you are game master yourself are offered. With the cloud API, the campaign's transcript and bible go to the provider – only if the campaign allows cloud summaries. Only your account sees your test runs.",
     "Gestartet": "Started",
     "{cent} Cent": "{cent} cents",

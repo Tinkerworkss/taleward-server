@@ -560,8 +560,12 @@ def test_relationen_gegen_transkript():
     assert aus[0]["urteil"] == "widerspricht" and aus[0]["fenster"] == ["1:11:40"] and aus[1]["urteil"] == "stimmt"
     # 0.4.48: nur ein Hinweis für die Spielleitung – das Urteil bleibt, damit keine Nachbesserung aus Fehlalarmen folgt
     assert befund[0]["verdict"] == "supported"
-    assert befund[0]["note"].startswith("Hinweis aus dem Transkript, bitte prüfen: Pipo gibt") and "nehmt mein Schwert" in befund[0]["note"]
+    # 0.4.64: an unbeanstandeten Absätzen zeigt die App keine Begründung – der Hinweis bleibt im Modellvergleich
+    assert befund[0]["note"] is None and aus[0]["zitat"] == "nehmt mein Schwert"
     assert befund[1]["verdict"] == "supported" and befund[1]["note"] is None
+    befund = [{"index": 0, "verdict": "unsupported", "note": None, "evidence": [{"start": 4300.0, "quote": "Schwert"}]}]
+    Ablauf(k).relationen(ein, text, befund)
+    assert befund[0]["note"] == "Bitte prüfen: Pipo gibt der Gruppe das Schwert, nicht umgekehrt."
     # ohne belegte Stellen: kein Aufruf
     assert Ablauf(k).relationen(ein, text, [{"index": 0, "verdict": "supported", "note": None, "evidence": []}]) == []
 
@@ -622,5 +626,5 @@ def test_gegenpruefung_relationen_nur_als_hinweis_auf_der_endfassung():
     a = Ablauf(k)
     p = a.gegenpruefen(ein, "Szenennotizen", "[1:40] Pipo gibt das Schwert.", r)
     assert p["revised"] is False and r["text"] == "Pipo gab der Gruppe sein Schwert."
-    assert p["paragraphs"][0]["verdict"] == "supported" and "Hinweis aus dem Transkript" in p["paragraphs"][0]["note"]
+    assert p["paragraphs"][0]["verdict"] == "supported" and not p["paragraphs"][0]["note"]
     assert a.letzte_relationen_vorher == [] and a.letzte_relationen_nachher[0]["urteil"] == "widerspricht"

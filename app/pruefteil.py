@@ -6,10 +6,15 @@ Urteil mit Stellen (Zeitangabe und Zitat). Hier setzt die Zentrale diese Stellen
 Stelle. So sieht die SL immer, was wirklich gesagt wurde, und wer es gesagt hat.
 
 Der Server streicht nichts; die Urteile sind Hinweise für die SL.
+
+0.4.64: Die App markiert nur noch beanstandete Absätze und zeigt dort die Begründung als einen Satz. Darum hier:
+Begründungen höchstens ein kurzer Satz (`kurz`), bei „belegt“ keine; ein „unbelegt“, zu dem das Modell selbst eine
+Stelle nennt, die sich im Transkript wiederfindet, ist höchstens „teilweise“ – sonst bleibt die Ansicht zu voll.
 """
 from __future__ import annotations
 
 import json
+import re
 from bisect import bisect_right
 from dataclasses import dataclass
 
@@ -21,6 +26,27 @@ BERICHT = {"supported": "supported", "partial": "partial", "unsupported": "unsup
            "contradicted": "contradicted", "off_game": "offGame"}
 OHNE_STELLE = {"de": "Keine Belegstelle im Transkript gefunden.", "en": "No supporting passage found in the transcript."}
 MAX_BELEGE = 3
+NOTIZ_HOECHSTENS = 220  # Zeichen
+_SATZGRENZE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ„\"])")
+_VORSPANN = re.compile(r"^\s*(?:absatz|paragraph)\s*\d+\s*[:.–-]\s*", re.I)
+
+
+def kurz(notiz: str | None) -> str | None:
+    """Begründung als ein Satz für Menschen: Vorspann „Absatz 3:“ weg, nur der erste Satz (außer in Anführungszeichen),
+    höchstens NOTIZ_HOECHSTENS Zeichen."""
+    t = _VORSPANN.sub("", " ".join(str(notiz or "").split()))
+    if not t:
+        return None
+    stueck, offen = [], 0
+    for teil in _SATZGRENZE.split(t):  # erster Satz; ein Satzende innerhalb von „…“ zählt nicht
+        stueck.append(teil)
+        offen += teil.count("„") - teil.count("“")
+        if offen <= 0:
+            break
+    t = " ".join(stueck)
+    if len(t) > NOTIZ_HOECHSTENS:
+        t = t[:NOTIZ_HOECHSTENS - 1].rsplit(" ", 1)[0].rstrip(" ,;:–-") + " …"
+    return t
 
 
 @dataclass
@@ -94,11 +120,15 @@ def bauen(roh: dict | None, text: str, stellen: Stellen, sprache: str = "de") ->
             if beleg and beleg["start"] not in gesehen:
                 gesehen.add(beleg["start"])
                 gefunden.append(beleg)
-        notiz = (str(p.get("note") or "").strip() or None)
+        notiz = kurz(p.get("note"))
         if urteil == "supported" and not gefunden:
             urteil = "partial"
             notiz = notiz or OHNE_STELLE.get(sprache, OHNE_STELLE["de"])
-        absaetze_aus.append({"index": i, "verdict": urteil, "note": notiz[:500] if notiz else None,
+        elif urteil == "supported":
+            notiz = None
+        elif urteil == "unsupported" and gefunden:
+            urteil = "partial"  # das Modell nennt selbst eine Stelle, die es im Transkript gibt
+        absaetze_aus.append({"index": i, "verdict": urteil, "note": notiz,
                              "evidence": gefunden[:MAX_BELEGE]})
     bericht = {"total": anzahl, "supported": 0, "partial": 0, "unsupported": 0, "contradicted": 0, "offGame": 0}
     for a in absaetze_aus:

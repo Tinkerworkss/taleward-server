@@ -75,7 +75,7 @@ def tr(request: Request):
 # Meldungen nach einer Aktion (?ok=…) – der Text ist zugleich der Übersetzungsschlüssel
 MELDUNGEN = {
     "probe_runde": "Bitte eine Runde mit Abschrift wählen.",
-    "probe_cloud": "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App auf der Übersicht der Kampagne unter „Die Welt“ → „Bearbeiten“.",
+    "probe_cloud": "Für diese Kampagne ist die Cloud-Zusammenfassung nicht freigegeben. Das entscheidet die Spielleitung in der App auf der Übersicht der Kampagne unter „Kampagne verwalten“ → „Cloud-Dienste“.",
     "probe_datei": "Die Abschrift-Datei ist zu groß (höchstens 5 MB) oder enthält keine Zeilen „[h:mm:ss] Sprecher: Text“.",
     "probe_lokal": "Der Probelauf rechnet auf dem Server; dafür muss unter „Wer fasst zusammen?“ die Cloud-API oder der Testmodus eingestellt sein.",
     "probe_aus": "Zusammenfassung ist aus oder ohne API-Schlüssel – bitte erst einstellen.",

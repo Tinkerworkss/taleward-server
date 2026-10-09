@@ -644,11 +644,13 @@ Antworte nur mit JSON: {"proposals": [{"entryType": "…", "action": "…", "tar
 SYSTEM_PRUEFUNG = """Du prüfst den Recap einer Pen-&-Paper-Session gegen seine Grundlage (Transkript oder \
 Szenennotizen; Zeitangaben stehen vorn in eckigen Klammern, z. B. „[12:34]“). Du schreibst nichts um, du bewertest nur.
 Für jeden nummerierten Absatz:
-- urteil: "belegt" (jede Aussage steht in der Grundlage), "teilweise" (einiges belegt, anderes nicht), "unbelegt" \
-(kommt in der Grundlage nicht vor), "widerspricht" (die Grundlage sagt etwas anderes) oder "witz" (stammt aus einem \
-Witz oder einem Gespräch außerhalb des Spiels).
-- Streng sein: Ausschmückungen, die so nicht vorkamen (Gefühle, Aussehen, Gerüche, Wetter, Gedanken), machen einen \
-Absatz höchstens "teilweise".
+- urteil: "belegt" (die Handlungen und Ergebnisse des Absatzes stehen in der Grundlage), "teilweise" (das Wesentliche \
+ist belegt, eine einzelne Handlung, ein Name oder ein Ergebnis aber nicht), "unbelegt" (das Geschehen des Absatzes \
+kommt in der Grundlage gar nicht vor), "widerspricht" (die Grundlage sagt ausdrücklich etwas anderes) oder "witz" \
+(stammt aus einem Witz oder einem Gespräch außerhalb des Spiels).
+- Erzählerische Ausschmückung (Gefühle, Aussehen, Gerüche, Wetter, Gedanken, Übergänge) ist erlaubt und kein Grund \
+für "teilweise", "unbelegt" oder "widerspricht". Kommt etwas in der Grundlage nur nicht vor, ist das nie \
+"widerspricht".
 - Prüfe jede Beziehung einzeln, nicht nur, ob die Wörter vorkommen: Wer tut was wem? Wer gibt wem was, und wer hat es \
 danach? War jemand schon verletzt, oder wird er es durch die erzählte Handlung? Wer verspricht wem was, gegen welche \
 Gegenleistung? Ist eine Figur in der Szene anwesend oder wird nur über sie gesprochen? Ist etwas beobachtet, behauptet, \
@@ -656,7 +658,9 @@ vermutet, geplant, erinnert oder eine Vision? Eine vertauschte Richtung („A gi
 umgedreht ist (verletzt → tot), eine Vermutung als Tatsache oder eine nur erwähnte Figur als anwesend: "widerspricht".
 - stellen: 1 bis 3 Stellen der Grundlage, auf die sich der Absatz stützt – Zeitangabe "m:ss" und ein kurzes \
 wörtliches Zitat daraus (höchstens 20 Wörter). Leer, wenn nichts belegt ist.
-- begruendung: ein kurzer Satz, was fehlt, abweicht oder erfunden ist. Leer bei "belegt".
+- begruendung: nur bei "unbelegt", "widerspricht" und "witz", sonst leer. Ein einziger kurzer Satz für die \
+Spielleitung (höchstens 20 Wörter), der die Stelle konkret nennt, ohne Zitat und ohne Zeitangabe – etwa „Der Regen \
+kommt in der Runde nicht vor.“ oder „In der Runde gibt Mara das Schwert ab, sie bekommt es nicht.“
 Antworte nur mit JSON: {"absaetze": [{"nr": 1, "urteil": "…", "stellen": [{"zeit": "m:ss", "zitat": "…"}], \
 "begruendung": "…"}]}. Sprache der Begründungen: {sprache}."""
 
@@ -717,20 +721,27 @@ URTEILE = {"belegt": "supported", "teilweise": "partial", "unbelegt": "unsupport
            "witz": "off_game", "supported": "supported", "partial": "partial", "unsupported": "unsupported",
            "contradicted": "contradicted", "off_game": "off_game"}
 BEANSTANDET = ("unsupported", "contradicted", "off_game")
-HINWEIS_RELATION = {"de": "Hinweis aus dem Transkript, bitte prüfen: ", "en": "Note from the transcript, please check: "}
-HINWEIS_TISCH = {"de": "Klingt nach Gespräch am Tisch, bitte prüfen: ", "en": "Sounds like table talk, please check: "}
+HINWEIS_RELATION = {"de": "Bitte prüfen: ", "en": "Please check: "}
+HINWEIS_TISCH = {"de": "Klingt nach Gespräch am Tisch: ", "en": "Sounds like table talk: "}
+TISCH_ZITAT = 120  # Zeichen; die Begründung bleibt ein kurzer Satz
 
 
 def hinweise_eintragen(pruefung: dict, befunde: list[dict], sprache: str | None) -> None:
     """0.4.62: Wörtliche Rede, die nach Gespräch am Tisch klingt, bleibt im Kapitel; die Spielleitung bekommt am
-    Absatz einen Hinweis (Recap.review), statt dass der Filter still etwas löscht."""
+    Absatz einen Hinweis (Recap.review), statt dass der Filter still etwas löscht.
+    0.4.64: Der Absatz gilt dann als „vermutlich außerhalb des Spiels“ (off_game) – die App markiert nur noch
+    beanstandete Absätze –, und die Begründung ist genau dieser eine Satz. Widerspricht der Absatz zugleich der
+    Grundlage, bleibt dieses Urteil mit seiner Begründung stehen."""
     vorsatz = HINWEIS_TISCH["en" if sprache == "en" else "de"]
     absaetze_ = {b.get("index"): b for b in pruefung.get("paragraphs") or []}
     for f in befunde:
         if f.get("art") != "tischgespraech" or f.get("absatz") not in absaetze_:
             continue
         b = absaetze_[f["absatz"]]
-        b["note"] = ((b.get("note") or "") + ("\n" if b.get("note") else "") + vorsatz + f["text"])[:2000]
+        if b.get("verdict") == "contradicted" and b.get("note"):
+            continue
+        zitat = f["text"] if len(f["text"]) <= TISCH_ZITAT else f["text"][:TISCH_ZITAT].rsplit(" ", 1)[0] + " …“"
+        b["verdict"], b["note"] = "off_game", vorsatz + zitat
 
 
 def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
@@ -1466,15 +1477,15 @@ class Ablauf:
             eintrag = {"index": nr - 1, "urteil": urteil, "begruendung": klartext(a.get("begruendung") or "")[:400],
                        "zitat": klartext(a.get("zitat") or "")[:300], "fenster": fenster[nr - 1]}
             aus.append(eintrag)
-            if urteil == "widerspricht":
+            if urteil == "widerspricht" and eintrag["begruendung"]:
                 # Nur ein Hinweis für die Spielleitung, kein Urteil: Die Relationsprüfung schlägt bei kleinen
                 # Modellen überwiegend falsch an (06.10.: 1 echter Treffer in 12 Flaggen). Das Urteil des Absatzes
-                # und damit die Nachbesserung bleiben unberührt.
+                # und damit die Nachbesserung bleiben unberührt. 0.4.64: Die App zeigt Begründungen nur an
+                # beanstandeten Absätzen, und dort genau einen Satz – der Hinweis füllt also nur eine leere
+                # Begründung; im Modellvergleich bleibt er vollständig (letzte_relationen_*).
                 for b in befund:
-                    if b.get("index") == nr - 1:
-                        hinweis = (HINWEIS_RELATION.get(_sprache(ein), HINWEIS_RELATION["de"])
-                                   + (eintrag["begruendung"] or "") + (f" („{eintrag['zitat']}“)" if eintrag["zitat"] else ""))
-                        b["note"] = ((b.get("note") or "").strip() + (" " if b.get("note") else "") + hinweis)[:600]
+                    if b.get("index") == nr - 1 and b.get("verdict") in BEANSTANDET and not b.get("note"):
+                        b["note"] = HINWEIS_RELATION["en" if ein.get("sprache") == "en" else "de"] + eintrag["begruendung"]
         return aus
 
     def pruefen(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:

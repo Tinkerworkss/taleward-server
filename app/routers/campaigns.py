@@ -116,8 +116,9 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
     char = (body.character_name or "").strip() or None
     if body.character is not None:  # 0.4.7: Charakter aus der Sammlung gewinnt gegen den freien Namen
         char = body.character.name.strip() or char
-    neu = me is None
+    neu = beigetreten = me is None
     platz = None
+    mit_platzcode = bool(inv.member_id)
     if me is None:
         frueher = db.scalar(select(Member).where(Member.campaign_id == c.id, Member.user_id == user.id))
         # 0.4.8: offener Platz aus einem Umzug – per Platz-Einladung oder über die Kennung des Charakters
@@ -159,6 +160,8 @@ def join(body: schemas.JoinRequest, request: Request, user: User = Depends(curre
         charaktere.setzen(db, me, body.character, beitritt=True)
     if neu:
         charaktere.neuzugang(db, me)
+    if beigetreten and not (platz is not None and not mit_platzcode):
+        charaktere.beitritt_melden(db, me)  # 0.4.14; offener Platz ohne Code meldet schon seat_claimed
     if c.organization_id:
         ensure_org_member(db, c.organization_id, user)
     db.commit()
@@ -313,6 +316,7 @@ def remove_member(campaignId: str, memberId: str, user: User = Depends(current_u
     from app import figuren
 
     figuren.verwaist_melden(db, target)  # 0.4.9: Hinweis an die SL, was aus der Figur wird
+    charaktere.beitritt_vergessen(db, target.id)  # 0.4.14
     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == target.id))
     db.execute(DateVote.__table__.delete().where(DateVote.member_id == target.id))
     db.commit()

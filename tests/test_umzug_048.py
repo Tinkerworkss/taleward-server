@@ -150,7 +150,7 @@ def test_export_inhalt_und_zugang(client, world, dbs, make_user, login):
     namen = set(z.namelist())
     alles = b"".join(z.read(n) for n in namen)
     k = json.loads(z.read("kampagne.json"))
-    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.13"
+    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.14"
     # nie in der Datei
     for verboten in (GEHEIM, PRUEF, "Anna", "Ben", "Dora", "anna", "HINTERGRUND-DORIN", "DORA-BOGEN",
                      "DORA-OEFFENTLICH", "BEN-AN-ANNA", "Dorin, Kurzbeschreibung."):
@@ -267,6 +267,8 @@ def test_import_ganzer_weg_und_plaetze(client, world, dbs, make_user, login, mon
     assert client.post(f"{API}/campaigns/{cid}/members/{dorin['id']}/invite", headers=w["pl"]).status_code == 403
     c = client.post(f"{API}/campaigns/join", headers=a["dora"], json={"code": platz_code}).json()
     assert next(m for m in c["members"] if m["displayName"] == "Dora")["id"] == dorin["id"]
+    hinweise = client.get(f"{API}/campaigns/{cid}", headers=eve).json()["gmNotices"]
+    assert ("member_joined", dorin["id"]) in [(n["code"], n["memberId"]) for n in hinweise]  # 0.4.14: mit Platz-Code
     make_user("fynn")
     r = client.post(f"{API}/campaigns/join", headers=login("fynn"), json={"code": platz_code})
     assert r.status_code == 404  # verbraucht
@@ -284,7 +286,8 @@ def test_import_ganzer_weg_und_plaetze(client, world, dbs, make_user, login, mon
     r = client.post(f"{API}/campaigns/{cid}/members/{tharvok['id']}/release", headers=eve)
     assert r.status_code == 200 and r.json()["openSeat"] is True and r.json()["userId"] == ""
     assert client.get(f"{API}/campaigns/{cid}", headers=w["pl"]).status_code == 404
-    assert client.get(f"{API}/campaigns/{cid}", headers=eve).json()["gmNotices"] == []
+    hinweise = client.get(f"{API}/campaigns/{cid}", headers=eve).json()["gmNotices"]
+    assert [(n["code"], n["memberId"]) for n in hinweise] == [("member_joined", dorin["id"])]  # Bens sind weg
     r = client.post(f"{API}/campaigns/{cid}/members/{rest['id']}/release", headers=eve)
     assert r.status_code == 409 and r.json()["code"] == "last_gm"
     r = client.post(f"{API}/campaigns/{cid}/members/{tharvok['id']}/release", headers=eve)

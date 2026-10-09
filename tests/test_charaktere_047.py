@@ -80,13 +80,16 @@ def test_beitritt_mit_charakter_und_neuzugang(client, world, make_user, login):
     sichtbar = {x["id"] for x in client.get(f"{API}/campaigns/{w['cid']}/entries", headers=dora).json()}
     assert offen["id"] in sichtbar and e["id"] not in sichtbar
     # Die SL bekommt einen Hinweis und erledigt ihn
-    sl = client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()
-    assert [(n["code"], n["memberId"], n["entryIds"]) for n in sl["gmNotices"]] == [
+    def hinweise():  # ohne member_joined (0.4.14, eigener Test)
+        return [n for n in client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()["gmNotices"]
+                if n["code"] != "member_joined"]
+
+    assert [(n["code"], n["memberId"], n["entryIds"]) for n in hinweise()] == [
         ("hidden_entries_for_newcomer", ich["id"], [e["id"]])]
-    nid = sl["gmNotices"][0]["id"]
+    nid = hinweise()[0]["id"]
     assert client.delete(f"{API}/campaigns/{w['cid']}/gm-notices/{nid}", headers=w["pl"]).status_code == 404
     assert client.delete(f"{API}/campaigns/{w['cid']}/gm-notices/{nid}", headers=w["gm"]).status_code == 204
-    assert client.get(f"{API}/campaigns/{w['cid']}", headers=w["gm"]).json()["gmNotices"] == []
+    assert hinweise() == []
     # Derselbe Charakter kann nicht zweimal in einer Kampagne mitspielen
     r = client.put(f"{API}/campaigns/{w['cid']}/members/me/character", headers=w["pl"], json={**ch, "version": 9})
     assert r.status_code == 409 and r.json()["code"] == "character_in_campaign"

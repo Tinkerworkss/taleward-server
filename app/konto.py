@@ -248,7 +248,7 @@ def entfernen(db: Session, u: User) -> None:
         _kampagne_loeschen(db, c)
     db.flush()
     jetzt = utcnow()
-    from app import figuren
+    from app import charaktere, figuren
 
     for m in db.scalars(select(Member).where(Member.user_id == u.id)):
         if m.left_at is None:
@@ -260,6 +260,7 @@ def entfernen(db: Session, u: User) -> None:
         m.character_backstory = None
         m.chronicle_seen_at = m.bible_seen_at = None
         m.user_id, m.deleted_at = None, jetzt
+        charaktere.beitritt_vergessen(db, m.id)  # 0.4.14
         db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == m.id))
         db.execute(DateVote.__table__.delete().where(DateVote.member_id == m.id))  # Kommentare bleiben stehen
     stimmprofile.loeschen(db, u.id)

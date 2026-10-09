@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.13
+  version: 0.4.14
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -173,6 +173,12 @@ info:
     Kapitel, Vorschläge oder Schreibhilfe.
     Außerdem (0.4.13): Rückweg der Android-App als App Link – `returnTo=https://app.taleward.org/auth/app` bei
     /auth/oidc/{provider}/start (siehe dort). Die App nutzt ihn nur, wenn der Server 0.4.13 meldet.
+    Änderungen in 0.4.14 (Beitritte und Schutz): GmNotice `member_joined` – die SL erfährt von jedem Beitritt und kann
+    die Person mit einem Tipp wieder entfernen. 409 `resummarize_limit` bei POST /sessions/{id}/resummarize und
+    PUT /sessions/{id}/speakers (höchstens 5 Zusammenfassungen je Kapitel in 24 Stunden). Kennungen in Pfaden bestehen
+    nur aus Buchstaben, Ziffern, `-` und `_` (höchstens 64 Zeichen); die App setzt keine anderen in Pfade ein.
+    GET /documents/{id}/file liefert nur die dort genannten Content-Types; die App öffnet nur PDF und Text selbst,
+    alles andere bietet sie zum Speichern an.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -1019,7 +1025,7 @@ paths:
   /campaigns/{campaignId}/gm-notices/{noticeId}:
     parameters:
       - { $ref: "#/components/parameters/campaignId" }
-      - { name: noticeId, in: path, required: true, schema: { type: string } }
+      - { name: noticeId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     delete:
       tags: [Kampagnen]
       summary: Hinweis an die SL erledigt (nur SL, ab 0.4.7)
@@ -1083,7 +1089,7 @@ paths:
   /campaigns/{campaignId}/exports/{exportId}:
     parameters:
       - { $ref: "#/components/parameters/campaignId" }
-      - { name: exportId, in: path, required: true, schema: { type: string } }
+      - { name: exportId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Umzug]
       summary: Stand des Exports (nur SL, ab 0.4.8; die App fragt alle paar Sekunden)
@@ -1099,7 +1105,7 @@ paths:
   /campaigns/{campaignId}/exports/{exportId}/file:
     parameters:
       - { $ref: "#/components/parameters/campaignId" }
-      - { name: exportId, in: path, required: true, schema: { type: string } }
+      - { name: exportId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Umzug]
       summary: Datei herunterladen (nur SL, ab 0.4.8)
@@ -1167,7 +1173,7 @@ paths:
 
   /imports/{importId}:
     parameters:
-      - { name: importId, in: path, required: true, schema: { type: string } }
+      - { name: importId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Umzug]
       summary: Stand des Imports (nur die importierende Person, ab 0.4.8)
@@ -1182,7 +1188,7 @@ paths:
 
   /imports/{importId}/chunks/{index}:
     parameters:
-      - { name: importId, in: path, required: true, schema: { type: string } }
+      - { name: importId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
       - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
     put:
       tags: [Umzug]
@@ -1208,7 +1214,7 @@ paths:
 
   /imports/{importId}/complete:
     parameters:
-      - { name: importId, in: path, required: true, schema: { type: string } }
+      - { name: importId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     post:
       tags: [Umzug]
       summary: Upload abschließen – Server prüft und legt die Kampagne an (ab 0.4.8)
@@ -1639,6 +1645,9 @@ paths:
         Anwesenheit, Kommentare. Die Session geht nach `summarizing`, danach wieder `awaiting_review`.
         Kostet wie eine neue Zusammenfassung (Usage) und folgt der Cloud-Freigabe der Kampagne.
         Andere Zustände → 409 `wrong_state`; Abschrift fehlt → 409 `transcript_missing`.
+        Ab 0.4.14: höchstens 5 Zusammenfassungen je Kapitel in 24 Stunden (gezählt werden alle Zusammenfassungs-Aufträge
+        des Kapitels, auch der erste, und solche über PUT …/speakers) → sonst 409 `resummarize_limit` mit `message`
+        („Dieses Kapitel wurde heute schon fünfmal neu geschrieben. Morgen geht es wieder.“).
       responses:
         "202":
           description: Neu eingereiht
@@ -1716,8 +1725,8 @@ paths:
 
   /uploads/{uploadId}/files/{fileId}/chunks/{index}:
     parameters:
-      - { name: uploadId, in: path, required: true, schema: { type: string } }
-      - { name: fileId, in: path, required: true, schema: { type: string } }
+      - { name: uploadId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+      - { name: fileId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
       - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
     put:
       tags: [Upload]
@@ -1743,7 +1752,7 @@ paths:
 
   /uploads/{uploadId}:
     parameters:
-      - { name: uploadId, in: path, required: true, schema: { type: string } }
+      - { name: uploadId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Upload]
       summary: Welche Teile fehlen noch (zum Fortsetzen nach Abbruch)
@@ -1767,7 +1776,7 @@ paths:
 
   /uploads/{uploadId}/complete:
     parameters:
-      - { name: uploadId, in: path, required: true, schema: { type: string } }
+      - { name: uploadId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     post:
       tags: [Upload]
       summary: Upload abschließen, Verarbeitung einreihen
@@ -1811,7 +1820,7 @@ paths:
       description: |
         In `awaiting_speakers`. Ab 0.4.10 auch in `awaiting_review`: ändert die Zuordnung und schreibt das Kapitel neu
         (wie POST …/resummarize, mit denselben Folgen für Recap-Bearbeitungen und Entscheidungen). Andere Zustände →
-        409 `wrong_state`.
+        409 `wrong_state`. Ab 0.4.14 in `awaiting_review` dieselbe Grenze wie bei …/resummarize → 409 `resummarize_limit`.
       requestBody:
         required: true
         content:
@@ -1847,7 +1856,7 @@ paths:
   /sessions/{sessionId}/speakers/{speakerId}/sample:
     parameters:
       - { $ref: "#/components/parameters/sessionId" }
-      - { name: speakerId, in: path, required: true, schema: { type: string } }
+      - { name: speakerId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Stimmen]
       summary: Kurze Hörprobe (wenige Sekunden, wird mit dem Audio gelöscht)
@@ -1883,7 +1892,7 @@ paths:
 
   /proposals/{proposalId}:
     parameters:
-      - { name: proposalId, in: path, required: true, schema: { type: string } }
+      - { name: proposalId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     patch:
       tags: [Vorschläge]
       summary: Vorschlag übernehmen, verwerfen oder vor dem Übernehmen bearbeiten (nur SL)
@@ -2189,7 +2198,7 @@ paths:
   /date-polls/{pollId}/options/{optionId}:
     parameters:
       - { $ref: "#/components/parameters/pollId" }
-      - { name: optionId, in: path, required: true, schema: { type: string } }
+      - { name: optionId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     delete:
       tags: [Termine]
       summary: Vorschlag entfernen (wer ihn vorgeschlagen hat, oder SL)
@@ -2207,7 +2216,7 @@ paths:
   /date-polls/{pollId}/options/{optionId}/vote:
     parameters:
       - { $ref: "#/components/parameters/pollId" }
-      - { name: optionId, in: path, required: true, schema: { type: string } }
+      - { name: optionId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     put:
       tags: [Termine]
       summary: Eigene Antwort zu einem Termin setzen oder ändern
@@ -2319,7 +2328,7 @@ paths:
 
   /comments/{commentId}:
     parameters:
-      - { name: commentId, in: path, required: true, schema: { type: string } }
+      - { name: commentId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     patch:
       tags: [Kommentare]
       summary: Eigenen Kommentar bearbeiten (setzt editedAt)
@@ -2503,11 +2512,17 @@ paths:
         Zum Nachlesen während der Runde (SL-Schirm). Antwortet mit dem gespeicherten Inhalt und passendem Content-Type,
         `Content-Disposition: inline; filename="…"` und `Cache-Control: no-store`. Unterlagen bleiben auf dem Server
         der Kampagne; die App speichert sie nicht dauerhaft.
+        Erlaubte Content-Types (ab 0.4.14 verbindlich, so liefert es der Server seit 0.4.12): `application/pdf`,
+        `text/plain; charset=utf-8` (auch für .md), Word (.docx) und sonst `application/octet-stream`. Nie HTML, SVG
+        oder Skript. Die App verlässt sich nicht darauf: Sie öffnet nur PDF und Text selbst (mit festem Typ) und bietet
+        alles andere zum Speichern an.
       responses:
         "200":
           description: Datei
           content:
             application/pdf: { schema: { type: string, format: binary } }
+            text/plain: { schema: { type: string } }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document: { schema: { type: string, format: binary } }
             application/octet-stream: { schema: { type: string, format: binary } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2666,7 +2681,7 @@ paths:
 
   /entries/{entryId}:
     parameters:
-      - { name: entryId, in: path, required: true, schema: { type: string } }
+      - { name: entryId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     get:
       tags: [Bibel]
       summary: Eintrag mit Verlauf (in welchen Kapiteln erwähnt)
@@ -2711,7 +2726,7 @@ paths:
 
   /entries/{entryId}/to-npc:
     parameters:
-      - { name: entryId, in: path, required: true, schema: { type: string } }
+      - { name: entryId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     post:
       tags: [Bibel, Charaktere]
       summary: Figur eines ausgetretenen Spielers als NSC weiterführen (nur SL, ab 0.4.9)
@@ -2735,7 +2750,7 @@ paths:
 
   /entries/{entryId}/assign:
     parameters:
-      - { name: entryId, in: path, required: true, schema: { type: string } }
+      - { name: entryId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
     post:
       tags: [Bibel, Charaktere]
       summary: Figur einem anderen Spieler geben (nur SL, ab 0.4.9)
@@ -2777,12 +2792,12 @@ components:
       bearerFormat: JWT
 
   parameters:
-    campaignId: { name: campaignId, in: path, required: true, schema: { type: string } }
-    sessionId: { name: sessionId, in: path, required: true, schema: { type: string } }
-    memberId: { name: memberId, in: path, required: true, schema: { type: string } }
-    pollId: { name: pollId, in: path, required: true, schema: { type: string } }
-    documentId: { name: documentId, in: path, required: true, schema: { type: string } }
-    planId: { name: planId, in: path, required: true, schema: { type: string } }
+    campaignId: { name: campaignId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+    sessionId: { name: sessionId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+    memberId: { name: memberId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+    pollId: { name: pollId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+    documentId: { name: documentId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
+    planId: { name: planId, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" } }
 
   responses:
     Unauthorized:
@@ -3780,7 +3795,7 @@ components:
         id: { type: string }
         code:
           type: string
-          enum: [hidden_entries_for_newcomer, seat_claimed, character_orphaned]
+          enum: [hidden_entries_for_newcomer, seat_claimed, character_orphaned, member_joined]
           description: |
             hidden_entries_for_newcomer (ab 0.4.7): Neuzugang wurde in teilweise verborgene Einträge aufgenommen.
             seat_claimed (ab 0.4.8): Jemand hat per Beitritt mit Charakter einen offenen Platz eingenommen (memberId);
@@ -3789,6 +3804,12 @@ components:
             seine pc-Einträge. Die App bietet an: als NSC weiterführen (…/to-npc), später einem anderen Spieler geben
             (…/assign), verabschieden (Status) oder später. Erledigen per DELETE …/gm-notices/{id}; der Server löscht
             den Hinweis selbst, wenn alle entryIds nicht mehr pc ohne Halter sind.
+            member_joined (ab 0.4.14): Jemand ist per POST /campaigns/join neu beigetreten oder wieder eingetreten
+            (memberId, entryIds leer). Gilt auch für den Beitritt mit Platz-Code (POST …/members/{id}/invite); nimmt
+            jemand ohne Platz-Code einen offenen Platz ein, gibt es stattdessen seat_claimed. Die App zeigt der SL
+            „<Name> ist der Kampagne beigetreten“ mit „Passt“ (DELETE …/gm-notices/{id}) und „Entfernen“
+            (DELETE …/members/{memberId}, mit Rückfrage). Der Server löscht den Hinweis selbst, wenn die Person die
+            Kampagne verlässt, entfernt wird, ihr Konto löscht oder ihr Platz freigegeben wird.
         memberId: { type: [string, "null"], description: "Betroffenes Mitglied" }
         entryIds: { type: array, items: { type: string }, description: "Betroffene Einträge" }
         createdAt: { type: string, format: date-time }

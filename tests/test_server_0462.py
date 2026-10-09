@@ -253,7 +253,9 @@ def test_hinweis_landet_im_pruefteil():
     hinweise_eintragen(pruefung, [{"art": "tischgespraech", "text": "„Alles klar. Ja.“", "absatz": 1},
                                   {"art": "du_form", "text": "x"}], "de")
     assert pruefung["paragraphs"][0]["note"] is None
-    assert pruefung["paragraphs"][1]["note"] == "Zeit fehlt.\nKlingt nach Gespräch am Tisch, bitte prüfen: „Alles klar. Ja.“"
+    # 0.4.64: ein Satz, und der Absatz ist als „vermutlich außerhalb des Spiels“ markiert
+    assert pruefung["paragraphs"][1] == {"index": 1, "verdict": "off_game",
+                                         "note": "Klingt nach Gespräch am Tisch: „Alles klar. Ja.“"}
 
 
 def test_cloud_ohne_nachbesserung(dbs, monkeypatch):

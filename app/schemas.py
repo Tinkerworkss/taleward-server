@@ -264,7 +264,7 @@ class CampaignOut(CampaignSummaryOut):
 
 class GmNoticeOut(ApiModel):
     id: str
-    code: Literal["hidden_entries_for_newcomer", "seat_claimed", "character_orphaned"]
+    code: Literal["hidden_entries_for_newcomer", "seat_claimed", "character_orphaned", "member_joined"]
     member_id: str | None
     entry_ids: list[str]
     created_at: datetime

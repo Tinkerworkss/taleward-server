@@ -1038,7 +1038,8 @@ def freigeben(db: Session, platz: Member) -> None:
     platz.chronicle_seen_at = platz.bible_seen_at = None
     db.execute(SessionSeen.__table__.delete().where(SessionSeen.member_id == platz.id))
     db.execute(DateVote.__table__.delete().where(DateVote.member_id == platz.id))
-    db.execute(GmNotice.__table__.delete().where(GmNotice.member_id == platz.id, GmNotice.code == "seat_claimed"))
+    db.execute(GmNotice.__table__.delete().where(GmNotice.member_id == platz.id,
+                                                GmNotice.code.in_(("seat_claimed", "member_joined"))))
     c = db.get(Campaign, platz.campaign_id)
     if c.imported_by_member_id == platz.id:
         c.imported_by_member_id = None
