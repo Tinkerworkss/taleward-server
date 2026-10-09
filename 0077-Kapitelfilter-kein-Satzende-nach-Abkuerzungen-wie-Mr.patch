@@ -1,0 +1,122 @@
+From 8527e20a3d74fedf3b25b37f838f470beb636583 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 22:06:54 +0200
+Subject: [PATCH] Kapitelfilter: kein Satzende nach Abkuerzungen wie Mr.
+ (Server 0.4.67)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/artefakte.py             | 4 ++++
+ pyproject.toml               | 2 +-
+ tests/test_aktualisierung.py | 2 +-
+ tests/test_assistent.py      | 2 +-
+ tests/test_du_name.py        | 9 +++++++++
+ tests/test_modellablage.py   | 2 +-
+ tests/test_worker_app.py     | 2 +-
+ uv.lock                      | 2 +-
+ 8 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/app/artefakte.py b/app/artefakte.py
+index fa845dc..a6b24b6 100644
+--- a/app/artefakte.py
++++ b/app/artefakte.py
+@@ -24,4 +24,6 @@ import re
+ 
+ _SATZ = re.compile(r"(?:(?<=[.!?…])|(?<=[.!?…][\"“”»«]))\s+(?=[„\"»«(A-ZÄÖÜ0-9])")
++# 0.4.67: Nach diesen Abkürzungen endet kein Satz („Mr. Du würde sie erwarten“ fiel sonst halb aus dem Kapitel)
++_ABKUERZUNG = re.compile(r"(?:^|[\s(„\"»])(?:Mr|Mrs|Ms|Dr|Prof|Hr|Fr|St|Nr|Sr|Jr|bzw|vgl|ca|usw|z|z\.\s?B|u\.\s?a|d\.\s?h)\.$")
+ _ZITAT = re.compile(r"„[^“”\"]*[“”\"]|\"[^\"]*\"|»[^«]*«|«[^»]*»")
+ _DU_FORM = re.compile(
+@@ -99,4 +101,6 @@ def _saetze(absatz: str) -> list[tuple[str, str]]:
+     aus, start = [], 0
+     for m in _SATZ.finditer(absatz):
++        if _ABKUERZUNG.search(absatz, 0, m.start()):
++            continue  # „Mr. Du“, „Dr. Hanlin“: kein Satzende
+         aus.append((absatz[start:m.start()].strip(), maske[start:m.start()]))
+         start = m.end()
+diff --git a/pyproject.toml b/pyproject.toml
+index 1c4da49..ce2e317 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.66"
++version = "0.4.67"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 0c49860..263fc83 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.66"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.67"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 481610a..a840bf8 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.66"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.67"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_du_name.py b/tests/test_du_name.py
+index 23756ea..22f2412 100644
+--- a/tests/test_du_name.py
++++ b/tests/test_du_name.py
+@@ -32,2 +32,11 @@ def test_name_bleibt_im_vorschlag():
+     v = artefakte.vorschlag({"title": "Du Hanlin", "detail": "Du Hanlin führt die Bande. Du kennst ihn."})
+     assert v["detail"] == "Du Hanlin führt die Bande."
++
++
++def test_kein_satzende_nach_abkuerzung():
++    """0.4.67: „Mr. Du“ wurde an „Mr.“ geteilt; der Rest galt als Anrede und fiel weg, „Mr.“ blieb allein stehen."""
++    text = ("Die Empfangsdame kam zurück und sagte, dass Mr. Du sie erwarten würde. Die Gruppe bestellte Getränke. "
++            "Dr. Hanlin lachte.")
++    aus, befunde = artefakte.kapitel(text)
++    assert aus == text and not befunde
++    assert [s for s, _ in artefakte._saetze("Er kam z. B. spät. Dann ging er.")] == ["Er kam z. B. spät.", "Dann ging er."]
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 770247d..be55af1 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.66"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.67"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 3eb55e5..3d41fc5 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.66"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.67"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index f9f012f..e4c7f93 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.66"
++version = "0.4.67"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
