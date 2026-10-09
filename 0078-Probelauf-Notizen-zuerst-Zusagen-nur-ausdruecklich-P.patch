@@ -1,0 +1,373 @@
+From e644449c4a0e57012089dc27ac91d7b26051db92 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 22:25:29 +0200
+Subject: [PATCH] Probelauf Notizen zuerst: Zusagen nur ausdruecklich, Pruefung
+ ohne Zahlendetails, Kuerzen ohne Verlust (Server 0.4.68)
+
+Ein Kapitel weit ueber der Laengenvorgabe wird gekuerzt und nur uebernommen,
+wenn alle Pflichtpunkte erzaehlt bleiben und kein Name fehlt.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/kapitelprobe.py          |   8 ++-
+ app/sprachmodell.py          |  93 ++++++++++++++++++++++++++++++-
+ pyproject.toml               |   2 +-
+ tests/test_aktualisierung.py |   2 +-
+ tests/test_assistent.py      |   2 +-
+ tests/test_kuerzen.py        | 105 +++++++++++++++++++++++++++++++++++
+ tests/test_modellablage.py   |   2 +-
+ tests/test_worker_app.py     |   2 +-
+ uv.lock                      |   2 +-
+ 9 files changed, 207 insertions(+), 11 deletions(-)
+ create mode 100644 tests/test_kuerzen.py
+
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+index b057130..b3fa905 100644
+--- a/app/kapitelprobe.py
++++ b/app/kapitelprobe.py
+@@ -70,4 +70,5 @@ class Probe:
+     pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte (Datei pflicht.json)
+     entwurf: str = ""  # 0.4.65: erster Entwurf vor der Nachbesserung (Datei entwurf.txt)
++    lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung (Datei lang.txt)
+ 
+ 
+@@ -178,5 +179,5 @@ def datei(probe_id: str, name: str) -> Path | None:
+ 
+ DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
+-           "entwurf.txt", "transkript.txt", "ergebnis.json")
++           "entwurf.txt", "lang.txt", "transkript.txt", "ergebnis.json")
+ 
+ 
+@@ -323,4 +324,5 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+             if p.pflicht.get("nachgebessert"):
+                 p.entwurf = ablauf.letztes_kapitel1
++            p.lang = ablauf.letztes_lang
+             with session_factory()() as db:
+                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
+@@ -366,7 +368,9 @@ def _dateien_schreiben(p: Probe) -> None:
+             if p.entwurf:
+                 (o / "entwurf.txt").write_text(p.entwurf + "\n", encoding="utf-8")
++            if p.lang:
++                (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
+         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
+                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
+-                                                                  "pflicht", "entwurf")},
++                                                                  "pflicht", "entwurf", "lang")},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+     except OSError:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index d9cfc80..c0ffc66 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -575,4 +575,5 @@ Eine kurze Zeile je Tatsache. Ändert sich etwas, ersetze die alte Zeile und sch
+ dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. Höchstens {stand_hoechstens} Zeilen. Nur, \
+ was am Tisch gesagt wurde.
++Für Notizen und Stand gilt außerdem (0.4.68): Eine Zusage, Abmachung, ein Kauf, ein Tod oder ein Besitzwechsel steht nur da, wenn er am Tisch ausdrücklich gesagt oder gezeigt wird (ein Ja, „abgemacht“, Handschlag, Übergabe, „der ist tot“). Eine höfliche, ausweichende oder unterbrochene Antwort ist keine Zusage – schreib dann „Antwort offen“ und was stattdessen geschieht. Gibt sich eine Figur als jemand anderes aus oder nennt einen erfundenen Namen, ist das keine neue Person: „X gibt sich als Y aus“.
+ Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
+ Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
+@@ -706,5 +707,5 @@ Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Wür
+ Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
+ Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
+-der Stand am Ende), rang ("kritisch" oder "wichtig"). Die Spielleitung ist keine Figur. Erfinde nichts.
++der Stand am Ende), rang ("kritisch" oder "wichtig"). Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
+ Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
+ Sprache: {sprache}."""
+@@ -713,5 +714,5 @@ AUSWAHL_HOECHSTENS = 20
+ SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
+ vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor) oder \
+-"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). absatz: die Nummer \
++"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind kein Widerspruch. absatz: die Nummer \
+ des Absatzes, in dem es steht bzw. in den es nach der Reihenfolge des Geschehens gehört. begruendung: bei "fehlt" und \
+ "widerspricht" ein kurzer Satz für die Spielleitung, ohne Zitat, sonst leer. Bewerte nur die Liste, nicht den Stil.
+@@ -720,8 +721,47 @@ Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "begr
+ SYSTEM_PFLICHT_NACH = """Du überarbeitest einzelne Absätze im Kapitel einer Pen-&-Paper-Session. Je Absatz steht \
+ dabei, welches Ereignis darin fehlt oder falsch erzählt ist, mit dem richtigen Ausgang.
+-Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen. Alles andere \
++Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen – die falsche Aussage wird ersetzt, nicht zusätzlich stehen gelassen. Alles andere \
+ im Absatz bleibt, wie es ist. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
+ reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
+ Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
++# 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
++# danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
++# lange Fassung (Benjamin 09.10.: kürzen nur, wenn keine Informationen verloren gehen).
++SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session auf höchstens {ziel} Wörter, damit es vorlesbar \
++bleibt. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
++nichts Neues sagt, Wiederholungen. Alles andere bleibt: jede Handlung mit ihrem Ausgang und mit den richtigen Personen, \
++jeder Name, jeder benannte Gegenstand, jede Abmachung und jede Information, in derselben Reihenfolge. Die Ereignisse \
++der Liste kommen alle mit genau diesem Ausgang vor. Verändere keine Aussage, füge nichts hinzu. Gleicher Ton, \
++Vergangenheit, Absätze durch Leerzeilen getrennt, reiner Text ohne Markdown.
++Antworte nur mit JSON: {"text": "…"}. Sprache: {sprache}."""
++KUERZEN_AB = 1.2  # erst ab 20 % über der oberen Grenze kürzen
++KUERZEN_MINDESTENS = 0.1  # weniger als 10 % gespart: lohnt nicht, lange Fassung bleibt
++_NAMENSFOLGE = re.compile(r"(?<=[a-zäöüß,;:–] )[A-ZÄÖÜ][\w’'-]+(?: [A-ZÄÖÜ][\w’'-]+)+")
++
++
++def obergrenze(ein: dict, lang: bool = False) -> int:
++    """Obere Grenze der Längenvorgabe in Wörtern („900–1500“ → 1500)."""
++    return int(woerter(ein, lang).split("–")[-1])
++
++
++def namen_im_text(text: str, extra: list[str] | tuple = ()) -> set[str]:
++    """Eigennamen eines Kapitels als Wortstämme: Folgen großgeschriebener Wörter mitten im Satz („Du Yuesheng“,
++    „Madame Xue“, „Richard Wilhelm“) und bekannte Namen (Figuren, Bibel), soweit sie im Text stehen."""
++    aus = set()
++    for folge in _NAMENSFOLGE.findall(text):
++        aus.update(w.casefold()[:5] for w in folge.split() if len(w) >= 3)
++    klein = text.casefold()
++    for name in extra:
++        for w in re.findall(r"\w+", name or ""):
++            if len(w) >= 3 and re.search(rf"\b{re.escape(w.casefold())}", klein):
++                aus.add(w.casefold()[:5])
++    return aus
++
++
++def _namen_fehlen(lang: str, kurz: str, extra: list[str]) -> list[str]:
++    kurz_klein = kurz.casefold()
++    return sorted(n for n in namen_im_text(lang, extra) if not re.search(rf"\b{re.escape(n)}", kurz_klein))
++
++
+ PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
+                   "fehlt": "fehlt", "missing": "fehlt", "widerspricht": "widerspricht", "contradicts": "widerspricht",
+@@ -1288,4 +1328,6 @@ class Ablauf:
+     letzte_auswahl: list = field(default_factory=list)  # 0.4.65: Pflichtpunkte des Wegs „Notizen zuerst“
+     letzte_pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte, vorher/nachher
++    letzte_kuerzung: dict = field(default_factory=dict)  # 0.4.68: Kürzung eines zu langen Kapitels (angenommen?)
++    letztes_lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1608,4 +1650,45 @@ class Ablauf:
+         return nachher
+ 
++    def kuerzen(self, ein: dict, punkte: list[dict], r: dict, befund: list[dict]) -> list[dict] | None:
++        """0.4.68: Kapitel weit über der Längenvorgabe kürzen. Übernommen nur, wenn alle bisher erzählten Pflichtpunkte
++        erzählt bleiben, kein neuer Widerspruch dazukommt und kein Name fehlt. Liefert den neuen Befund oder None."""
++        n = len(r["text"].split())
++        grenze = obergrenze(ein, True)
++        self.letzte_kuerzung = {"woerter": n, "grenze": grenze, "angenommen": False}
++        if n <= grenze * KUERZEN_AB:
++            self.letzte_kuerzung["grund"] = "nicht zu lang"
++            return None
++        nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
++        self._schritt("revision")
++        d = self.zaehler.aufruf(self.klient, SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein))
++                                .replace("{ziel}", str(grenze)), nutzer)
++        t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
++        if "\n\n" not in t and "\n" in t:
++            t = re.sub(r"\n+", "\n\n", t)
++        t = absaetze_teilen(t) if t else ""
++        m = len(t.split())
++        self.letzte_kuerzung["woerter_neu"] = m
++        if not t or m > n * (1 - KUERZEN_MINDESTENS) or m < grenze * 0.5:
++            self.letzte_kuerzung["grund"] = "Länge passt nicht"
++            return None
++        extra = [p.get("charakter") or "" for p in ein.get("personen") or []] + \
++                [e.get("name") or "" for e in ein.get("bibel") or []]
++        fehlen = _namen_fehlen(r["text"], t, extra)
++        if fehlen:
++            self.letzte_kuerzung["grund"] = "Namen fehlen: " + ", ".join(fehlen[:10])
++            return None
++        neu = self.pflicht_pruefen(ein, punkte, t)
++        alt_erz = {b["nr"] for b in befund if b["status"] == "erzaehlt"}
++        neu_erz = {b["nr"] for b in neu if b["status"] == "erzaehlt"}
++        alt_wid = {b["nr"] for b in befund if b["status"] == "widerspricht"}
++        neu_wid = {b["nr"] for b in neu if b["status"] == "widerspricht"}
++        if not alt_erz <= neu_erz or not neu_wid <= alt_wid:
++            self.letzte_kuerzung["grund"] = ("Pflichtpunkte verloren: "
++                                             + ", ".join(str(x) for x in sorted((alt_erz - neu_erz) | (neu_wid - alt_wid))))
++            return None
++        self.letztes_lang, r["text"] = r["text"], t
++        self.letzte_kuerzung.update(angenommen=True, grund="")
++        return neu
++
+     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
+         """Beziehungen je Absatz gegen kurze Ausschnitte des Originaltranskripts prüfen – um die Stellen, die die
+@@ -1796,4 +1879,8 @@ class Ablauf:
+                 # 0.4.65: statt der allgemeinen Vollständigkeitsprüfung gezielt gegen die ausgewählten Ereignisse
+                 pflicht_rest = self.pflicht(recap_ein, self.letzte_auswahl, r)
++                gekuerzt = self.kuerzen(recap_ein, self.letzte_auswahl, r, pflicht_rest)
++                if gekuerzt is not None:
++                    pflicht_rest = gekuerzt
++                self.letzte_pflicht["kuerzung"] = self.letzte_kuerzung
+             else:
+                 grund_titel, grund_text = (("Szenennotizen der Runde in Zeitabschnitten", self.gegliedert(grundlage))
+diff --git a/pyproject.toml b/pyproject.toml
+index ce2e317..399c594 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.67"
++version = "0.4.68"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 263fc83..f254e9a 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.67"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.68"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index a840bf8..c43e0bf 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.67"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.68"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_kuerzen.py b/tests/test_kuerzen.py
+new file mode 100644
+index 0000000..1ee5732
+--- /dev/null
++++ b/tests/test_kuerzen.py
+@@ -0,0 +1,105 @@
++"""Server 0.4.68, Weg „Notizen zuerst“: Zusagen nur, wenn ausdrücklich; Pflichtprüfung ohne reine Zahlenabweichungen;
++ein zu langes Kapitel wird nur dann gekürzt übernommen, wenn dabei nichts verloren geht."""
++import json
++import re
++
++import httpx
++import pytest
++
++from app import sprachmodell as sm
++from tests.test_notizen_zuerst import _eingabe
++from tests.test_step2b import _kleine_teile, transkribiert  # noqa: F401
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++_SAETZE = [f"{a} {n} {v} still." for a in ("Alte", "Graue", "Nasse", "Kalte", "Dunkle", "Stille", "Leere", "Schmale")
++           for n in ("Laternen", "Mauern", "Gassen", "Dächer", "Fenster", "Brücken", "Türme", "Höfe", "Boote", "Wagen")
++           for v in ("flackerten", "glänzten", "schwiegen", "warteten", "knarrten", "tropften")]
++SCHMUCK = " ".join(_SAETZE[:260])  # ≈ 1040 Wörter Ausschmückung
++REST = " ".join(_SAETZE[260:460])  # ≈ 800 Wörter, bleiben in der Kurzfassung
++LANG = (f"Mara traf Hanna Kessler am Hafen und gab ihr das Schwert Eisenwind. {SCHMUCK}\n\n"
++        f"Später floh die Gruppe aus der Stadt. {REST}")
++KURZ = f"Mara traf Hanna Kessler am Hafen und gab ihr das Schwert Eisenwind.\n\nSpäter floh die Gruppe aus der Stadt. {REST}"
++OHNE_NAME = f"Mara traf eine Frau am Hafen und gab ihr das Schwert.\n\nSpäter floh die Gruppe aus der Stadt. {REST}"
++
++
++class Anbieter:
++    def __init__(self, kurz: str = KURZ, lang: str = LANG, verliert: bool = False):
++        self.aufrufe, self.kurz, self.lang, self.verliert = [], kurz, lang, verliert
++
++    def antwort(self, system: str, nutzer: str) -> dict:
++        if "Schreibe Szenennotizen" in system:
++            eigen = nutzer.split("des Transkripts:\n")[1]
++            zeiten = re.findall(r"^\[(\d+:\d{2}(?::\d{2})?)\]", eigen, re.M)
++            return {"notizen": [f"[{zeiten[0]}] Mara gibt Hanna Kessler das Schwert Eisenwind."], "stand": []}
++        if system.startswith("Du bereitest das Kapitel"):
++            return {"ereignisse": [
++                {"zeit": "1:00", "ereignis": "Mara gibt Hanna Kessler das Schwert Eisenwind.", "ausgang": "",
++                 "rang": "kritisch"},
++                {"zeit": "2:00", "ereignis": "Die Gruppe flieht aus der Stadt.", "ausgang": "", "rang": "wichtig"}]}
++        if system.startswith("Du schreibst den Recap"):
++            return {"title": "Kapitel 1", "text": self.lang, "openThreads": []}
++        if system.startswith("Du kürzt das Kapitel"):
++            return {"text": self.kurz}
++        if system.startswith("Du vergleichst das Kapitel"):
++            gekuerzt = "Alte Laternen flackerten" not in nutzer
++            zweiter = "fehlt" if (gekuerzt and self.verliert) else "erzaehlt"
++            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1},
++                               {"nr": 2, "status": zweiter, "absatz": 2, "begruendung": ""}]}
++        if "Du prüfst den Recap" in system:
++            return {"absaetze": [{"nr": 1, "urteil": "belegt"}, {"nr": 2, "urteil": "belegt"}]}
++        return {}
++
++    def __call__(self, request: httpx.Request) -> httpx.Response:
++        body = json.loads(request.content)
++        system, nutzer = body["messages"][0]["content"], body["messages"][1]["content"]
++        self.aufrufe.append(system[:40])
++        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(self.antwort(system, nutzer),
++                                                                                         ensure_ascii=False)}}],
++                                         "usage": {"prompt_tokens": 1000, "completion_tokens": 100}})
++
++
++def _lauf(anbieter, client, world, dbs, tmp_path):
++    recap_ein, vorschlag_ein = _eingabe(client, world, dbs, tmp_path)
++    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "m", httpx.Client(transport=httpx.MockTransport(anbieter)))
++    a = sm.Ablauf(klient, schritt=lambda _n: None, nachbesserung=False, notizen_zuerst=True, notiz_stueck=2000)
++    return a, a.ausfuehren(recap_ein, vorschlag_ein, gegenpruefen=True)
++
++
++def test_kuerzung_ohne_verlust_wird_uebernommen(client, world, dbs, tmp_path):
++    a, d = _lauf(Anbieter(), client, world, dbs, tmp_path)
++    assert "Alte Laternen flackerten" not in d["text"] and "Hanna Kessler" in d["text"] and a.letztes_lang
++    assert a.letzte_kuerzung["angenommen"] is True and a.letzte_pflicht["kuerzung"]["woerter_neu"] < 900
++
++
++def test_kuerzung_ohne_namen_wird_verworfen(client, world, dbs, tmp_path):
++    a, d = _lauf(Anbieter(kurz=OHNE_NAME), client, world, dbs, tmp_path)
++    assert "Alte Laternen flackerten" in d["text"] and a.letztes_lang == ""
++    assert a.letzte_kuerzung["angenommen"] is False and "Namen fehlen" in a.letzte_kuerzung["grund"]
++    assert "kessl" in a.letzte_kuerzung["grund"] and "eisen" in a.letzte_kuerzung["grund"]
++
++
++def test_kuerzung_mit_verlorenem_pflichtpunkt_wird_verworfen(client, world, dbs, tmp_path):
++    a, d = _lauf(Anbieter(verliert=True), client, world, dbs, tmp_path)
++    assert "Alte Laternen flackerten" in d["text"] and a.letzte_kuerzung["grund"] == "Pflichtpunkte verloren: 2"
++
++
++def test_kurzes_kapitel_bleibt_ohne_aufruf(client, world, dbs, tmp_path):
++    anbieter = Anbieter(lang=KURZ)  # ≈ 830 Wörter, unter der Grenze
++    a, d = _lauf(anbieter, client, world, dbs, tmp_path)
++    assert "Alte Laternen flackerten" not in d["text"] and not any(s.startswith("Du kürzt") for s in anbieter.aufrufe)
++    assert a.letzte_kuerzung == {"woerter": len(KURZ.split()), "grenze": 1500,
++                                 "angenommen": False, "grund": "nicht zu lang"}
++
++
++def test_regeln_fuer_zusagen_und_zahlen():
++    assert "keine Zusage" in sm.ZUSATZ_STAND and "gibt sich als Y aus" in sm.ZUSATZ_STAND
++    assert "Antwort offen, dann" in sm.SYSTEM_AUSWAHL and "Decknamen" in sm.SYSTEM_AUSWAHL
++    assert "kein Widerspruch" in sm.SYSTEM_PFLICHT and "nicht zusätzlich stehen" in sm.SYSTEM_PFLICHT_NACH
++    assert "keine Zusage" not in sm.SYSTEM_NOTIZEN  # der normale Weg bleibt unverändert
++
++
++def test_probelauf_datei_lang():
++    from app import kapitelprobe
++
++    assert "lang.txt" in kapitelprobe.DATEIEN
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index be55af1..0d85cce 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.67"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.68"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 3d41fc5..d4d2869 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.67"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.68"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index e4c7f93..f3ae522 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.67"
++version = "0.4.68"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
