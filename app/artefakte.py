@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 
 _SATZ = re.compile(r"(?:(?<=[.!?…])|(?<=[.!?…][\"“”»«]))\s+(?=[„\"»«(A-ZÄÖÜ0-9])")
+# 0.4.67: Nach diesen Abkürzungen endet kein Satz („Mr. Du würde sie erwarten“ fiel sonst halb aus dem Kapitel)
+_ABKUERZUNG = re.compile(r"(?:^|[\s(„\"»])(?:Mr|Mrs|Ms|Dr|Prof|Hr|Fr|St|Nr|Sr|Jr|bzw|vgl|ca|usw|z|z\.\s?B|u\.\s?a|d\.\s?h)\.$")
 _ZITAT = re.compile(r"„[^“”\"]*[“”\"]|\"[^\"]*\"|»[^«]*«|«[^»]*»")
 _DU_FORM = re.compile(
     r"\b(?:euch|euer|eure[mnrs]?|du|dich|dir|dein(?:e[mnrs]?)?"
@@ -98,6 +100,8 @@ def _saetze(absatz: str) -> list[tuple[str, str]]:
     maske = _maske(absatz)
     aus, start = [], 0
     for m in _SATZ.finditer(absatz):
+        if _ABKUERZUNG.search(absatz, 0, m.start()):
+            continue  # „Mr. Du“, „Dr. Hanlin“: kein Satzende
         aus.append((absatz[start:m.start()].strip(), maske[start:m.start()]))
         start = m.end()
     aus.append((absatz[start:].strip(), maske[start:]))

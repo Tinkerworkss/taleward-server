@@ -31,3 +31,12 @@ def test_anrede_faellt_weiter_heraus():
 def test_name_bleibt_im_vorschlag():
     v = artefakte.vorschlag({"title": "Du Hanlin", "detail": "Du Hanlin führt die Bande. Du kennst ihn."})
     assert v["detail"] == "Du Hanlin führt die Bande."
+
+
+def test_kein_satzende_nach_abkuerzung():
+    """0.4.67: „Mr. Du“ wurde an „Mr.“ geteilt; der Rest galt als Anrede und fiel weg, „Mr.“ blieb allein stehen."""
+    text = ("Die Empfangsdame kam zurück und sagte, dass Mr. Du sie erwarten würde. Die Gruppe bestellte Getränke. "
+            "Dr. Hanlin lachte.")
+    aus, befunde = artefakte.kapitel(text)
+    assert aus == text and not befunde
+    assert [s for s, _ in artefakte._saetze("Er kam z. B. spät. Dann ging er.")] == ["Er kam z. B. spät.", "Dann ging er."]
