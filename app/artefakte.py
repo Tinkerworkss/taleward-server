@@ -42,6 +42,26 @@ _TRENNER = re.compile(r",\s+|;\s+|\s+(?:und|sowie|doch|aber)\s+")
 _FUELLWORT = re.compile(r"\b(?:alles klar|ja,|nee|na ja|naja|irgendwie|okay|ok|äh|ähm|halt|genau|keine ahnung|oder so|"
                         r"quasi|mal)(?!\w)", re.I)
 NAH = 4  # so viele Sätze zurück gilt ein wörtlich gleicher Satz als Doppel
+_PRONOMEN = re.compile(r"(?:euch|euer|eure[mnrs]?|du|dich|dir|dein(?:e[mnrs]?)?)$", re.I)
+
+
+def _du_form(text: str) -> bool:
+    """Steht der Satz (ohne wörtliche Rede) in der Du-/Ihr-Form?
+
+    0.4.66: Großgeschriebene Pronomen mitten im Satz sind Namen („Herr Du“, „Du Hanlins Yacht“) oder Briefanrede,
+    keine abgeschriebene Rede. Am Satzanfang zählt „Du“ nur, wenn kein großgeschriebenes Wort folgt – sonst ist es
+    der Anfang eines Namens („Du Hanlin lachte.“). Vorher fielen solche Sätze ganz aus dem Kapitel."""
+    for m in _DU_FORM.finditer(text):
+        wort = m.group(0)
+        if wort[:1].islower() or not _PRONOMEN.match(wort):
+            return True
+        vor = text[:m.start()].strip(" \t\n(–-")
+        if vor and not vor.endswith(":"):
+            continue  # großgeschrieben mitten im Satz: Name (nach Doppelpunkt beginnt Rede)
+        if wort.casefold() == "du" and text[m.end():].lstrip()[:1].isupper():
+            continue  # „Du Hanlin …“
+        return True
+    return False
 
 
 def _ohne_zitate(satz: str) -> str:
@@ -167,7 +187,7 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
             if len(kern.split()) >= 3 and kern in zuletzt:
                 befunde.append({"art": "wiederholung", "text": satz[:200]})
                 continue
-            if du_weg and _DU_FORM.search(draussen):
+            if du_weg and _du_form(draussen):
                 befunde.append({"art": "du_form", "text": satz[:200]})
                 continue
             if _FLUCH.search(satz):
@@ -239,7 +259,7 @@ def vorschlag(v: dict) -> dict:
         if feld != "title":
             zeilen = []
             for zeile in wert.split("\n"):
-                saetze = [s for s, d in _saetze(zeile) if not _DU_FORM.search(d) and not _FLUCH.search(s)]
+                saetze = [s for s, d in _saetze(zeile) if not _du_form(d) and not _FLUCH.search(s)]
                 zeilen.append(" ".join(saetze))
             wert = "\n".join(z for z in zeilen if z.strip())
         v[feld] = feinschliff(wert)
