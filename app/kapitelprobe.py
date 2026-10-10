@@ -300,7 +300,7 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
 def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
     from app.sprachmodell import Ablauf, SprachmodellFehler
     from app.zusammenfassung import (api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an,
-                                     zweiter_blick_an)
+                                     pruefansicht_art, zweiter_blick_an)
 
     t0 = time.monotonic()
     try:
@@ -320,11 +320,11 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
                 _speichern(p)
 
             with session_factory()() as db:
-                gegen, blick = gegenpruefen_an(db), zweiter_blick_an(db)
+                gegen, blick, ansicht = gegenpruefen_an(db), zweiter_blick_an(db), pruefansicht_art(db)
             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
                             nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
                             notizen_zuerst=p.weg == "notizen",  # 0.4.63: hier je Probelauf wählbar
-                            notiz_klient=api_klient_notizen(k), zweiter_blick_an=blick)
+                            notiz_klient=api_klient_notizen(k), zweiter_blick_an=blick, pruefansicht=ansicht)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
             p.titel, p.text, p.offene_faeden = d["title"], d["text"], list(d["openThreads"])
             p.vorschlaege = d["proposals"]

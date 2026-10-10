@@ -86,10 +86,10 @@ def test_zweiter_blick_macht_unklar_und_meldet():
         {"start": t, "sprecher": z.split("] ")[1].split(":")[0], "text": z.split(": ", 1)[1]} for t, z in ZEILEN]}
     punkte = _punkte()[:2]
     protokoll = a.zweiter_blick(ein, punkte)
-    assert [p["urteil"] for p in protokoll] == ["unklar", "unklar"]
+    assert [p["urteil"] for p in protokoll] == ["unklar", "ungeprueft"]  # unbekanntes Urteil ändert nichts
     assert punkte[0]["unklar"] is True and punkte[0]["ausgang"] == "(unklar: Zwei Lesarten.)"
-    assert punkte[1]["ausgang"] == "Hanna ist gerettet. (unklar: wer)"
-    assert [u["quelle"] for u in a.letzte_unklar] == ["zweiter_blick", "zweiter_blick"]
+    assert punkte[1]["ausgang"] == "Hanna ist gerettet." and not punkte[1].get("unklar")
+    assert [u["quelle"] for u in a.letzte_unklar] == ["zweiter_blick"]
     assert a.letzte_unklar[0]["notiz"] == "Die Gruppe bricht auf. – Zwei Lesarten."
 
 

@@ -1115,6 +1115,76 @@ def pflicht_eintragen(pruefung: dict, befund: list[dict], anzahl: int) -> None:
         b["verdict"] = "contradicted"
 
 
+# 0.4.75: Prüfansicht aus der Pflichtprüfung und den unklaren Stellen statt aus der Gegenprüfung jedes Absatzes gegen die
+# Notizen. Die Gegenprüfung las dieselben Notizen wie das Kapitel und fand so 1 von 7 schweren Fehlern, markierte dafür
+# Formulierungen; hier stehen nur Dinge, die der Server nachgerechnet hat (Zitate) oder die das Modell selbst als nicht
+# eindeutig gekennzeichnet hat. Für die App unverändert: Recap.review mit verdict, note und Belegstellen.
+UNKLAR_HINWEIS = {"de": "Die Aufnahme ist hier nicht eindeutig: ", "en": "The recording is ambiguous here: "}
+FEHLT_HINWEIS = {"de": "Nicht erzählt: ", "en": "Not told: "}
+UNKLAR_NAEHE_S = 300.0  # eine unklare Notiz ohne eigenes Ereignis gehört zum Absatz des zeitlich nächsten Ereignisses
+
+
+def pruefansicht_aus_pflicht(text: str, punkte: list[dict], befund: list[dict], unklar: list[dict], blick: list[dict],
+                             modell: str, nachgebessert: bool, sprache: str = "de") -> dict:
+    """Je Absatz ein Urteil aus den Pflichtereignissen: „widerspricht“ → contradicted; „unklar“ (zweiter Blick oder Notiz)
+    → unsupported mit dem Hinweis, was offen ist; „fehlt“ → partial mit „Nicht erzählt: …“; nur Erzähltes → supported mit
+    den Zeitpunkten der Ereignisse als Belegstellen; ohne Ereignis → unchecked. Zitate verorten die Absätze neu, falls
+    der Filter inzwischen etwas gestrichen hat."""
+    teile = absaetze(text)
+    norm_teile = [_normwoerter(t) for t in teile]
+    sp = "en" if sprache == "en" else "de"
+    je_absatz: dict[int, list[tuple[dict, dict]]] = {}
+    zeit_zu_absatz: list[tuple[float, int]] = []
+    for b in befund:
+        if not (1 <= b.get("nr", 0) <= len(punkte)):
+            continue
+        p = punkte[b["nr"] - 1]
+        absatz = b.get("absatz")
+        if b.get("zitat"):
+            wo = next((i for i, nt in enumerate(norm_teile) if zitat_belegt(b["zitat"], nt)), None)
+            if wo is not None:
+                absatz = wo
+        if absatz is None or not (0 <= absatz < len(teile)):
+            continue
+        je_absatz.setdefault(absatz, []).append((p, b))
+        if p.get("zeit") is not None:
+            zeit_zu_absatz.append((p["zeit"], absatz))
+    belege_blick = {z["nr"]: z["zitat"] for z in blick if z.get("zitat")}
+    aus = []
+    for i in range(len(teile)):
+        eintraege = je_absatz.get(i, [])
+        verdict, note, evidence = "unchecked", None, []
+        for p, b in eintraege:
+            if p.get("zeit") is not None:
+                evidence.append({"start": p["zeit"], "quote": belege_blick.get(b["nr"], "")})
+        if eintraege:
+            verdict = "supported"
+        for p, b in eintraege:
+            if b["status"] == "fehlt" and verdict in ("supported",):
+                verdict, note = "partial", FEHLT_HINWEIS[sp] + p["ereignis"] + (f" – {p['ausgang']}" if p["ausgang"] else "")
+        for p, b in eintraege:
+            if (p.get("unklar") or b["status"] == "unklar") and verdict in ("supported", "partial"):
+                grund = _UNKLAR.search(p.get("ausgang") or "")
+                was = grund.group(0).strip(" ()") if grund else ""
+                was = re.sub(r"^(?:unklar|unsicher)[:,]?\s*", "", was, flags=re.I)
+                if not was or was.casefold() in ("wer", "wer handelt", "von wem", "who"):
+                    was = _UNKLAR.sub("", p["ereignis"]).strip() + (" – wer?" if sp == "de" else " – who?")
+                verdict, note = "unsupported", UNKLAR_HINWEIS[sp] + was
+        for p, b in eintraege:
+            if b["status"] == "widerspricht":
+                verdict, note = "contradicted", b.get("begruendung") or note
+        aus.append({"index": i, "verdict": verdict, "note": note, "evidence": evidence[:3]})
+    # unklare Notizen ohne eigenes Ereignis: an den Absatz des zeitlich nächsten Ereignisses
+    for u in unklar:
+        if u.get("quelle") == "zweiter_blick" or u.get("zeit") is None or not zeit_zu_absatz:
+            continue
+        abstand, absatz = min((abs(z - u["zeit"]), a) for z, a in zeit_zu_absatz)
+        b = aus[absatz]
+        if abstand <= UNKLAR_NAEHE_S and b["verdict"] in ("supported", "partial", "unchecked"):
+            b["verdict"], b["note"] = "unsupported", UNKLAR_HINWEIS[sp] + _UNKLAR.sub("", u["notiz"]).strip()
+    return {"model": modell, "revised": nachgebessert, "paragraphs": aus}
+
+
 def spielleitung_beanstanden(befund: list[dict], text: str) -> list[dict]:
     """Absätze, in denen die Spielleitung als Figur auftritt („die Spielleitung zusicherte“), gelten als beanstandet –
     die Nachbesserung bekommt den Grund. Die Prüfung durch das Modell übersieht das regelmäßig."""
@@ -1560,6 +1630,7 @@ class Ablauf:
     notiz_klient: Klient | None = None  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl (sonst klient)
     letzte_unklar: list = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus Notizen und Auswahl
     zweiter_blick_an: bool = True  # 0.4.74: kritische und unklare Ereignisse vor dem Schreiben an der Abschrift prüfen
+    pruefansicht: str = "pflicht"  # 0.4.75: „pflicht“ (aus Pflichtprüfung und unklaren Stellen) oder „gegenpruefung“ (alt)
     letzter_zweiter_blick: list = field(default_factory=list)  # 0.4.74: je geprüftem Ereignis Urteil, Zitat, vorher/nachher
 
     def _schritt(self, name: str) -> None:
@@ -1877,7 +1948,9 @@ class Ablauf:
                         continue
             for nr, i in enumerate(gruppe, 1):
                 p, a = punkte[i], antworten.get(nr) or {}
-                urteil = _URTEIL_BLICK.get(str(a.get("urteil") or a.get("verdict") or "").strip().lower(), "unklar")
+                # ohne Antwort oder mit unbekanntem Urteil bleibt das Ereignis, wie es war („ungeprüft“) – nur ein
+                # ausdrückliches „unklar“ macht es unklar
+                urteil = _URTEIL_BLICK.get(str(a.get("urteil") or a.get("verdict") or "").strip().lower(), "ungeprueft")
                 zitat = klartext(a.get("zitat") or a.get("quote") or "")[:300] if isinstance(a.get("zitat") or a.get("quote"), str) else ""
                 grund = klartext(a.get("grund") or a.get("reason") or "")[:300]
                 eintrag = {"nr": i + 1, "zeit": p["zeit"], "zeit_text": _zeit(p["zeit"]), "urteil": urteil,
@@ -2255,7 +2328,15 @@ class Ablauf:
         r["title"] = artefakte.feinschliff(r.get("title") or "")
         r["openThreads"] = [artefakte.feinschliff(f) for f in r.get("openThreads") or []]
         fortschritt(0.6 if gegenpruefen else 0.8)
-        pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
+        if gegenpruefen and self.letzte_auswahl and self.pruefansicht != "gegenpruefung":
+            # 0.4.75: keine Gegenprüfung gegen die Notizen mehr – die Prüfansicht entsteht aus dem, was nachgerechnet ist
+            pruefung = pruefansicht_aus_pflicht(r["text"], self.letzte_auswahl, pflicht_rest, self.letzte_unklar,
+                                                self.letzter_zweiter_blick, self.klient.modell,
+                                                bool(self.letzte_pflicht.get("nachgebessert")), recap_ein.get("sprache") or "de")
+            self.letzte_pruefung_vorher, self.letzte_pruefung_nachher = pruefung["paragraphs"], []
+            self.letzte_relationen_vorher, self.letzte_relationen_nachher = [], []
+        else:
+            pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         if pruefung is not None and pruefung.get("revised"):  # Nachbesserung kann Artefakte wieder hineinbringen
             r["text"], nachher = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt)
             self.bereinigt += [b for b in nachher if b["art"] not in ("tischgespraech", "erzaehlstimme")]

@@ -123,6 +123,11 @@ EN: dict[str, str] = {
     "nachgebessert": "revised",
     "Einzelheiten": "Details",
     "Zweiter Blick in die Abschrift ({n})": "Second look at the transcript ({n})",
+    "Prüfansicht für die Spielleitung": "Review view for the game master",
+    "Aus den geprüften Ereignissen und den unklaren Stellen (empfohlen)": "From the checked events and the unclear passages (recommended)",
+    "Jeden Absatz gegen die Notizen gegenprüfen (früherer Weg)": "Cross-check every paragraph against the notes (previous approach)",
+    "Die empfohlene Ansicht markiert nur, was der Server nachgerechnet hat (fehlende oder widersprüchliche Ereignisse) oder was an der Aufnahme nicht eindeutig war – und spart etwa ein Fünftel der Kosten je Kapitel. Der frühere Weg lässt das Sprachmodell jeden Absatz gegen seine eigenen Notizen beurteilen. Gilt für den Weg „Erst Notizen“.":
+        "The recommended view only marks what the server has verified (missing or contradicting events) or what was ambiguous in the recording – and saves about a fifth of the cost per chapter. The previous approach lets the language model judge every paragraph against its own notes. Applies to the notes-first approach.",
     "stimmt": "confirmed",
     "berichtigt": "corrected",
     "Entscheidende Ereignisse vor dem Schreiben an der Abschrift prüfen": "Check decisive events against the transcript before writing",

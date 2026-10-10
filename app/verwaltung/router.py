@@ -697,7 +697,7 @@ def _llm_anzeige(db: Session) -> dict:
     from app.einstellungen import extern_konfig, llm_konfig
     from app.sprachmodell import PREISE
     from app import cloudanbieter, modellwahl, woerterbuch
-    from app.zusammenfassung import gegenpruefen_an, zweiter_blick_an
+    from app.zusammenfassung import gegenpruefen_an, pruefansicht_art, zweiter_blick_an
 
     k = llm_konfig(db)
     preis = (k.cent_ein, k.cent_aus) if k.cent_ein is not None and k.cent_aus is not None \
@@ -709,7 +709,7 @@ def _llm_anzeige(db: Session) -> dict:
             "extern_key": bool(extern_konfig(db).api_key), "je_session": je_session, "preis": preis,
              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
                                   for kn in worker), "gegenpruefen": gegenpruefen_an(db),
-             "zweiter_blick": zweiter_blick_an(db),
+             "zweiter_blick": zweiter_blick_an(db), "pruefansicht": pruefansicht_art(db),
              "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")},
              "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND,
              "modelle": modellwahl.auswahl(db, k),
@@ -898,7 +898,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
-                              zweiter_blick: str = Form(""),
+                              zweiter_blick: str = Form(""), pruefansicht: str = Form(""),
                               ausserhalb_eu: str = Form(""), weg: str = Form(""),
                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
     """Wer Recap und Vorschläge schreibt. Überschreibt die .env; der Schlüssel wird nie angezeigt."""
@@ -971,9 +971,11 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
         from app.zusammenfassung import K_GEGENPRUEFEN
 
         meta_schreiben(db, K_GEGENPRUEFEN, "an" if gegenpruefen else "aus")
-        from app.zusammenfassung import K_ZWEITER_BLICK
+        from app.zusammenfassung import K_PRUEFANSICHT, K_ZWEITER_BLICK, PRUEFANSICHTEN
 
         meta_schreiben(db, K_ZWEITER_BLICK, "an" if zweiter_blick else "aus")
+        if pruefansicht in PRUEFANSICHTEN:
+            meta_schreiben(db, K_PRUEFANSICHT, pruefansicht)
     if key_loeschen:
         meta_schreiben(db, "llm.api_key", "")
     elif key:

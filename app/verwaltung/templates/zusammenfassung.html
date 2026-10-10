@@ -103,6 +103,10 @@
       <p class="hilfe">{{ _("Ein zweiter Durchgang des Sprachmodells prüft jeden Absatz gegen das Transkript, bessert Unbelegtes einmal nach und zeigt der Spielleitung vor der Freigabe, worauf sich jeder Absatz stützt. Kostet etwa ein Drittel mehr Rechenzeit.") }}</p>
       <label class="haken"><input type="checkbox" name="zweiter_blick" value="1"{% if llm.zweiter_blick %} checked{% endif %}> {{ _("Entscheidende Ereignisse vor dem Schreiben an der Abschrift prüfen") }}</label>
       <p class="hilfe">{{ _("Gilt für den Weg „Erst Notizen“: Die wichtigsten Ereignisse werden noch einmal gegen den Wortlaut der Abschrift gehalten, bevor das Kapitel entsteht. Was dabei nicht eindeutig ist, bleibt im Kapitel vage und wird der Spielleitung gezeigt. Kostet etwa 3 Cent je Kapitel.") }}</p>
+      <fieldset><legend>{{ _("Prüfansicht für die Spielleitung") }}</legend>
+        <label class="haken"><input type="radio" name="pruefansicht" value="pflicht"{% if llm.pruefansicht == "pflicht" %} checked{% endif %}> {{ _("Aus den geprüften Ereignissen und den unklaren Stellen (empfohlen)") }}</label>
+        <label class="haken"><input type="radio" name="pruefansicht" value="gegenpruefung"{% if llm.pruefansicht == "gegenpruefung" %} checked{% endif %}> {{ _("Jeden Absatz gegen die Notizen gegenprüfen (früherer Weg)") }}</label>
+        <span class="hilfe">{{ _("Die empfohlene Ansicht markiert nur, was der Server nachgerechnet hat (fehlende oder widersprüchliche Ereignisse) oder was an der Aufnahme nicht eindeutig war – und spart etwa ein Fünftel der Kosten je Kapitel. Der frühere Weg lässt das Sprachmodell jeden Absatz gegen seine eigenen Notizen beurteilen. Gilt für den Weg „Erst Notizen“.") }}</span></fieldset>
       <p class="hilfe">{{ _("Wortlisten für unsicher erkannte Namen:") }}
         {% for sp, da in llm.wortlisten.items() %}{{ _("Deutsch") if sp == "de" else _("Englisch") }} {{ _("geladen") if da else _("wird geladen") }}{% if not loop.last %}, {% endif %}{% endfor %}.
         {{ _("Dazu kommen die Texte der Kampagne (Bibel, Notizen, Unterlagen, Charaktere) und was in früheren Kapiteln sicher erkannt wurde.") }}</p>

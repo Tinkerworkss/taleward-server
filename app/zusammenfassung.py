@@ -209,6 +209,17 @@ def gegenpruefen_an(db: Session) -> bool:
 
 
 K_ZWEITER_BLICK = "pruefung.zweiter_blick"
+K_PRUEFANSICHT = "pruefung.ansicht"
+PRUEFANSICHTEN = ("pflicht", "gegenpruefung")
+
+
+def pruefansicht_art(db: Session) -> str:
+    """0.4.75, Verwaltung → Zusammenfassung: Prüfansicht aus Pflichtprüfung und unklaren Stellen (Standard) oder die
+    frühere Gegenprüfung jedes Absatzes gegen die Notizen."""
+    from app.einstellungen import meta_lesen
+
+    wert = meta_lesen(db, K_PRUEFANSICHT)
+    return wert if wert in PRUEFANSICHTEN else "pflicht"
 
 
 def zweiter_blick_an(db: Session) -> bool:
@@ -336,7 +347,7 @@ def zusammenfasser(db: Session):
             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
                             vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
                             notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k),
-                            zweiter_blick_an=zweiter_blick_an(db_))
+                            zweiter_blick_an=zweiter_blick_an(db_), pruefansicht=pruefansicht_art(db_))
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"
