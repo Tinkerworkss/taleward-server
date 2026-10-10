@@ -29,6 +29,24 @@ def systembegriffe(system: str | None) -> tuple[str, ...]:
     return tuple(z.strip() for z in zeilen if z.strip() and not z.startswith("#"))
 
 
+@lru_cache
+def regelbegriffe(system: str | None) -> tuple[str, ...]:
+    """0.4.79: Begriffe, die nur zu den Regeln gehören (Abschnitt „# Regelbegriffe“ der Begriffsliste). Sie helfen der
+    Transkription wie alle anderen, im Kapitel haben sie nichts zu suchen."""
+    if not system or system == "other":
+        return ()
+    datei = _ORDNER / f"{system}.txt"
+    if not datei.exists():
+        return ()
+    aus, drin = [], False
+    for z in datei.read_text(encoding="utf-8").splitlines():
+        if z.startswith("#"):
+            drin = z[1:].strip().casefold().startswith("regelbegriffe")
+        elif drin and z.strip():
+            aus.append(z.strip())
+    return tuple(aus)
+
+
 MAX_ANZEIGE = 200   # Schnittstelle 0.4.6: höchstens 200 Einträge …
 MAX_LAENGE = 40     # … à 40 Zeichen
 

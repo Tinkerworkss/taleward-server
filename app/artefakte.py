@@ -194,23 +194,51 @@ def _namen_ersetzen(satz: str, personen: list[dict], geschuetzt: set[str]) -> tu
 ERZAEHLSTIMME_ANTEIL = 0.15  # mehr Sätze in der Du-Form: dann ist es die Erzählstimme, keine abgeschriebene Rede
 
 
-def kapitel(text: str, personen: list[dict] | None = None, geschuetzte_namen: list[str] | None = None
-            ) -> tuple[str, list[dict]]:
+# 0.4.79: Sätze über die Spielrunde selbst („Die Runde blieb bei Planung und Rollenspiel …“, „Die nächste Session
+# beginnt …“). „Session“ allein bleibt – in manchen Welten gibt es eine Matrix-Session.
+_TISCHMETA = re.compile(r"\b(?:Rollenspiel\w*|Spielabend\w*|Spielrunde\w*|Spielsitzung\w*"
+                        r"|(?:nächste|diese|letzte|heutige)[nrs]? (?:Session|Sitzung))\b")
+
+
+def regelwoerter_muster(woerter) -> re.Pattern | None:
+    """0.4.79: Regelbegriffe eines Systems (app/begriffe/<system>.txt, Abschnitt „# Regelbegriffe“) als Muster."""
+    w = sorted({x.strip() for x in woerter or () if x and x.strip()}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(x) for x in w) + r")\b") if w else None
+
+
+def regelwort_entfernen(satz: str, muster: re.Pattern) -> str:
+    """0.4.79: Einen Regelbegriff des Systems aus dem Satz nehmen, möglichst ohne den Satz zu zerbrechen: erst als kurze
+    Wendung („und einem Hauch von Edge“), dann als Nebensatz („, während sie überlegte, Edge einzusetzen“), sonst wie
+    jede Regelsprache (Satzteil, zuletzt der Satz)."""
+    w = muster.pattern
+    for teil in (r"(?:\s+(?:und|mit|durch)(?:\s+(?:einem|einer|einen|etwas|viel|wenig))?|\s+(?:einem|einer|einen|etwas))"
+                 r"(?:\s+\w+\s+(?:von|an))?\s+" + w,
+                 r",\s*(?:während|als|weil|indem|wobei|und|da)\s[^,.;!?]*,\s*[^,.;!?]*" + w + r"[^,.;!?]*",
+                 r",\s*[^,.;!?]*" + w + r"[^,.;!?]*"):
+        neu = re.sub(teil, "", satz, count=1)
+        if neu != satz and not muster.search(neu) and len(neu.split()) >= 2:
+            return re.sub(r"\s+([,.;:!?])", r"\1", neu)
+    return regelteil(satz, muster)
+
+
+def kapitel(text: str, personen: list[dict] | None = None, geschuetzte_namen: list[str] | None = None,
+            regelwoerter=()) -> tuple[str, list[dict]]:
     """Kapiteltext säubern. Liefert (Text, Befunde).
 
     0.4.62: Steht ein großer Teil der Sätze in der Du-/Ihr-Form, erzählt das Modell so – dann würde das Löschen das
     halbe Kapitel kosten. Die Sätze bleiben, es gibt einen Hinweis (Art „erzaehlstimme“)."""
-    aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=True)
+    muster = regelwoerter_muster(regelwoerter)
+    aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=True, regelmuster=muster)
     du = sum(1 for b in befunde if b["art"] == "du_form")
     saetze = sum(len(_saetze(a.strip())) for a in re.split(r"\n\s*\n", text or ""))
     if du > max(3, ERZAEHLSTIMME_ANTEIL * saetze):
-        aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=False)
+        aus, befunde = _kapitel(text, personen, geschuetzte_namen, du_weg=False, regelmuster=muster)
         befunde.insert(0, {"art": "erzaehlstimme", "text": f"{du} von {saetze}"})
     return aus, befunde
 
 
-def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str] | None, du_weg: bool
-             ) -> tuple[str, list[dict]]:
+def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str] | None, du_weg: bool,
+             regelmuster: re.Pattern | None = None) -> tuple[str, list[dict]]:
     personen = personen or []
     geschuetzt = {n.casefold() for n in (geschuetzte_namen or []) if n}
     for p in personen:
@@ -237,6 +265,12 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
             if _REGEL.search(satz) or _REGELPHRASE.search(satz):
                 befunde.append({"art": "regel", "text": satz[:200]})
                 satz = regelteil(satz, _REGEL)
+            if satz and regelmuster is not None and regelmuster.search(satz):
+                befunde.append({"art": "regel", "text": satz[:200]})
+                satz = regelwort_entfernen(satz, regelmuster)
+            if satz and _TISCHMETA.search(satz):  # ein Satz über die Runde selbst: ganz weg
+                befunde.append({"art": "tischmeta", "text": satz[:200]})
+                continue
             if not satz:
                 continue
             satz_neu, geaendert = _namen_ersetzen(satz, personen, geschuetzt)

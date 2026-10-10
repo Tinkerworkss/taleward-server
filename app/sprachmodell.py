@@ -28,7 +28,9 @@ log = logging.getLogger("worker")
 
 ENTRY_TYPES = ("npc", "location", "quest", "item", "faction", "other")
 FLAGS = ("joke_suspected", "low_confidence", "contradicts_bible")
-MAX_VORSCHLAEGE = 15  # so viele sieht die Spielleitung höchstens
+MAX_VORSCHLAEGE = 15  # so viele sieht die Spielleitung höchstens …
+MAX_VORSCHLAEGE_LANG = 20  # … bei Runden ab VORSCHLAEGE_LANG_AB_MIN Minuten (0.4.79: 7 h füllten 15 ganz aus)
+VORSCHLAEGE_LANG_AB_MIN = 240
 MAX_VORSCHLAEGE_ROH = 25  # so viele darf das Modell liefern; der Server wählt die gewichtigsten aus
 ANTWORT_HOECHSTENS = 4096  # Tokens je Antwort eines lokalen Modells
 NOTIZ_STUECK = 6000  # höchstens so viele Token Transkript je Aufruf für Szenennotizen
@@ -557,6 +559,21 @@ def woerter_fuer(minuten: float, lang: bool = False) -> str:
     return "250–600"
 
 
+def _regelwoerter(ein: dict) -> tuple[str, ...]:
+    """0.4.79: Regelbegriffe des Systems der Kampagne (fallen im Kapitel weg)."""
+    from app.namenshilfe import regelbegriffe
+
+    try:
+        return regelbegriffe(ein.get("system"))
+    except (OSError, ValueError):
+        return ()
+
+
+def vorschlaege_hoechstens(ein: dict) -> int:
+    """0.4.79: So viele Vorschläge sieht die Spielleitung – bei langen Runden mehr."""
+    return MAX_VORSCHLAEGE_LANG if _minuten(ein) >= VORSCHLAEGE_LANG_AB_MIN else MAX_VORSCHLAEGE
+
+
 def _sprache(ein: dict) -> str:
     return "English" if ein.get("sprache") == "en" else "Deutsch"
 
@@ -597,7 +614,7 @@ Fragen.
 …“, „mein Bruder“, „schuldet mir“), Eigennamen von Gegenständen und Orten wörtlich („das Schwert Eisenwind“ statt \
 „ein Schwert“ – mit dem Namen, der gesagt wird), und bei mehreren Personen in einer Szene, wer genau was tut.
 Schreib den Zustand genau so, wie er am Tisch war: verletzt ist nicht tot, angedroht ist nicht geschehen, geplant ist \
-nicht getan.
+nicht getan. Was eine Figur nur erzählt oder gehört hat (Gerücht, Legende, Hörensagen), bleibt als Erzählung kenntlich: „soll … haben“, „heißt es“.
 Höchstens {hoechstens} Notizen für den ganzen Abschnitt, gleichmäßig über seine Dauer verteilt – bis zur letzten \
 Zeile. Kleinigkeiten (Essen, Smalltalk, einzelne Fragen) fasst du zusammen oder lässt sie weg, damit Platz für das \
 Ende des Abschnitts bleibt.
@@ -653,7 +670,7 @@ geschehen; wer etwas wofür gibt, steht so in der Grundlage.
 - Die Figuren heißen nach ihren Charakteren, nicht nach den Menschen am Tisch. Die Spielleitung ist keine Figur: \
 Was sie sagt, sagt ein Nichtspielercharakter oder die Erzählung; das Wort „Spielleitung“ kommt im Recap nicht vor. \
 Regeln, Würfe, Punkte und Gespräche außerhalb des Spiels kommen nicht vor.
-- Offensichtliche Witze sind kein Spielgeschehen.
+- Offensichtliche Witze sind kein Spielgeschehen. Was eine Figur nur erzählt oder gehört hat (Gerücht, Legende, Hörensagen), bleibt als Erzählung kenntlich: „soll … haben“, „heißt es“.
 - Titel: „Kapitel {nummer}: “ und ein kurzer, stimmungsvoller Titel.
 - Offene Fäden: 0 bis 6 kurze Sätze zu ungelösten Fragen, Versprechen und Zielen der Gruppe.
 - Reiner Text ohne Markdown: keine Sternchen, keine Rauten, keine Zwischenüberschriften, keine Listen.
@@ -686,9 +703,12 @@ Zeitstempel der Zeile bzw. Notiz in eckigen Klammern.
 - Keine Einträge für die Charaktere der Spieler. Höchstens {max} Vorschläge, das Wichtigste zuerst. Lieber wenige gute.
 - Wichtig ist, was die Kampagne weiterträgt: Nichtspielercharaktere mit Namen, Fraktionen, Aufträge und Ziele der \
 Gruppe (quest), Gegenstände mit eigenem Namen, Orte, an die die Gruppe zurückkehren kann. Kulisse, die nur einmal \
-vorbeizieht, kommt zuletzt oder gar nicht.
+vorbeizieht, kommt zuletzt oder gar nicht: kein Eintrag für einen Ort, durch den die Figuren nur kamen (Bahnhof, \
+Flughafen, eine Bar für einen Drink), für die Stadt oder Welt als Ganzes oder für Kleidung und Ausrüstung ohne eigenen \
+Namen.
+- Offene Vorhaben der Gruppe (ein Plan, eine Erkundung, deren Ergebnis noch aussteht) gehören in die quest.
 - detail und gmNotes sind reiner Text ohne Markdown (keine Sternchen, keine Rauten); mehrere Punkte als eigene Zeilen. \
-Keine Vermutungen – nur, was gesagt wurde.
+Keine Vermutungen – nur, was gesagt wurde; keine Sätze mit „könnte“. Was eine Figur nur erzählt oder gehört hat (Gerücht, Legende, Hörensagen), bleibt als Erzählung kenntlich: „soll … haben“, „heißt es“.
 Antworte nur mit JSON: {"proposals": [{"entryType": "…", "action": "…", "targetEntryId": null, "title": "…", \
 "detail": "…", "gmNotes": null, "suggestedVisibility": "…", "visibilityReason": "…", "confidence": 0.7, \
 "flags": [], "evidence": [{"start": "m:ss", "quote": "…"}]}]}. Sprache der Texte: {sprache}."""
@@ -760,7 +780,7 @@ gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.{abschnitt}
 Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
 Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
 der Stand am Ende), rang ("kritisch" oder "wichtig"). Steht in den Notizen „(unklar, wer)“, bleibt die Person auch \
-hier ungenannt, und „(unklar, wer)“ steht hinter dem Ausgang. Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
+hier ungenannt, und „(unklar, wer)“ steht hinter dem Ausgang. Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Was eine Figur nur erzählt oder gehört hat (Gerücht, Legende, Hörensagen), bleibt als Erzählung kenntlich: „soll … haben“, „heißt es“. Erfinde nichts.
 Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
 Sprache: {sprache}."""
 AUSWAHL_HOECHSTENS = 20
@@ -823,18 +843,18 @@ TEILE_ZWEI_AB_MIN = 420  # ab so vielen Minuten sind zwei Einschnitte möglich
 TEILE_FENSTER = (0.3, 0.7)  # Einschnitte nur in diesem Anteil der Runde
 TEIL_MIN_MIN = 60  # jeder Teil dauert mindestens so viele Minuten
 EINSCHNITT_NAEHE_S = 600.0  # die zitierte Notiz liegt höchstens so weit vom genannten Zeitpunkt
+# 0.4.79: Nur Zeitsprung und Ortswechsel zählen (gemessen: „Ende eines Strangs“ und „Pause“ schnitten mitten in
+# Gespräche); einen zweiten Einschnitt gibt es nur als Zeitsprung.
 _EINSCHNITT_ARTEN = {"zeitsprung": "zeitsprung", "time_skip": "zeitsprung", "ortswechsel": "ortswechsel",
-                     "scene_change": "ortswechsel", "strangende": "strangende", "end_of_thread": "strangende",
-                     "pause": "pause", "break": "pause"}
+                     "scene_change": "ortswechsel"}
 SYSTEM_EINSCHNITT = """Du gliederst die Szenennotizen einer langen Pen-&-Paper-Runde. Gesucht ist ein natürlicher \
 Einschnitt, an dem die Geschichte selbst einen Schnitt macht – nur zwischen {von} und {bis}, höchstens {anzahl}:
-- ein Zeitsprung in der Spielwelt („am nächsten Abend“, „eine Woche später“),
-- ein Wechsel von Ort und Szene, nach dem etwas Neues beginnt,
-- das Ende eines Erzählstrangs, oder eine lange Pause am Tisch.
-Kein Einschnitt mitten in einer Szene, einem Kampf oder einem Gespräch. Gibt es keinen klaren Einschnitt, liefere eine \
-leere Liste – lieber keiner als ein erzwungener.
-Je Einschnitt: zeit (Zeitstempel der ersten Notiz nach dem Einschnitt), art ("zeitsprung", "ortswechsel", "strangende" \
-oder "pause"), zitat (diese Notiz, wörtlich, höchstens 20 Wörter), titel (Überschrift für den Teil ab hier, 2 bis 5 \
+- ein Zeitsprung in der Spielwelt: die Figuren schlafen, ein neuer Tag oder Abend beginnt („am nächsten Morgen“, „eine \
+Woche später“) – das ist der beste Einschnitt;
+- oder ein Wechsel von Ort und Szene, nach dem etwas ganz Neues beginnt.
+Kein Einschnitt mitten in einer Szene, einem Kampf oder einem Gespräch, und nicht nur, weil eine Figur geht oder ein \
+Gespräch endet. Gibt es keinen klaren Einschnitt, liefere eine leere Liste – lieber keiner als ein erzwungener.
+Je Einschnitt: zeit (Zeitstempel der ersten Notiz nach dem Einschnitt), art ("zeitsprung" oder "ortswechsel"), zitat (diese Notiz, wörtlich, höchstens 20 Wörter), titel (Überschrift für den Teil ab hier, 2 bis 5 \
 Wörter, ohne Nummer). Dazu titel_anfang: die Überschrift für den Teil davor. Überschriften im Ton der Kampagne, ohne \
 Namen der Menschen am Tisch, keine Regeln, nichts erfinden.
 Antworte nur mit JSON: {"titel_anfang": "…", "einschnitte": [{"zeit": "h:mm:ss", "art": "…", "zitat": "…", \
@@ -855,18 +875,23 @@ TEIL_OHNE_SCHLUSS = """
 - Kein Schlusswort für den ganzen Abend – die Runde geht im nächsten Teil weiter."""
 
 
-TEIL_DAUER_VORGABE = 150  # Minuten: jeder Teil bekommt Platz und Pflichtereignisse wie eine Runde dieser Länge
+TEIL_MIN_WOERTER = 300  # so viel Platz bekommt auch ein kurzer Teil mindestens
+TEIL_MIN_PFLICHT = 12  # so viele Pflichtereignisse bekommt auch ein kurzer Teil mindestens
 
 
-def teil_grenzen(teil: dict, lang: bool = True) -> tuple[int, int]:
-    """Platz eines Teils (Cloud 900–1500, lokal 600–1200) – ein Teil liest sich wie ein normaler Abend."""
-    w = woerter_fuer(TEIL_DAUER_VORGABE, lang).split("–")
-    return int(w[0]), int(w[-1])
+def teil_grenzen(teil: dict, dauer_s: float, lang: bool = True) -> tuple[int, int]:
+    """0.4.79: Die Teile teilen sich den Platz der ganzen Runde (Tabelle in woerter_fuer) nach ihrer Dauer – mit eigenem
+    Platz je Teil wurden 7 h 2.400–3.750 Wörter lang – zu lang zum Vorlesen)."""
+    w = woerter_fuer(dauer_s / 60, lang).split("–")
+    anteil = (teil["bis"] - teil["von"]) / dauer_s if dauer_s > 0 else 1.0
+    unten = max(TEIL_MIN_WOERTER, round(int(w[0]) * anteil / 10) * 10)
+    return unten, max(unten + 200, round(int(w[-1]) * anteil / 10) * 10)
 
 
-def teil_hoechstens(teil: dict) -> int:
-    """Pflichtereignisse eines Teils: wie bei einem normalen Abend (30)."""
-    return auswahl_hoechstens_fuer(TEIL_DAUER_VORGABE)
+def teil_hoechstens(teil: dict, dauer_s: float) -> int:
+    """0.4.79: Pflichtereignisse eines Teils: sein Anteil an denen der ganzen Runde, mindestens TEIL_MIN_PFLICHT."""
+    anteil = (teil["bis"] - teil["von"]) / dauer_s if dauer_s > 0 else 1.0
+    return max(TEIL_MIN_PFLICHT, round(auswahl_hoechstens_fuer(dauer_s / 60) * anteil))
 
 
 def _ueberschrift(t) -> str:
@@ -897,15 +922,21 @@ def einschnitte_lesen(d: dict, notizen: str, dauer_s: float, hoechstens: int, sp
         schnitt = next((t for t, _n in zeilen if t >= min(belegt)), None)
         if schnitt is None:
             continue
-        kandidaten.append((schnitt, _ueberschrift(e.get("titel") or e.get("title"))))
+        kandidaten.append((schnitt, _ueberschrift(e.get("titel") or e.get("title")), art))
     kandidaten.sort()
-    gewaehlt: list[tuple[float, str]] = []
-    for schnitt, titel in kandidaten:
-        if len(gewaehlt) >= hoechstens:
-            break
-        davor = gewaehlt[-1][0] if gewaehlt else 0.0
-        if schnitt - davor >= TEIL_MIN_MIN * 60 and dauer_s - schnitt >= TEIL_MIN_MIN * 60:
-            gewaehlt.append((schnitt, titel))
+
+    def waehlen(liste: list, n: int) -> list[tuple[float, str]]:
+        aus: list[tuple[float, str]] = []
+        for schnitt, titel, _art in liste:
+            if len(aus) >= n:
+                break
+            davor = aus[-1][0] if aus else 0.0
+            if schnitt - davor >= TEIL_MIN_MIN * 60 and dauer_s - schnitt >= TEIL_MIN_MIN * 60:
+                aus.append((schnitt, titel))
+        return aus
+
+    # Zeitsprünge gehen vor; mehr als ein Einschnitt nur aus Zeitsprüngen, ein Ortswechsel höchstens allein
+    gewaehlt = waehlen([k for k in kandidaten if k[2] == "zeitsprung"], hoechstens) or waehlen(kandidaten, 1)
     if not gewaehlt:
         return []
     ersatz = "Part {n}" if sprache == "en" else "Teil {n}"
@@ -2545,7 +2576,7 @@ class Ablauf:
         neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, frei)
         geschuetzt = [e["name"] for e in ein.get("bibel") or []]
         for i, t in list(neu.items()):
-            sauber, _befunde = artefakte.kapitel(t, ein.get("personen") or [], geschuetzt)
+            sauber, _befunde = artefakte.kapitel(t, ein.get("personen") or [], geschuetzt, _regelwoerter(ein))
             sauber = " ".join(sauber.split())
             if not sauber:
                 bericht["verworfen"].append({"absatz": i + 1, "grund": "vom Filter geleert"})
@@ -2690,7 +2721,8 @@ class Ablauf:
         d = self.zaehler.aufruf(self.vorschlag_klient or self.klient, system, nutzer)
         return pruefen(d.get("proposals") or [], {e["id"] for e in ein["bibel"]}, {e["id"] for e in ein["geheim"]},
                        charaktere=[p["charakter"] for p in ein["personen"] if p.get("charakter")],
-                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage)
+                       namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]}, grundlage=grundlage,
+                       hoechstens=vorschlaege_hoechstens(ein))
 
     def _vorschlag_grundlage(self, titel: str, grundlage: str) -> tuple[str, str]:
         """Weg „Notizen zuerst“: Die Vorschläge sehen weiter die ganze Abschrift, wenn sie ins Modell passt – dort
@@ -2707,7 +2739,7 @@ class Ablauf:
         summe = [0, 0]
         n = len(teile)
         for i, t in enumerate(teile):
-            unten, oben = teil_grenzen(t)
+            unten, oben = teil_grenzen(t, _minuten(ein) * 60, self.notizen_zuerst)
             summe[0] += unten
             summe[1] += oben
             letzter = i == n - 1
@@ -2770,7 +2802,7 @@ class Ablauf:
                     if teile:  # 0.4.78: je Teil eigene Pflichtereignisse
                         for t in teile:
                             t["auswahl"] = self.auswahl(recap_ein, teil_notizen(grundlage, t["von"], t["bis"]),
-                                                        teil_hoechstens(t), t["von"], t["bis"])
+                                                        teil_hoechstens(t, _minuten(recap_ein) * 60), t["von"], t["bis"])
                         self.letzte_auswahl = [e for t in teile for e in t["auswahl"]]
                     else:
                         self.letzte_auswahl = self.auswahl(recap_ein, grundlage)
@@ -2823,7 +2855,8 @@ class Ablauf:
         from app import artefakte
 
         geschuetzt = [e["name"] for e in recap_ein.get("bibel") or []]
-        r["text"], self.bereinigt = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt)
+        r["text"], self.bereinigt = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt,
+                                                      _regelwoerter(recap_ein))
         r["title"] = artefakte.feinschliff(r.get("title") or "")
         r["openThreads"] = [artefakte.feinschliff(f) for f in r.get("openThreads") or []]
         fortschritt(0.6 if gegenpruefen else 0.8)
@@ -2837,7 +2870,8 @@ class Ablauf:
         else:
             pruefung = self.gegenpruefen(recap_ein, titel, grundlage, r) if gegenpruefen else None
         if pruefung is not None and pruefung.get("revised"):  # Nachbesserung kann Artefakte wieder hineinbringen
-            r["text"], nachher = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt)
+            r["text"], nachher = artefakte.kapitel(r["text"], recap_ein.get("personen") or [], geschuetzt,
+                                                   _regelwoerter(recap_ein))
             self.bereinigt += [b for b in nachher if b["art"] not in ("tischgespraech", "erzaehlstimme")]
         if pruefung is not None:
             hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
@@ -2903,15 +2937,21 @@ def ohne_meta(text: str) -> str:
 # sind Spielgeschehen und bleiben ebenfalls.
 _VERMUTUNG = re.compile(r"\b(?:vermutlich|wahrscheinlich|möglicherweise|vielleicht|dürfte|dürften|presumably|probably"
                         r"|possibly|perhaps|likely)\b", re.IGNORECASE)
+# 0.4.79, nur SL-Notizen: „könnte geheime Räume haben“ ist eine Vermutung des Modells, kein Hintergrund vom Tisch
+# (gemessen: fast jede SL-Notiz einer langen Runde). Im Detail bleibt „könnte“ – dort steht es auch in wörtlicher Rede.
+_VERMUTUNG_STRENG = re.compile(r"\b(?:könnte|könnten|could|might)\b", re.IGNORECASE)
 
 
-def ohne_vermutung(text: str) -> str:
-    """Sätze mit Vermutungen des Modells entfernen; der Rest bleibt, wie er war."""
-    if not text or not _VERMUTUNG.search(text):
+def ohne_vermutung(text: str, streng: bool = False) -> str:
+    """Sätze mit Vermutungen des Modells entfernen; der Rest bleibt, wie er war. streng (SL-Notizen): auch „könnte“."""
+    def vermutet(t: str) -> bool:
+        return bool(_VERMUTUNG.search(t) or (streng and _VERMUTUNG_STRENG.search(t)))
+
+    if not text or not vermutet(text):
         return text
     behalten = []
     for zeile in text.split("\n"):
-        rest = " ".join(t for t in re.split(r"(?<=[.!?])\s+", zeile) if not _VERMUTUNG.search(t)).strip()
+        rest = " ".join(t for t in re.split(r"(?<=[.!?])\s+", zeile) if not vermutet(t)).strip()
         if rest:
             behalten.append(rest)
     return "\n".join(behalten).strip()
@@ -2975,7 +3015,7 @@ def _zeit_aus_notizen(zitat: str, notizen: list[tuple[float, str]]) -> float | N
 
 
 def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
-            namen: dict[str, str] | None = None, grundlage: str = "") -> list[dict]:
+            namen: dict[str, str] | None = None, grundlage: str = "", hoechstens: int = MAX_VORSCHLAEGE) -> list[dict]:
     """Antwort des Modells in Vorschläge nach Schnittstelle übersetzen; Unbrauchbares fällt weg:
     - neue Einträge für die Charaktere der Spieler und Änderungen an Einträgen, die einen Spielercharakter meinen
       (namen: Eintrags-ID → Name), die das Modell trotz Anweisung gern anlegt
@@ -3045,7 +3085,8 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
             flags.append("low_confidence")
         v_neu = {
             "entryType": typ, "action": art, "targetEntryId": ziel, "title": titel[:300], "detail": detail[:4000],
-            "gmNotes": (ohne_vermutung(ohne_meta(klartext(v.get("gmNotes"))))[:4000] or None) if art == "create" else None,
+            "gmNotes": (ohne_vermutung(ohne_meta(klartext(v.get("gmNotes"))), streng=True)[:4000] or None)
+            if art == "create" else None,
             "suggestedVisibility": sicht, "visibilityReason": klartext(v.get("visibilityReason"))[:500] or None,
             "confidence": sicherheit, "flags": flags, "evidence": belege,
         }
@@ -3055,7 +3096,7 @@ def pruefen(roh: list, bibel_ids: set[str], geheim_ids: set[str], charaktere=(),
             break
     # Die gewichtigsten zuerst, bei Gleichstand in der Reihenfolge des Modells; dann auf MAX_VORSCHLAEGE kürzen
     reihenfolge = sorted(range(len(out)), key=lambda i: (-gewichte[i], i)) if grundlage else list(range(len(out)))
-    return [out[i] for i in reihenfolge[:MAX_VORSCHLAEGE]]
+    return [out[i] for i in reihenfolge[:hoechstens]]
 
 
 # ================================================================ SL-Unterlagen

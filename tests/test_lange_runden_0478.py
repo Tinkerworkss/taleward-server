@@ -119,10 +119,10 @@ def test_einschnitte_lesen_prueft_lage_zitat_und_dauer():
     frueh = {"einschnitte": [{"zeit": "1:00:00", "art": "ortswechsel", "zitat": "Szene bei Minute 60", "titel": "x"}]}
     assert sm.einschnitte_lesen(frueh, NOTIZEN, DAUER, 2) == []
     assert sm.einschnitte_lesen({"einschnitte": []}, NOTIZEN, DAUER, 2) == []
-    # zwei Einschnitte nur mit 60 Minuten Abstand; Ersatztitel ohne Überschrift
+    # zwei Einschnitte nur mit 60 Minuten Abstand; Ersatztitel ohne Überschrift (0.4.79: zwei nur als Zeitsprünge)
     zwei = {"einschnitte": [gut["einschnitte"][0],
-                            {"zeit": "3:40:00", "art": "ortswechsel", "zitat": "Szene bei Minute 220", "titel": ""},
-                            {"zeit": "4:50:00", "art": "ortswechsel", "zitat": "Szene bei Minute 290", "titel": "Teil 3: Flucht"}]}
+                            {"zeit": "3:40:00", "art": "zeitsprung", "zitat": "Szene bei Minute 220", "titel": ""},
+                            {"zeit": "4:50:00", "art": "zeitsprung", "zitat": "Szene bei Minute 290", "titel": "Teil 3: Flucht"}]}
     teile = sm.einschnitte_lesen(zwei, NOTIZEN, DAUER, 2)
     assert [t["von"] for t in teile] == [0.0, 11400.0, 17400.0] and [t["titel"] for t in teile] == ["Teil 1", "Der Auftrag", "Flucht"]
 
@@ -228,8 +228,9 @@ def test_lange_runde_in_teilen():
     assert "setzt den Teil davor nahtlos fort" in an.recaps[2][0] and "So endet der Teil davor" in an.recaps[2][1]
     assert "Szenennotizen von Teil 2 von 2 (3:10:00–7:00:00)" in an.recaps[2][1]
     assert "[3:10:00]" not in an.recaps[0][1] and "[3:10:00]" in an.recaps[2][1]
-    assert a.grenzen(_eingabe_lang()) == (1800, 3000)  # je Teil eigener Platz: 900–1500
-    assert "1500 Wörtern" in an.recaps[2][0]
+    # 0.4.79: die Teile teilen sich den Platz der ganzen Runde (7 h: 1800–2400) nach ihrer Dauer
+    assert a.grenzen(_eingabe_lang()) == (1800, 2400)
+    assert "1090 Wörtern" in an.recaps[0][0] and "1310 Wörtern" in an.recaps[2][0]
 
 
 def test_ohne_einschnitt_ein_kapitel():

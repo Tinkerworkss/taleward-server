@@ -29,7 +29,6 @@ Nuyen
 Cyberdeck
 Kommlink
 Essenz
-Edge
 Chummer
 Drek
 Ork
@@ -48,3 +47,5 @@ Bioware
 Seele
 Geist
 Hauerwerk
+# Regelbegriffe (helfen der Transkription, kommen im Kapitel nicht vor)
+Edge
