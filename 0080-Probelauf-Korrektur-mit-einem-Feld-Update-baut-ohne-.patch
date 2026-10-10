@@ -1,0 +1,375 @@
+From dfcec48ab03da59d335f3fcdd055ed6995def767 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 23:20:15 +0200
+Subject: [PATCH] Probelauf-Korrektur mit einem Feld, Update baut ohne Abruf
+ des Grundbilds weiter (Server 0.4.70)
+
+Ein freier Hinweistext ohne Absatzangabe aendert hoechstens so viele Absaetze,
+wie er Saetze hat. Ist das Grundbild nicht abrufbar, baut das Update mit dem
+vorhandenen.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/kapitelprobe.py                     |  8 ++--
+ app/sprachmodell.py                     | 52 ++++++++++++++-----------
+ app/verwaltung/i18n.py                  |  9 ++---
+ app/verwaltung/templates/probelauf.html | 22 ++++++-----
+ deploy/aktualisieren.sh                 |  8 +++-
+ pyproject.toml                          |  2 +-
+ tests/test_aktualisierung.py            |  2 +-
+ tests/test_assistent.py                 |  2 +-
+ tests/test_korrektur.py                 | 42 +++++++++++++++++---
+ tests/test_modellablage.py              |  2 +-
+ tests/test_worker_app.py                |  2 +-
+ uv.lock                                 |  2 +-
+ 12 files changed, 99 insertions(+), 54 deletions(-)
+
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+index 7434fac..e5e74ae 100644
+--- a/app/kapitelprobe.py
++++ b/app/kapitelprobe.py
+@@ -394,6 +394,7 @@ KORREKTUR_ZEICHEN = 1000  # je Hinweis
+ 
+ def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt: str, user_id: str) -> None:
+-    """Einen Korrekturdurchgang im Hintergrund starten. Die Hinweise sind wie SL-Notizen nur für die SL; sie landen nur
+-    in diesem Probelauf. Wirft ValueError mit einem Code für die Meldung."""
++    """Einen Korrekturdurchgang im Hintergrund starten. hinweise: je Absatz (optional); fehlt: ein freier Text ohne
++    Absatzangabe (0.4.70: das eine Feld, wie in der App geplant). Die Hinweise sind wie SL-Notizen nur für die SL; sie
++    landen nur in diesem Probelauf. Wirft ValueError mit einem Code für die Meldung."""
+     from app.einstellungen import llm_konfig
+     from app.models import Campaign
+@@ -427,5 +428,5 @@ def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt:
+ 
+ def _korrigieren(p: Probe, k, ein: dict, hinweise: dict[int, str], fehlt: str) -> None:
+-    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze
++    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze, hinweis_saetze
+ 
+     vorher = aktueller_text(p)
+@@ -433,4 +434,5 @@ def _korrigieren(p: Probe, k, ein: dict, hinweise: dict[int, str], fehlt: str) -
+              "hinweise": [{"absatz": i + 1, "text": h} for i, h in sorted(hinweise.items())], "fehlt": fehlt,
+              "vorher": vorher, "nachher": "", "geaendert": [], "verworfen": [], "ohne_aenderung": [],
++             "anzahl": len(hinweise) + (max(hinweis_saetze(fehlt), 1) if fehlt else 0),
+              "woerter_vorher": len(vorher.split()), "kosten_cent": 0, "fehler": None}
+     with _REIHE:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index 8736895..1555318 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -775,6 +775,7 @@ Spielleitung war dabei und hat immer recht: Was in einem Hinweis steht, gilt, au
+ - Ein Hinweis zu einem Absatz: Schreib genau diesen Absatz neu. Stell die beanstandete Stelle richtig oder streich \
+ sie; alles andere im Absatz bleibt, wie es ist.
+-- Ein Hinweis unter „Was fehlt“: Wähle genau einen Absatz, in den das Fehlende nach der Reihenfolge des Geschehens \
+-gehört, und füg es dort knapp ein. Der Rest des Absatzes bleibt.
++- Hinweise ohne Absatzangabe (Fehler oder Fehlendes): Ordne jeden selbst dem Absatz zu, den er betrifft – Fehlendes \
++dem Absatz, in den es nach der Reihenfolge des Geschehens gehört – und ändere nur diese Absätze. Fehlendes knapp \
++einfügen, der Rest des Absatzes bleibt.
+ - Ein Hinweis ist eine Anweisung, kein Text zum Abschreiben: Ins Kapitel kommt nur, was die Spielleitung darin sehen \
+ will, ohne Wörter wie „Hinweis“ oder „Spielleitung“. Nichts darüber hinaus erfinden.
+@@ -784,14 +785,21 @@ Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]} – nur die geä
+ KORREKTUR_NOTIZEN_ZEICHEN = 60_000  # Notizen als Hintergrund, gekürzt
+ KORREKTUR_MINDESTENS = 0.3  # ein Absatz darf beim Richtigstellen nicht auf weniger als 30 % schrumpfen
++KORREKTUR_FREI_HOECHSTENS = 5  # so viele Absätze darf ein Hinweistext ohne Absatzangabe höchstens ändern
+ _META = re.compile(r"\b(?:Hinweis|Spielleitung|Spielleiter|game master|hint)\b", re.I)
+ 
+ 
+-def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehlt: str) -> tuple[dict[int, str], list[dict]]:
+-    """Antwort des Modells prüfen, ohne Modell: Nur Absätze mit Hinweis ändern sich, bei „Was fehlt“ höchstens ein
+-    weiterer. Ein Absatz darf nicht ausgehöhlt werden, ein ergänzter nicht kürzer, und kein Hinweis darf als Wortlaut
+-    („laut Hinweis …“) ins Kapitel. Liefert ({Index: neuer Text}, [verworfen mit Grund])."""
++def hinweis_saetze(frei: str) -> int:
++    """Wie viele Hinweise stecken in einem freien Text? Ein Satz bzw. eine Zeile je Hinweis."""
++    return len([x for x in re.split(r"(?<=[.!?])\s+|\n+", frei or "") if len(x.split()) >= 2])
++
++
++def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], frei: str) -> tuple[dict[int, str], list[dict]]:
++    """Antwort des Modells prüfen, ohne Modell: Absätze mit Hinweis dürfen sich ändern; ein Hinweistext ohne
++    Absatzangabe (0.4.70, ein Feld wie in der App geplant) höchstens so viele weitere, wie er Sätze hat (bis
++    KORREKTUR_FREI_HOECHSTENS). Ein Absatz darf nicht ausgehöhlt werden, und kein Hinweis darf als Wortlaut („laut
++    Hinweis …“) ins Kapitel. Liefert ({Index: neuer Text}, [verworfen mit Grund])."""
+     neu: dict[int, str] = {}
+     verworfen: list[dict] = []
+-    fehlt_ziel: int | None = None
++    frei_rest = min(max(hinweis_saetze(frei), 1), KORREKTUR_FREI_HOECHSTENS) if frei.strip() else 0
+     for a in d.get("absaetze") or d.get("paragraphs") or []:
+         if not isinstance(a, dict):
+@@ -804,13 +812,8 @@ def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehl
+         if not (0 <= i < len(teile)) or not t or i in neu or t == teile[i]:
+             continue
+-        if i not in hinweise:
+-            if not fehlt or fehlt_ziel is not None:
+-                verworfen.append({"absatz": i + 1, "grund": "ohne Hinweis geändert"})
+-                continue
+-            if len(t) < len(teile[i]):
+-                verworfen.append({"absatz": i + 1, "grund": "beim Ergänzen gekürzt"})
+-                continue
+-            fehlt_ziel = i
+-        elif len(t) < len(teile[i]) * KORREKTUR_MINDESTENS:
++        if i not in hinweise and frei_rest <= 0:
++            verworfen.append({"absatz": i + 1, "grund": "ohne Hinweis geändert"})
++            continue
++        if len(t) < len(teile[i]) * KORREKTUR_MINDESTENS:
+             verworfen.append({"absatz": i + 1, "grund": "zu stark gekürzt"})
+             continue
+@@ -818,4 +821,6 @@ def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], fehl
+             verworfen.append({"absatz": i + 1, "grund": "Hinweis abgeschrieben"})
+             continue
++        if i not in hinweise:
++            frei_rest -= 1
+         neu[i] = t
+     return neu, verworfen
+@@ -1749,5 +1754,5 @@ class Ablauf:
+         return neu
+ 
+-    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], fehlt: str = "", notizen: str = ""
++    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], frei: str = "", notizen: str = ""
+                     ) -> tuple[str, dict]:
+         """0.4.69: Ein Durchgang „Korrektur per Hinweis“. hinweise: {Absatz-Index (0-basiert): Text der SL}. Alle
+@@ -1757,11 +1762,12 @@ class Ablauf:
+         teile = absaetze(text)
+         hinweise = {i: h.strip() for i, h in hinweise.items() if 0 <= i < len(teile) and h.strip()}
+-        fehlt = fehlt.strip()
+-        bericht = {"hinweise": len(hinweise) + bool(fehlt), "geaendert": [], "verworfen": [], "ohne_aenderung": []}
+-        if not hinweise and not fehlt:
++        frei = frei.strip()
++        bericht = {"anzahl": len(hinweise) + (max(hinweis_saetze(frei), 1) if frei else 0), "geaendert": [],
++                   "verworfen": [], "ohne_aenderung": []}
++        if not hinweise and not frei:
+             return text, bericht
+         liste = [f"- Absatz {i + 1}: {h}" for i, h in sorted(hinweise.items())]
+-        if fehlt:
+-            liste.append(f"- Was fehlt: {fehlt}")
++        if frei:
++            liste.append(f"- Ohne Absatzangabe: {frei}")
+         grund = (f"Szenennotizen (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
+                  f"{notizen[:KORREKTUR_NOTIZEN_ZEICHEN]}\n\n") if notizen.strip() else ""
+@@ -1771,5 +1777,5 @@ class Ablauf:
+         self._schritt("revision")
+         d = self.zaehler.aufruf(self.klient, SYSTEM_KORREKTUR.replace("{sprache}", _sprache(ein)), nutzer)
+-        neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, fehlt)
++        neu, bericht["verworfen"] = korrektur_anwenden(d, teile, hinweise, frei)
+         geschuetzt = [e["name"] for e in ein.get("bibel") or []]
+         for i, t in list(neu.items()):
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 5e5c3cc..f3a1867 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -54,7 +54,8 @@ EN: dict[str, str] = {
+     "Korrekturdurchgang": "Correction pass",
+     "Die Seite lädt alle 10 Sekunden neu.": "The page reloads every 10 seconds.",
+-    "Korrektur per Hinweis (Messung): Schreib unter einen Absatz in eigenen Worten, was nicht stimmt, und unten, was fehlt. Nur diese Absätze werden neu geschrieben, alle anderen bleiben, wie sie sind. Jeder Durchgang kostet wenige Cent.": "Correction by note (measurement): below a paragraph, write in your own words what is wrong, and at the bottom what is missing. Only these paragraphs are rewritten, all others stay as they are. Each pass costs a few cents.",
+-    "Absatz {n}: Stimmt hier etwas nicht?": "Paragraph {n}: is something wrong here?",
+-    "Was fehlt im Kapitel?": "What is missing from the chapter?",
++    "Stimmt etwas nicht oder fehlt etwas?": "Is something wrong or missing?",
++    "In eigenen Worten, ein Satz je Sache. Nur die betroffenen Absätze werden neu geschrieben, alle anderen bleiben, wie sie sind. Jeder Durchgang kostet wenige Cent.": "In your own words, one sentence per thing. Only the affected paragraphs are rewritten, all others stay as they are. Each pass costs a few cents.",
++    "Hinweise je Absatz (optional)": "Notes per paragraph (optional)",
++    "Ohne Absatzangabe": "Without paragraph",
+     "Korrigieren lassen": "Have it corrected",
+     "Korrekturdurchgänge": "Correction passes",
+@@ -66,5 +67,4 @@ EN: dict[str, str] = {
+     "Verworfen (Absatz {n}): {grund}": "Discarded (paragraph {n}): {grund}",
+     "ohne Hinweis geändert": "changed without a note",
+-    "beim Ergänzen gekürzt": "shortened while adding",
+     "zu stark gekürzt": "cut too much",
+     "Hinweis abgeschrieben": "note copied verbatim",
+@@ -72,5 +72,4 @@ EN: dict[str, str] = {
+     "Hinweis nicht umgesetzt: Absatz {liste}": "Note not applied: paragraph {liste}",
+     "Hinweise und Vorher/Nachher": "Notes and before/after",
+-    "Was fehlt": "What is missing",
+     "Absatz {n} vorher": "Paragraph {n} before",
+     "Absatz {n} nachher": "Paragraph {n} after",
+diff --git a/app/verwaltung/templates/probelauf.html b/app/verwaltung/templates/probelauf.html
+index 31acbaf..92ce0b8 100644
+--- a/app/verwaltung/templates/probelauf.html
++++ b/app/verwaltung/templates/probelauf.html
+@@ -30,14 +30,16 @@
+     {% for absatz in aktuell.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
+   {% else %}
+-  <p class="hilfe">{{ _("Korrektur per Hinweis (Messung): Schreib unter einen Absatz in eigenen Worten, was nicht stimmt, und unten, was fehlt. Nur diese Absätze werden neu geschrieben, alle anderen bleiben, wie sie sind. Jeder Durchgang kostet wenige Cent.") }}</p>
++  {% for absatz in aktuell.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
+   <form method="post" action="/verwaltung/probelauf/{{ p.id }}/korrektur">
+     <input type="hidden" name="csrf" value="{{ csrf }}">
+-    {% for absatz in aktuell.split("\n\n") %}
+-      <p>{{ absatz }}</p>
+-      <label class="leise" for="h{{ loop.index0 }}">{{ _("Absatz {n}: Stimmt hier etwas nicht?", n=loop.index) }}</label>
+-      <textarea id="h{{ loop.index0 }}" name="h{{ loop.index0 }}" rows="1" maxlength="1000"></textarea>
+-    {% endfor %}
+-    <label for="fehlt">{{ _("Was fehlt im Kapitel?") }}</label>
+-    <textarea id="fehlt" name="fehlt" rows="2" maxlength="1000"></textarea>
++    <label for="fehlt">{{ _("Stimmt etwas nicht oder fehlt etwas?") }}</label>
++    <p class="hilfe">{{ _("In eigenen Worten, ein Satz je Sache. Nur die betroffenen Absätze werden neu geschrieben, alle anderen bleiben, wie sie sind. Jeder Durchgang kostet wenige Cent.") }}</p>
++    <textarea id="fehlt" name="fehlt" rows="4" maxlength="1000"></textarea>
++    <details><summary>{{ _("Hinweise je Absatz (optional)") }}</summary>
++      {% for absatz in aktuell.split("\n\n") %}
++        <label class="leise" for="h{{ loop.index0 }}">{{ _("Absatz {n}", n=loop.index) }}: „{{ absatz[:60] }}…“</label>
++        <textarea id="h{{ loop.index0 }}" name="h{{ loop.index0 }}" rows="1" maxlength="1000"></textarea>
++      {% endfor %}
++    </details>
+     <p><button class="tw-btn" type="submit">{{ _("Korrigieren lassen") }}</button></p>
+   </form>
+@@ -50,10 +52,10 @@
+   {% for k in p.korrekturen|reverse %}
+     <h3>{{ _("Durchgang {n}", n=k.nr) }}</h3>
+-    <p>{{ _("{n} Hinweise", n=k.hinweise|length + (1 if k.fehlt else 0)) }} · {{ _("geändert: Absatz {liste}", liste=k.geaendert|join(", ")) if k.geaendert else _("nichts geändert") }} · {{ _("{a} → {b} Wörter", a=k.woerter_vorher, b=k.woerter_nachher) }} · {{ _("etwa {cent} Cent", cent=k.kosten_cent) }}</p>
++    <p>{{ _("{n} Hinweise", n=k.anzahl if k.anzahl is defined else k.hinweise|length + (1 if k.fehlt else 0)) }} · {{ _("geändert: Absatz {liste}", liste=k.geaendert|join(", ")) if k.geaendert else _("nichts geändert") }} · {{ _("{a} → {b} Wörter", a=k.woerter_vorher, b=k.woerter_nachher) }} · {{ _("etwa {cent} Cent", cent=k.kosten_cent) }}</p>
+     {% if k.fehler %}<p class="hilfe">{{ _("Hinweis") }}: {{ k.fehler }}</p>{% endif %}
+     {% for v in k.verworfen %}<p class="hilfe">{{ _("Verworfen (Absatz {n}): {grund}", n=v.absatz, grund=_(v.grund)) }}</p>{% endfor %}
+     {% if k.ohne_aenderung %}<p class="hilfe">{{ _("Hinweis nicht umgesetzt: Absatz {liste}", liste=k.ohne_aenderung|join(", ")) }}</p>{% endif %}
+     <details><summary>{{ _("Hinweise und Vorher/Nachher") }}</summary>
+-      <ul>{% for h in k.hinweise %}<li>{{ _("Absatz {n}", n=h.absatz) }}: {{ h.text }}</li>{% endfor %}{% if k.fehlt %}<li>{{ _("Was fehlt") }}: {{ k.fehlt }}</li>{% endif %}</ul>
++      <ul>{% for h in k.hinweise %}<li>{{ _("Absatz {n}", n=h.absatz) }}: {{ h.text }}</li>{% endfor %}{% if k.fehlt %}<li>{{ _("Ohne Absatzangabe") }}: {{ k.fehlt }}</li>{% endif %}</ul>
+       {% set alt = k.vorher.split("\n\n") %}{% set neu = (k.nachher or k.vorher).split("\n\n") %}
+       {% for n in k.geaendert %}<p><strong>{{ _("Absatz {n} vorher", n=n) }}:</strong> {{ alt[n - 1] }}</p><p><strong>{{ _("Absatz {n} nachher", n=n) }}:</strong> {{ neu[n - 1] }}</p>{% endfor %}
+diff --git a/deploy/aktualisieren.sh b/deploy/aktualisieren.sh
+index 79c3a7e..2fde283 100755
+--- a/deploy/aktualisieren.sh
++++ b/deploy/aktualisieren.sh
+@@ -140,5 +140,11 @@ version_setzen "$NEU"
+ # KI-Paket aus dem Zwischenspeicher kommt, solange sich engine-requirements.txt nicht ändert
+ # Fertige Bilder (Caddy, Ollama) bei der Gelegenheit auch auffrischen – schlägt das fehl, läuft das alte weiter
+-if docker compose build --pull server >"$BAULOG" 2>&1 && docker compose build >>"$BAULOG" 2>&1 \
++# Ist Docker Hub gerade nicht erreichbar oder begrenzt (429 Too Many Requests), mit dem vorhandenen Grundbild bauen
++grundbild_bauen() {
++  docker compose build --pull server >"$BAULOG" 2>&1 && return 0
++  echo "--- Grundbild nicht abrufbar, baue mit dem vorhandenen ---" >>"$BAULOG"
++  docker compose build server >>"$BAULOG" 2>&1
++}
++if grundbild_bauen && docker compose build >>"$BAULOG" 2>&1 \
+    && { docker compose pull --ignore-buildable --quiet >>"$BAULOG" 2>&1 || true; } \
+    && docker compose up -d && gesund; then
+diff --git a/pyproject.toml b/pyproject.toml
+index be2bdb1..de064a8 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.69"
++version = "0.4.70"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 54e06d3..ed76f4c 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.69"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.70"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index a6c8f1a..3550c00 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.69"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.70"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_korrektur.py b/tests/test_korrektur.py
+index 3f30071..06df4eb 100644
+--- a/tests/test_korrektur.py
++++ b/tests/test_korrektur.py
+@@ -27,11 +27,12 @@ def test_nur_absaetze_mit_hinweis_aendern_sich():
+ 
+ 
+-def test_was_fehlt_genau_ein_absatz_und_nicht_kuerzer():
++def test_freier_hinweis_aendert_hoechstens_so_viele_absaetze_wie_er_saetze_hat():
+     d = {"absaetze": [{"nr": 2, "text": TEILE[1] + " Unterwegs erzählte sie vom Leuchtturm."},
+                       {"nr": 3, "text": TEILE[2] + " Dort schliefen sie."}]}
+     neu, verworfen = sm.korrektur_anwenden(d, TEILE, {}, "Hanna erzählt vom Leuchtturm.")
+-    assert list(neu) == [1] and verworfen[0]["absatz"] == 3
+-    neu, verworfen = sm.korrektur_anwenden({"absaetze": [{"nr": 2, "text": "Hanna wartete."}]}, TEILE, {}, "x")
+-    assert not neu and verworfen == [{"absatz": 2, "grund": "beim Ergänzen gekürzt"}]
++    assert list(neu) == [1] and verworfen == [{"absatz": 3, "grund": "ohne Hinweis geändert"}]
++    neu, verworfen = sm.korrektur_anwenden(d, TEILE, {}, "Hanna erzählt vom Leuchtturm. Im Kloster schlafen sie.")
++    assert list(neu) == [1, 2] and not verworfen
++    assert sm.hinweis_saetze("Das Boot war ein Floß. Mara überlebt.\nEs fehlt die Ankunft") == 3
+ 
+ 
+@@ -64,5 +65,5 @@ def test_ablauf_korrigieren_laesst_den_rest_zeichengleich():
+     teile = text.split("\n\n")
+     assert teile[0] == TEILE[0] and teile[2] == TEILE[2] and "Floß" in teile[1]
+-    assert bericht == {"hinweise": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
++    assert bericht == {"anzahl": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
+     assert "Absatz 2: Es war ein Floß" in anbieter.nutzer and "bei Widerspruch gilt der Hinweis" in anbieter.nutzer
+ 
+@@ -86,5 +87,5 @@ def test_korrektur_im_probelauf(client, world, dbs, tmp_path, admin):  # noqa: F
+         time.sleep(0.05)
+     seite = client.get(f"/verwaltung/probelauf/{pid}").text
+-    assert 'name="h0"' in seite and 'name="fehlt"' in seite and "Korrigieren lassen" in seite
++    assert 'name="h0"' in seite and 'name="fehlt"' in seite and "Stimmt etwas nicht oder fehlt etwas?" in seite
+     leer = client.post(f"/verwaltung/probelauf/{pid}/korrektur", data={"csrf": admin, "h0": "  "})
+     assert "Bitte mindestens einen Hinweis eintragen." in leer.text
+@@ -110,2 +111,31 @@ def test_kuerzen_nennt_untergrenze():
+     assert "{unten} bis {ziel} Wörter (nicht weniger)" in sm.SYSTEM_KUERZEN
+     assert sm.untergrenze({"transkript": [{"start": 9000}]}, True) == 900
++
++
++def test_bericht_ueberschreibt_die_hinweise_nicht(client, world, dbs, tmp_path, admin, monkeypatch):  # noqa: F811
++    """Mit Cloud-API: Der Durchgang speichert die Hinweise als Liste und die Anzahl getrennt (die Seite zeigt beides)."""
++    from app import kapitelprobe as probelauf
++    from app.kapitelprobe import Probe
++
++    class Klient:
++        modell = "m"
++
++        def kosten_cent(self, *_a):
++            return 0
++
++    def korrigieren(self, ein, text, hinweise, frei="", notizen=""):
++        teile = text.split("\n\n")
++        teile[0] += " Richtig."
++        return "\n\n".join(teile), {"anzahl": 2, "geaendert": [1], "verworfen": [], "ohne_aenderung": []}
++
++    monkeypatch.setattr(sm.Ablauf, "korrigieren", korrigieren)
++    monkeypatch.setattr("app.zusammenfassung.api_klient", lambda _k: Klient())
++    p = Probe(id="11111111-1111-1111-1111-111111111111", session_id="s", kampagne="K", kapitel=1, quelle="Runde",
++              zeilen=1, modell="m", gestartet="2026-10-09T00:00:00Z", zustand="fertig", text=TEXT, campaign_id="c",
++              besitzer="b")
++    probelauf._speichern(p)
++    k = type("K", (), {"art": "api"})()
++    probelauf._korrigieren(p, k, {}, {0: "Stimmt nicht."}, "Es fehlt etwas.")
++    runde = probelauf.lesen(p.id).korrekturen[0]
++    assert runde["hinweise"] == [{"absatz": 1, "text": "Stimmt nicht."}] and runde["anzahl"] == 2
++    assert probelauf.aktueller_text(probelauf.lesen(p.id)).startswith(TEILE[0] + " Richtig.")
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 5f74a5e..ae037e6 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.69"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.70"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index c9e1f69..147d821 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.69"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.70"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index aac3a3c..2a1f72c 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.69"
++version = "0.4.70"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
