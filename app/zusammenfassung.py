@@ -311,9 +311,11 @@ def zusammenfasser(db: Session):
             klient = api_klient(k)
             basis = eingabe_bauen(db_, s)
             # 0.4.62: keine Nachbesserung über die Cloud – sie hat in der Messung nur Kosten gebracht und das Kapitel
-            # verschlechtert; die Prüfung bleibt als Hinweis für die Spielleitung
+            # verschlechtert; die Prüfung bleibt als Hinweis für die Spielleitung. 0.4.72: Standard ist „erst Notizen je
+            # Abschnitt, dann das Kapitel“ (in der Messung auf zwei Systemen deutlich besser); Rückweg in der Verwaltung
             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
-                            vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False)
+                            vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
+                            notizen_zuerst=k.weg == "notizen")
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"

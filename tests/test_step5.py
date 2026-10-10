@@ -134,7 +134,8 @@ def test_api_spoilerschutz_und_ergebnis(client, world, dbs, tmp_path, api):
         {"entryType": "npc", "action": "update", "targetEntryId": "gibtsnicht", "title": "Fremd", "detail": "x"},
         {"entryType": "item", "action": "reveal", "targetEntryId": oeff["id"], "title": "Schon öffentlich"},
     ]
-    einstellen(dbs, art="api", api_key="sk-test-schluessel-1234")
+    einstellen(dbs, art="api", api_key="sk-test-schluessel-1234",
+               weg="abschrift")  # Aufrufreihenfolge des früheren Wegs; „notizen“: test_kapitelweg.py
     assert zusammenfassen(dbs)
     assert status(client, w["gm"], s["id"])["state"] == "awaiting_review"
 

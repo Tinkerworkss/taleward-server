@@ -145,6 +145,9 @@ def extern_konfig(db: Session) -> ExternKonfig:
 LLM_ARTEN = ("aus", "attrappe", "lokal", "api")
 
 
+KAPITEL_WEGE = ("notizen", "abschrift")  # 0.4.72: Weg zum Kapitel über die Cloud-API, „notizen“ ist Standard
+
+
 @dataclass
 class LlmKonfig:
     art: str  # aus | attrappe | lokal | api
@@ -157,6 +160,7 @@ class LlmKonfig:
     cent_ein: float | None  # Preis je 1 Mio. Tokens; None = aus der Preistabelle
     cent_aus: float | None
     api_modell_vorschlaege: str = ""  # 0.4.61: eigenes Modell für die Vorschläge („“ = wie api_modell)
+    weg: str = "notizen"  # 0.4.72: Cloud-API „notizen“ (erst Notizen je Abschnitt) oder „abschrift“ (früherer Weg)
 
     @property
     def ist_mistral(self) -> bool:
@@ -211,4 +215,5 @@ def llm_konfig(db: Session) -> LlmKonfig:
                      api_key=key, eigener_key=bool(eigener),
                      lokal_modell=wert("llm.lokal_modell", s.llm_local_model) or s.llm_local_model,
                      lokal_kontext=kontext, cent_ein=preis("llm.cent_ein"), cent_aus=preis("llm.cent_aus"),
-                     api_modell_vorschlaege=(wert("llm.api_modell_vorschlaege", "") or "").strip())
+                     api_modell_vorschlaege=(wert("llm.api_modell_vorschlaege", "") or "").strip(),
+                     weg=wert("llm.weg", "notizen") if wert("llm.weg", "notizen") in KAPITEL_WEGE else "notizen")

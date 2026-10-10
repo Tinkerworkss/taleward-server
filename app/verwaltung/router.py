@@ -779,7 +779,7 @@ def _runden_mit_abschrift(db: Session, user: User) -> list[dict]:
 # ---------- Probelauf der Zusammenfassung ----------
 @router.post("/probelauf", dependencies=[Depends(csrf_pruefen)])
 async def probelauf_starten(request: Request, session: str = Form(""), abschrift: UploadFile | None = File(None),
-                            weg: str = Form("abschrift"), user: User = Depends(verwalter),
+                            weg: str = Form("notizen"), user: User = Depends(verwalter),
                             db: Session = Depends(get_db)):
     """Kapitel und Vorschläge für eine vorhandene Abschrift erzeugen, ohne die Runde zu verändern."""
     from app import kapitelprobe as probelauf
@@ -896,11 +896,11 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
-                              ausserhalb_eu: str = Form(""),
+                              ausserhalb_eu: str = Form(""), weg: str = Form(""),
                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
     """Wer Recap und Vorschläge schreibt. Überschreibt die .env; der Schlüssel wird nie angezeigt."""
     from app import cloudanbieter
-    from app.einstellungen import LLM_ARTEN, llm_konfig
+    from app.einstellungen import KAPITEL_WEGE, LLM_ARTEN, llm_konfig
 
     _ = tr(request)
 
@@ -957,6 +957,8 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     meta_schreiben(db, "llm.lokal_kontext", str(kontext))
     meta_schreiben(db, "llm.cent_ein", preise[0])
     meta_schreiben(db, "llm.cent_aus", preise[1])
+    if weg in KAPITEL_WEGE:  # ältere offene Seiten ohne das Feld ändern den Weg nicht
+        meta_schreiben(db, "llm.weg", weg)
     if gegenpruefen_feld:  # nur, wenn das Formular den Schalter enthält (ältere offene Seiten ändern ihn nicht)
         from app.zusammenfassung import K_GEGENPRUEFEN
 

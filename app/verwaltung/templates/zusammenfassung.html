@@ -75,6 +75,10 @@
         <span class="zeile"><input type="text" name="cent_ein" value="{{ '%g'|format(k.cent_ein) if k.cent_ein is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[0]) if llm.preis else '' }}">
         <input type="text" name="cent_aus" value="{{ '%g'|format(k.cent_aus) if k.cent_aus is not none else '' }}" inputmode="decimal" size="6" placeholder="{{ '%g'|format(llm.preis[1]) if llm.preis else '' }}"></span>
         <span class="hilfe">{{ _("Nur für die Verbrauchsanzeige. Leer = bekannte Preise der Mistral-Modelle; bei anderen Anbietern bitte von deren Preisseite übernehmen.") }}</span></label>
+      <fieldset><legend>{{ _("Weg zum Kapitel") }}</legend>
+        <label class="haken"><input type="radio" name="weg" value="notizen"{% if k.weg == "notizen" %} checked{% endif %}> {{ _("Erst Notizen je Abschnitt, dann das Kapitel (empfohlen)") }}</label>
+        <label class="haken"><input type="radio" name="weg" value="abschrift"{% if k.weg == "abschrift" %} checked{% endif %}> {{ _("Ganze Abschrift auf einmal (früherer Weg)") }}</label>
+        <span class="hilfe">{{ _("Der empfohlene Weg liest die Runde Abschnitt für Abschnitt, führt mit, wer wo ist und was sich geändert hat, und schreibt erst dann das Kapitel. In Testrunden fehlte dabei deutlich weniger und es gab weniger falsche Angaben. Er dauert etwas länger und kostet über die Cloud etwa 30 Cent je Kapitel. Gilt für die Cloud-API; ein lokales Modell arbeitet wie bisher.") }}</span></fieldset>
       <label class="haken" id="anbieter-bestaetigung"><input type="checkbox" name="ausserhalb_eu" value="1"> {{ _("Ich weiß, dass dieser Anbieter außerhalb der EU verarbeitet oder hier nicht beschrieben ist, und schließe den Vertrag zur Auftragsverarbeitung selbst ab.") }}</label>
     </fieldset>
 
@@ -129,9 +133,9 @@
     <label>{{ _("Abschrift aus Datei (optional)") }} <input type="file" name="abschrift" accept=".txt,text/plain">
       <span class="hilfe">{{ _("Ersetzt die Abschrift der Runde, Mitglieder und Bibel bleiben. Zeilen wie „[1:02:03] Name: Text“ – zum Beispiel die transkript.txt eines Modellvergleichs oder eine selbst geschriebene Abschrift.") }}</span></label>
     <fieldset><legend>{{ _("Weg") }}</legend>
-      <label class="haken"><input type="radio" name="weg" value="abschrift" checked> {{ _("Ganze Abschrift (wie bei echten Runden)") }}</label>
-      <label class="haken"><input type="radio" name="weg" value="notizen"> {{ _("Erst Notizen je Abschnitt, dann das Kapitel (zum Vergleich)") }}</label>
-      <span class="hilfe">{{ _("Der zweite Weg teilt die Abschrift in Abschnitte, führt einen laufenden Stand mit und gibt langen Runden mehr Platz. Notizen und Stand liegen danach in der ZIP-Datei. Echte Runden nutzen ihn noch nicht.") }}</span></fieldset>
+      <label class="haken"><input type="radio" name="weg" value="notizen" checked> {{ _("Erst Notizen je Abschnitt, dann das Kapitel (Standard)") }}</label>
+      <label class="haken"><input type="radio" name="weg" value="abschrift"> {{ _("Ganze Abschrift auf einmal (früherer Weg, zum Vergleich)") }}</label>
+      <span class="hilfe">{{ _("Notizen und Stand liegen nach dem ersten Weg in der ZIP-Datei.") }}</span></fieldset>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Probelauf starten") }}</button></div>
   </form>
   {% else %}<p class="leise">{{ _("Noch keine Runde mit Abschrift in deinen Kampagnen.") }}</p>{% endif %}
