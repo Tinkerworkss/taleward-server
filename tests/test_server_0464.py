@@ -55,9 +55,9 @@ def test_schnittstelle_0414(client):
     from app.routers.auth import API_VERSION
     from app.verwaltung.router import MELDUNGEN
 
-    assert API_VERSION == "0.4.14"
+    assert API_VERSION == "0.4.15"
     vertrag = Path(__file__).resolve().parents[1] / "contract" / "session-chronik-api.yaml"
-    assert "version: 0.4.14" in vertrag.read_text(encoding="utf-8")
+    assert "version: 0.4.15" in vertrag.read_text(encoding="utf-8")
     assert "„Kampagne verwalten“ → „Cloud-Dienste“" in MELDUNGEN["probe_cloud"]
 
 

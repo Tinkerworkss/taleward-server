@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Taleward API
-  version: 0.4.14
+  version: 0.4.15
   description: |
     Schnittstelle zwischen der Taleward-App (Android, Web) und dem Taleward-Server.
 
@@ -179,6 +179,9 @@ info:
     nur aus Buchstaben, Ziffern, `-` und `_` (höchstens 64 Zeichen); die App setzt keine anderen in Pfade ein.
     GET /documents/{id}/file liefert nur die dort genannten Content-Types; die App öffnet nur PDF und Text selbst,
     alles andere bietet sie zum Speichern an.
+    Änderungen in 0.4.15 (Kapitel per Hinweis korrigieren): POST /sessions/{id}/recap/revision – die SL schreibt in
+    eigenen Worten, was nicht stimmt oder fehlt; der Server schreibt nur die betroffenen Absätze neu und legt einen
+    Entwurf vor (`Recap.revision`, nur SL). POST …/recap/revision/decision übernimmt oder verwirft ihn als Ganzes.
 
 servers:
   - url: https://taleward.example.org/api/v1
@@ -1645,6 +1648,7 @@ paths:
         Anwesenheit, Kommentare. Die Session geht nach `summarizing`, danach wieder `awaiting_review`.
         Kostet wie eine neue Zusammenfassung (Usage) und folgt der Cloud-Freigabe der Kampagne.
         Andere Zustände → 409 `wrong_state`; Abschrift fehlt → 409 `transcript_missing`.
+        Ab 0.4.15 verwirft es auch einen offenen Korrektur-Entwurf (`Recap.revision`).
         Ab 0.4.14: höchstens 5 Zusammenfassungen je Kapitel in 24 Stunden (gezählt werden alle Zusammenfassungs-Aufträge
         des Kapitels, auch der erste, und solche über PUT …/speakers) → sonst 409 `resummarize_limit` mit `message`
         („Dieses Kapitel wurde heute schon fünfmal neu geschrieben. Morgen geht es wieder.“).
@@ -1940,6 +1944,9 @@ paths:
     put:
       tags: [Chronik]
       summary: Recap vor der Veröffentlichung bearbeiten (nur SL)
+      description: |
+        Ab 0.4.15: Ein geänderter `text` verwirft einen offenen Korrektur-Entwurf; läuft gerade ein Korrektur-Auftrag,
+        kommt 409 `revision_running`.
       requestBody:
         required: true
         content:
@@ -1957,6 +1964,85 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Recap" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/recap/revision:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chronik]
+      summary: Kapitel per Hinweis korrigieren lassen (nur SL, ab 0.4.15)
+      description: |
+        Nur im Zustand `awaiting_review`. Die SL schreibt in eigenen Worten, was im Recap nicht stimmt oder fehlt
+        (`note`, ein freier Text; jeder Satz gilt als eigener Hinweis). Der Server ordnet die Hinweise selbst den
+        Absätzen zu und schreibt **nur** diese Absätze neu; alle anderen bleiben zeichengleich. Ein neu geschriebener
+        Absatz bleibt ein Absatz (keine Leerzeile darin), die Zahl der Absätze ändert sich nie. Für Fehlendes ergänzt
+        der Server einen bestehenden Absatz, statt einen neuen einzufügen.
+        Grundlage für das Modell: Recap, Hinweise und die Szenennotizen bzw. Abschriftzeilen um die Zeit der
+        betroffenen Absätze. Die SL hat recht: Der Server widerspricht dem Hinweis nicht mit der Abschrift.
+        Ins Kapitel kommt nur, was die SL darin sehen will – der Hinweis ist eine Korrektur, kein Text zum Übernehmen.
+        Ergebnis ist ein Entwurf in `Recap.revision`; am Recap ändert sich erst mit POST …/revision/decision etwas.
+        Die App fragt GET …/recap ab, bis `revision.state` nicht mehr `running` ist.
+        `baseText` ist der Recap-Text, auf den sich die Hinweise beziehen; weicht er vom aktuellen ab → 409
+        `recap_changed`. Ein neuer Auftrag ersetzt einen offenen Entwurf (`ready` oder `failed`); läuft schon einer →
+        409 `revision_running`. Höchstens 10 Aufträge je Kapitel in 24 Stunden → 409 `revision_limit` mit `message`.
+        Kostet wie eine kleine Zusammenfassung (Usage), Cloud nur mit `allowCloudSummary` der Kampagne, sonst lokales
+        Modell. Hinweise und Entwurf sind nur für die SL: nie für Spieler, nie in Vorschlägen oder anderen Kapiteln,
+        nie im Umzug (Export). Andere Zustände → 409 `wrong_state`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note, baseText]
+              properties:
+                note: { type: string, minLength: 1, maxLength: 2000, description: "Was nicht stimmt oder fehlt, in eigenen Worten" }
+                baseText: { type: string, description: "Recap.text, wie die SL ihn gesehen hat" }
+      responses:
+        "202":
+          description: Auftrag angenommen; `revision.state` ist `running`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recap" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /sessions/{sessionId}/recap/revision/decision:
+    parameters: [{ $ref: "#/components/parameters/sessionId" }]
+    post:
+      tags: [Chronik]
+      summary: Korrektur-Entwurf übernehmen oder verwerfen (nur SL, ab 0.4.15)
+      description: |
+        Alles oder nichts. `accept: true` nur bei `revision.state = ready`: Der Server ersetzt je Eintrag in `changes`
+        den Absatz `index` durch `after`; steht dort nicht mehr zeichengleich `before` → 409 `recap_changed` und nichts
+        wird geändert. Übernommene Absätze stehen im Prüfteil danach als `unchecked` (ohne `note` und `evidence`), keine
+        automatische Neuprüfung. `accept: false` verwirft einen Entwurf im Zustand `ready` oder `failed`. Danach ist
+        `revision` weg (null); der Server muss die Hinweise nicht aufbewahren. Ohne offenen Entwurf → 409 `no_revision`,
+        während er läuft → 409 `revision_running`.
+        Außerdem verwerfen einen offenen Entwurf: PUT …/recap mit geändertem `text` (Bearbeiten von Hand) und
+        POST …/resummarize. Während ein Auftrag läuft, lehnt PUT …/recap eine Änderung am `text` mit 409
+        `revision_running` ab.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accept]
+              properties:
+                accept: { type: boolean }
+      responses:
+        "200":
+          description: Recap nach der Entscheidung
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recap" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -3500,6 +3586,44 @@ components:
         openThreads: { type: array, items: { type: string } }
         publishedAt: { type: [string, "null"], format: date-time }
         review: { $ref: "#/components/schemas/RecapReview" }
+        revision:
+          description: Offener Korrektur-Entwurf (ab 0.4.15, nur SL; für Spieler weggelassen). Ohne Entwurf null.
+          oneOf:
+            - { $ref: "#/components/schemas/RecapRevision" }
+            - { type: "null" }
+
+    RecapRevision:
+      type: object
+      description: |
+        Entwurf aus POST /sessions/{id}/recap/revision (ab 0.4.15, nur SL). Die App zeigt das Kapitel mit den
+        Änderungen im Text (neu unterstrichen, gestrichen durchgestrichen) und darunter „Übernehmen“ / „Verwerfen“.
+      required: [state, changes, notes]
+      properties:
+        state: { type: string, enum: [running, ready, failed] }
+        message: { type: [string, "null"], description: "Bei failed: was schiefging, für Menschen geschrieben" }
+        createdAt: { type: string, format: date-time }
+        changes:
+          type: array
+          description: Je geändertem Absatz alter und neuer Text (leer, solange running, oder wenn nichts geändert wurde)
+          items:
+            type: object
+            required: [index, before, after]
+            properties:
+              index: { type: integer, minimum: 0, description: "0-basiert, Absatz in Recap.text" }
+              before: { type: string }
+              after: { type: string, description: "Ein Absatz, ohne Leerzeile" }
+        notes:
+          type: array
+          description: |
+            Je Hinweissatz der SL, ob dazu etwas geändert wurde. Bei applied false zeigt die App den Satz mit der Bitte,
+            ihn eindeutiger zu schreiben (wer tat was).
+          items:
+            type: object
+            required: [text, applied, indexes]
+            properties:
+              text: { type: string }
+              applied: { type: boolean }
+              indexes: { type: array, items: { type: integer }, description: "Geänderte Absätze zu diesem Hinweis" }
 
     RecapReview:
       type: object
@@ -3536,7 +3660,13 @@ components:
                   supported = alle Aussagen belegt; partial = teilweise; unsupported = kein Beleg; contradicted =
                   Transkript sagt etwas anderes; off_game = vermutlich Witz oder außerhalb des Spiels; unchecked =
                   übersprungen (z. B. Zeitgrenze).
-              note: { type: [string, "null"], description: "Kurze Begründung des Prüfers für die SL" }
+              note:
+                type: [string, "null"]
+                description: |
+                  Begründung des Prüfers für die SL: ein Satz, für Menschen geschrieben, ohne Zitate oder Zeitangaben
+                  (die stehen in evidence). Die App zeigt sie bei contradicted, unsupported und off_game sowie bei
+                  partial mit note (z. B. „Nicht erzählt: …“) und zählt diese Absätze als „Stellen zum Ansehen“;
+                  partial ohne note und supported bleiben unmarkiert. Belege zeigt die App höchstens zwei je Absatz.
               evidence:
                 type: array
                 description: Belegstellen im Transkript (echte Zeitpunkte)

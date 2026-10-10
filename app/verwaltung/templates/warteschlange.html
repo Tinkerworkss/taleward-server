@@ -10,7 +10,7 @@
     {% for z in zeilen %}
       <tr>
         <td data-label="{{ _('Session') }}">{% if z.c %}<strong>{{ z.c.title }}</strong><br><span class="leise">{% if z.s %}{{ _("Kapitel {n}", n=z.s.number) }}{% else %}{{ z.dok.title }}{% endif %}</span>{% else %}<span class="leise">–</span>{% endif %}</td>
-        <td data-label="{{ _('Art') }}">{{ {"transcribe": _("Transkription"), "summarize": _("Zusammenfassung"), "voice_enroll": _("Stimmprofil"), "document": _("SL-Unterlage")}.get(z.j.type, z.j.type) }}{% if z.j.engine == "external" %} <span class="leise">({{ _("extern") }})</span>{% endif %}</td>
+        <td data-label="{{ _('Art') }}">{{ {"transcribe": _("Transkription"), "summarize": _("Zusammenfassung"), "voice_enroll": _("Stimmprofil"), "document": _("SL-Unterlage"), "revise": _("Korrektur")}.get(z.j.type, z.j.type) }}{% if z.j.engine == "external" %} <span class="leise">({{ _("extern") }})</span>{% endif %}</td>
         <td data-label="{{ _('Zustand') }}">
           {% if z.j.state == "done" %}<span class="marke-status marke-status--gut">{{ _("fertig") }}</span>
           {% elif z.haengt %}<span class="marke-status marke-status--warten">{{ _("Worker antwortet nicht") }}</span><br><span class="leise">{{ _("wird gleich neu eingereiht") }}</span>

@@ -2583,8 +2583,8 @@ class Ablauf:
         self.letzte_kuerzung.update(angenommen=True, grund="")
         return neu
 
-    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], frei: str = "", notizen: str = ""
-                    ) -> tuple[str, dict]:
+    def korrigieren(self, ein: dict, text: str, hinweise: dict[int, str], frei: str = "", notizen: str = "",
+                    grundlage: str = "Szenennotizen") -> tuple[str, dict]:
         """0.4.69: Ein Durchgang „Korrektur per Hinweis“. hinweise: {Absatz-Index (0-basiert): Text der SL}. Alle
         anderen Absätze bleiben zeichengleich (sie werden nie neu zusammengesetzt). Liefert (Text, Bericht)."""
         from app import artefakte
@@ -2599,7 +2599,7 @@ class Ablauf:
             return text, bericht
         liste = [f"- Absatz {i + 1}: {h}" for i, h in sorted(hinweise.items())]
         liste += [f"- H{n} (ohne Absatzangabe): {h}" for n, h in enumerate(frei_liste, 1)]
-        grund = (f"Szenennotizen (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
+        grund = (f"{grundlage} (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
                  f"{notizen[:KORREKTUR_NOTIZEN_ZEICHEN]}\n\n") if notizen.strip() else ""
         nutzer = (f"{_kopf(ein)}\n\n{grund}Kapitel, Absatz für Absatz:\n"
                   + "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile))

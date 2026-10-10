@@ -235,10 +235,10 @@ EN = {
     "Test": "Test",
     "Diese Testnachricht zeigt: Benachrichtigungen kommen an.": "This test message shows: notifications arrive.",
     "Transkription": "transcription", "Zusammenfassung": "summary", "Unterlage": "document",
-    "Stimmprofil": "voice profile", "älter als 48 Stunden": "older than 48 hours",
+    "Stimmprofil": "voice profile", "Korrektur": "correction", "älter als 48 Stunden": "older than 48 hours",
 }
 ARTEN = {"transcribe": "Transkription", "summarize": "Zusammenfassung", "document": "Unterlage",
-         "voice_enroll": "Stimmprofil"}
+         "voice_enroll": "Stimmprofil", "revise": "Korrektur"}
 
 
 def _t(k: Konfig, text: str) -> str:

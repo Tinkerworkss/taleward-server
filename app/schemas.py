@@ -504,6 +504,16 @@ class RecapOut(ApiModel):
     open_threads: list[str]
     published_at: datetime | None
     review: dict | None = None  # 0.4.6: Prüfteil, nur für die SL (für Spieler weggelassen)
+    revision: dict | None = None  # 0.4.15: Korrektur-Entwurf, nur für die SL (für Spieler weggelassen)
+
+
+class RevisionIn(ApiModel):
+    note: str = Field(max_length=100000)  # 0.4.15; Länge prüft der Server selbst (400 invalid_input mit Text)
+    base_text: str = Field(max_length=200000)
+
+
+class DecisionIn(ApiModel):
+    accept: bool
 
 
 class RecapIn(ApiModel):

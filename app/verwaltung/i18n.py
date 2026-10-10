@@ -388,6 +388,7 @@ EN: dict[str, str] = {
     "nur von Hand": "manual only",
     "Überschriften mit „## “, Aufzählungen mit „- “, Absätze durch Leerzeilen.": "Headings with “## ”, lists with “- ”, paragraphs separated by blank lines.",
     "SL-Unterlage": "GM document",
+    "Korrektur": "Correction",
     "Neue Konten": "New accounts",
     "Registrierung": "Registration",
     "Mit Einladungscode – wer einen Einladungslink hat, legt sein Konto selbst an": "With invite code – anyone with an invite link creates their own account",

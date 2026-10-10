@@ -383,13 +383,13 @@ class Worker(Base):
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    type: Mapped[str] = mapped_column(String(16))  # transcribe | summarize | document | voice_enroll
+    type: Mapped[str] = mapped_column(String(16))  # transcribe | summarize | document | voice_enroll | revise
     session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True, index=True)
     document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)  # voice_enroll
     state: Mapped[str] = mapped_column(String(16), default="queued", index=True)  # queued | leased | done | failed
-    required_capability: Mapped[str] = mapped_column(String(16))  # asr | llm | embed
+    required_capability: Mapped[str] = mapped_column(String(16))  # asr | llm | llm_revise | embed
     engine: Mapped[str] = mapped_column(String(16), default="local")  # local | external
     lease_worker_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
@@ -470,6 +470,8 @@ class Recap(Base):
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # von der SL bearbeitet
     review: Mapped[str | None] = mapped_column(Text, nullable=True)  # 0.4.6: Prüfteil als JSON, nur für die SL
+    # 0.4.15: offener Korrektur-Entwurf als JSON (Hinweis, Auftrag, Änderungen), nur für die SL, geht nie in den Umzug
+    revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

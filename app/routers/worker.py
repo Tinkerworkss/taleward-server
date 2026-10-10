@@ -155,6 +155,14 @@ def _zusammenfassungs_auftrag(db: Session, job: Job) -> dict:
 def _auftrag(db: Session, job: Job) -> dict:
     if job.type == "voice_enroll":
         return _stimm_auftrag(job)
+    if job.type == "revise":  # 0.4.15: Kapitel per Hinweis korrigieren – Text, Hinweis, Auszüge; kein Audio
+        from app import korrektur
+        from app.einstellungen import llm_konfig
+
+        return {"jobId": job.id, "type": job.type, "leaseSeconds": get_settings().lease_seconds,
+                "attempt": job.attempts, "files": [],
+                "revise": {**korrektur.eingabe(db, db.get(GameSession, job.session_id)),
+                           **_modell_angabe(llm_konfig(db))}}
     if job.type == "summarize":
         return _zusammenfassungs_auftrag(db, job)
     if job.type == "document":
@@ -210,6 +218,8 @@ def claim_job(body: ClaimIn, worker: Worker = Depends(current_worker), db: Sessi
 
         if llm_konfig(db).art != "lokal":
             caps.remove("llm")  # Zusammenfassung macht gerade die Zentrale (API/Attrappe) oder niemand
+        elif "llm_revise" in body.capabilities:
+            caps.append("llm_revise")  # 0.4.15: nur Worker, die den Korrektur-Auftrag kennen
     worker.info = json.dumps(body.info, ensure_ascii=False)[:2000]
     db.commit()
     warte = get_settings().claim_wait_seconds if body.wait_seconds is None else body.wait_seconds
@@ -472,6 +482,42 @@ def summary_result(jobId: str, body: SummaryResultIn, worker: Worker = Depends(c
                               namen={e["id"]: e["name"] for e in ein["bibel"] + ein["geheim"]})}
     speichern(db, s, ergebnis_aus(d), body.compute_seconds, engine="local", worker_id=worker.id)
     job.state, job.finished_at, job.progress, job.lease_expires_at = "done", utcnow(), 1.0, None
+    db.commit()
+    return Response(status_code=204)
+
+
+class RevisionChangeIn(ApiModel):
+    index: int = Field(ge=0)
+    before: str | None = Field(default=None, max_length=40000)
+    after: str = Field(max_length=40000)
+
+
+class RevisionNoteIn(ApiModel):
+    text: str = Field(max_length=4000)
+    applied: bool = False
+    indexes: list[int] = Field(default=[], max_length=100)
+
+
+class RevisionResultIn(ApiModel):
+    changes: list[RevisionChangeIn] = Field(default=[], max_length=200)
+    notes: list[RevisionNoteIn] = Field(default=[], max_length=100)
+    model: str | None = Field(default=None, max_length=100)
+    tokens_in: int = Field(default=0, ge=0)
+    tokens_out: int = Field(default=0, ge=0)
+    compute_seconds: float = Field(default=0, ge=0)
+
+
+@router.post("/jobs/{jobId}/revision-result", status_code=204)
+def revision_result(jobId: str, body: RevisionResultIn, worker: Worker = Depends(current_worker),
+                    db: Session = Depends(get_db)):
+    """0.4.15: Ergebnis eines Korrektur-Auftrags. Der Server prüft es selbst (Absätze, zeichengleiches Vorher)."""
+    from app import korrektur
+
+    job = _job_for(db, jobId, worker)
+    if job.type != "revise":
+        raise errors.not_found()
+    korrektur.ergebnis_speichern(db, job, body.model_dump(), "local", worker.id, body.model, body.tokens_in,
+                                 body.tokens_out, None, body.compute_seconds)
     db.commit()
     return Response(status_code=204)
 

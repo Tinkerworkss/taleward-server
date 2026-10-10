@@ -463,13 +463,18 @@ def einen_auftrag(db: Session) -> bool:
     if api and kosten.erreicht(db):
         return False  # Monatslimit für Cloud-Dienste erreicht – Aufträge warten
     # Über die Cloud nur Kampagnen, deren SL es erlaubt hat (0.3.10); die anderen warten
-    job = queue.claim(db, ZENTRALE, ["llm"], darf=queue.cloud_erlaubt if api else None)
+    from app import korrektur
+
+    job = queue.claim(db, ZENTRALE, ["llm", korrektur.FAEHIGKEIT], darf=queue.cloud_erlaubt if api else None)
     if job is None:
         return False
     if job.type == "document":  # SL-Unterlage: gleiche Einstellung, eigener Ablauf
         from app.unterlagen import auftrag_ausfuehren
 
         auftrag_ausfuehren(db, job, ZENTRALE)
+        return True
+    if job.type == "revise":  # 0.4.15: Kapitel per Hinweis korrigieren
+        korrektur.zentrale_ausfuehren(db, job, ZENTRALE)
         return True
     s = db.get(GameSession, job.session_id)
     t0 = time.monotonic()

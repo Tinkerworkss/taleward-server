@@ -190,4 +190,4 @@ def test_stimmen_vor_bestaetigung_ohne_zuordnung(client, world, dbs, tmp_path):
 
 
 def test_info_meldet_schnittstelle_0411(client):
-    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.14"
+    assert client.get(f"{API}/info").json()["apiVersion"] == "0.4.15"

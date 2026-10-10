@@ -106,6 +106,10 @@ def confirm_speakers(sessionId: str, body: list[schemas.SpeakerAssignIn], reques
     if not nachtraeglich:  # nachträglich sind Hörproben und Abdrücke längst gelöscht
         stimmprofile.lernen(db, s)  # nur Profile mit „aus Sessions lernen“, bevor die Abdrücke gelöscht werden
         queue.stimmen_vergessen(db, s)
+    if nachtraeglich:
+        from app import korrektur
+
+        korrektur.verwerfen(db, db.get(Recap, s.id))
     queue.create_summarize_job(db, s)
     db.commit()
     return processing_status(db, s, sprache(request))
@@ -134,6 +138,9 @@ def resummarize(sessionId: str, request: Request, user: User = Depends(current_u
     if not _hat_abschrift(db, s):
         raise errors.conflict("transcript_missing")
     _neu_schreiben_pruefen(db, s)
+    from app import korrektur
+
+    korrektur.verwerfen(db, db.get(Recap, s.id))  # 0.4.15: ein offener Korrektur-Entwurf passt nicht mehr
     queue.create_summarize_job(db, s)
     db.commit()
     return processing_status(db, s, sprache(request))
@@ -229,31 +236,32 @@ def patch_proposal(proposalId: str, body: schemas.ProposalPatch, user: User = De
 
 
 # ---------- Recap ----------
-def recap_out(s: GameSession, r: Recap, sl: bool = False) -> schemas.RecapOut:
+def recap_out(s: GameSession, r: Recap, sl: bool = False, lang: str = "de") -> schemas.RecapOut:
     """Der Prüfteil (review, 0.4.6) nur für die SL – für Spieler gar nicht im JSON."""
     out = schemas.RecapOut(session_id=s.id, number=s.number, title=r.title, text=r.text,
                            open_threads=json.loads(r.open_threads), published_at=s.published_at)
     if sl:
-        from app import pruefteil
+        from app import korrektur, pruefteil
 
         out.review = pruefteil.lesen(r.review)
+        out.revision = korrektur.fuer_app(r, lang)  # 0.4.15: null ohne Entwurf
     return out
 
 
 @router.get("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut,
             response_model_exclude_unset=True)
-def get_recap(sessionId: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_recap(sessionId: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     acc = load_session(db, sessionId, user)  # Spieler: nur veröffentlichte Sessions
     s = acc.session
     r = db.get(Recap, s.id)
     if r is None:
         raise errors.not_found("recap")
-    return recap_out(s, r, acc.is_gm)
+    return recap_out(s, r, acc.is_gm, sprache(request))
 
 
 @router.put("/sessions/{sessionId}/recap", tags=["Chronik"], response_model=schemas.RecapOut,
             response_model_exclude_unset=True)
-def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(current_user),
+def put_recap(sessionId: str, body: schemas.RecapIn, request: Request, user: User = Depends(current_user),
               db: Session = Depends(get_db)):
     acc = load_session(db, sessionId, user)
     if not acc.is_gm:
@@ -264,6 +272,11 @@ def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(curren
         raise errors.not_found("recap")
     _pruefbar(s)
     felder = body.model_fields_set
+    from app import korrektur
+
+    text_neu = "text" in felder and (body.text or "").strip() != r.text.strip()
+    if text_neu and (korrektur.lesen(r) or {}).get("state") == "running":
+        raise errors.conflict("revision_running")  # 0.4.15
     if "title" in felder:
         titel = (body.title or "").strip()
         if not titel:
@@ -274,6 +287,8 @@ def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(curren
         if not text:
             raise errors.bad_request("validation_error", "validation_error.recap_text")
         r.text = text
+    if text_neu:
+        korrektur.verwerfen(db, r)  # Bearbeiten von Hand verwirft einen offenen Entwurf
     if "open_threads" in felder:
         faeden = [f.strip() for f in (body.open_threads or []) if f.strip()]
         if any(len(f) > 1000 for f in faeden):
@@ -288,7 +303,43 @@ def put_recap(sessionId: str, body: schemas.RecapIn, user: User = Depends(curren
             r.review = pruefteil.als_json(pruefung)
     r.edited_at = utcnow()
     db.commit()
-    return recap_out(s, r, True)
+    return recap_out(s, r, True, sprache(request))
+
+
+# ---------- Kapitel per Hinweis korrigieren (0.4.15) ----------
+def _recap_fuer_sl(db: Session, sessionId: str, user: User) -> tuple[GameSession, Recap]:
+    acc = load_session(db, sessionId, user)
+    if not acc.is_gm:
+        raise errors.not_found() if acc.session.state != "published" else errors.forbidden()
+    r = db.get(Recap, acc.session.id)
+    if r is None:
+        raise errors.not_found("recap")
+    return acc.session, r
+
+
+@router.post("/sessions/{sessionId}/recap/revision", tags=["Chronik"], status_code=202,
+             response_model=schemas.RecapOut, response_model_exclude_unset=True)
+def start_revision(sessionId: str, body: schemas.RevisionIn, request: Request, user: User = Depends(current_user),
+                   db: Session = Depends(get_db)):
+    """Die SL schreibt, was nicht stimmt oder fehlt; der Server legt einen Entwurf an (läuft im Hintergrund)."""
+    from app import korrektur
+
+    s, r = _recap_fuer_sl(db, sessionId, user)
+    korrektur.starten(db, s, r, body.note, body.base_text)
+    db.commit()
+    return recap_out(s, r, True, sprache(request))
+
+
+@router.post("/sessions/{sessionId}/recap/revision/decision", tags=["Chronik"], response_model=schemas.RecapOut,
+             response_model_exclude_unset=True)
+def decide_revision(sessionId: str, body: schemas.DecisionIn, request: Request, user: User = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    from app import korrektur
+
+    s, r = _recap_fuer_sl(db, sessionId, user)
+    korrektur.entscheiden(db, s, r, body.accept)
+    db.commit()
+    return recap_out(s, r, True, sprache(request))
 
 
 # ---------- Unsichere Namen (0.4.6) ----------
@@ -366,7 +417,7 @@ def corrections(sessionId: str, body: schemas.CorrectionsIn, request: Request, u
                             .model_dump(mode="json", by_alias=True))
     unsicher.ersetzen(db, s, paare)
     db.commit()
-    return recap_out(s, r, True)
+    return recap_out(s, r, True, sprache(request))
 
 
 # ---------- Veröffentlichen ----------
@@ -430,6 +481,9 @@ def publish(sessionId: str, user: User = Depends(current_user), db: Session = De
             p.decision = "rejected"  # laut Schnittstelle: offene gelten als verworfen
     if not s.title:
         s.title = r.title
+    from app import korrektur
+
+    korrektur.verwerfen(db, r)  # 0.4.15: ein offener Korrektur-Entwurf samt Hinweis bleibt nicht liegen
     s.published_at = utcnow()
     set_state(s, "published")
     from app.routers.plaene import gespielt_markieren

@@ -199,6 +199,11 @@ def fail_job(db: Session, job: Job, code: str, message: str, retryable: bool) ->
         return
     job.state = "failed"
     job.finished_at = utcnow()
+    if job.type == "revise":  # 0.4.15: nur der Entwurf scheitert, die Runde bleibt zur Prüfung bereit
+        from app.korrektur import fehlgeschlagen
+
+        fehlgeschlagen(db, job)
+        return
     if job.type == "voice_enroll":
         from app.stimmprofile import fehlgeschlagen
 

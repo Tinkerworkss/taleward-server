@@ -150,7 +150,7 @@ def test_export_inhalt_und_zugang(client, world, dbs, make_user, login):
     namen = set(z.namelist())
     alles = b"".join(z.read(n) for n in namen)
     k = json.loads(z.read("kampagne.json"))
-    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.14"
+    assert k["format"] == "taleward-kampagne/1" and k["apiVersion"] == "0.4.15"
     # nie in der Datei
     for verboten in (GEHEIM, PRUEF, "Anna", "Ben", "Dora", "anna", "HINTERGRUND-DORIN", "DORA-BOGEN",
                      "DORA-OEFFENTLICH", "BEN-AN-ANNA", "Dorin, Kurzbeschreibung."):

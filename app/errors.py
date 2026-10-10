@@ -214,6 +214,21 @@ MESSAGES: dict[str, tuple[str, str]] = {
                      "The character can only be given to an active player of this campaign."),
     "retranscribe_limit": ("Diese Aufnahme wurde schon zweimal neu transkribiert – mehr geht nicht.",
                            "This recording has already been transcribed again twice – no more attempts."),
+    # Kapitel per Hinweis korrigieren (0.4.15)
+    "wrong_state.revision": ("Korrigieren lassen geht nur, solange das Kapitel zur Prüfung bereitliegt.",
+                             "Corrections can only be requested while the chapter is waiting for review."),
+    "invalid_input.revision_note": ("Schreib in eigenen Worten, was nicht stimmt oder fehlt – höchstens 2000 Zeichen.",
+                                    "Describe in your own words what is wrong or missing – at most 2000 characters."),
+    "recap_changed": ("Das Kapitel hat sich inzwischen geändert. Sieh es dir noch einmal an und versuch es dann erneut.",
+                      "The chapter has changed in the meantime. Take another look and then try again."),
+    "revision_running": ("Die Korrektur läuft gerade. Warte kurz, bis sie fertig ist.",
+                         "The correction is still running. Please wait a moment until it is done."),
+    "revision_limit": ("Dieses Kapitel wurde heute schon zehnmal korrigiert. Morgen geht es wieder – oder ändere den "
+                       "Text selbst.",
+                       "This chapter has already been corrected ten times today. You can try again tomorrow – or edit "
+                       "the text yourself."),
+    "no_revision": ("Es gibt gerade keinen Korrekturvorschlag, über den du entscheiden kannst.",
+                    "There is no correction proposal to decide on right now."),
     "resummarize_limit": ("Dieses Kapitel wurde heute schon fünfmal neu geschrieben. Morgen geht es wieder.",
                           "This chapter has already been rewritten five times today. You can try again tomorrow."),
     "audio_gone": ("Das Audio ist schon gelöscht. Bitte die Aufnahme neu hochladen.",

@@ -180,6 +180,8 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
     def zusammenfassen(auftrag: dict, fortschritt: Fortschritt) -> dict:
         if auftrag.get("type") == "document":
             return unterlage(auftrag, fortschritt)
+        if auftrag.get("type") == "revise":
+            return korrigieren(auftrag, fortschritt)
         z = auftrag["summarize"]
         t0 = time.monotonic()
         modell, hoechstens = recapmodell.aufloesen(z["model"], int(z.get("context") or 12288), bool(z.get("auto")))
@@ -222,6 +224,28 @@ def lokales_sprachmodell(url: str, client: httpx.Client | None = None):
         d["computeSeconds"] = round(time.monotonic() - t0, 1)
         return d
 
+    def korrigieren(auftrag: dict, fortschritt: Fortschritt) -> dict:
+        """0.4.15: Kapitel per Hinweis korrigieren – ein Aufruf, nur die betroffenen Absätze."""
+        from app import korrektur
+
+        z = auftrag["revise"]
+        t0 = time.monotonic()
+        modell, kontext = recapmodell.aufloesen(z["model"], int(z.get("context") or 12288), bool(z.get("auto")))
+        _ollama_passt(modell, version)
+        klient = OllamaKlient(url, modell, kontext, client=client)
+        kennung = klient.bereitstellen(lambda text: log.info(text))
+        fortschritt(0.1)
+        ablauf = Ablauf(klient)
+        # Anweisung, Kapitel und Antwort brauchen Platz – die Auszüge bekommen höchstens den Rest des Kontexts
+        z = {**z, "auszuege": (z.get("auszuege") or "")[:max(0, (klient.kontext - 6000) * 3)]}
+        try:
+            d = korrektur.ausfuehren(ablauf, z)
+        finally:
+            klient.entladen()
+        d.update(model=f"ollama/{klient.modell}@{kennung}", tokensIn=ablauf.zaehler.tokens_in,
+                 tokensOut=ablauf.zaehler.tokens_out, computeSeconds=round(time.monotonic() - t0, 1))
+        return d
+
     return zusammenfassen, f"Ollama {version}"
 
 
@@ -262,6 +286,8 @@ class WorkerProzess:
         self.zusammenfassen = zusammenfassen  # Sprachmodell (Ollama) – nur, wenn auf diesem Worker vorhanden
         if zusammenfassen is not None and "llm" not in self.capabilities:
             self.capabilities.append("llm")
+        if zusammenfassen is not None and "llm_revise" not in self.capabilities:
+            self.capabilities.append("llm_revise")  # 0.4.15: kennt den Korrektur-Auftrag
         self._stop = threading.Event()
         self.melden = melden
         self._pause = threading.Event()  # gesetzt = keine neuen Aufträge annehmen (laufender wird fertig)
@@ -410,11 +436,12 @@ class WorkerProzess:
         _taetigkeit = lambda text, **d: self.melden("taetigkeit", jobId=job, text=text, **d)  # noqa: E731
         _schritt = schritt
         try:
-            if auftrag.get("type") in ("summarize", "document"):
+            if auftrag.get("type") in ("summarize", "document", "revise"):
                 if self.zusammenfassen is None:
                     raise audio.AudioFehler("worker_setup", "Auf diesem Worker läuft kein Sprachmodell.", True)
                 ergebnis = self.zusammenfassen(auftrag, fortschritt)
-                ziel = "summary-result" if auftrag["type"] == "summarize" else "document-result"
+                ziel = {"summarize": "summary-result", "document": "document-result",
+                        "revise": "revision-result"}[auftrag["type"]]
             else:
                 dateien = self.herunterladen(auftrag)
                 fortschritt(0.1)
