@@ -1,0 +1,906 @@
+From cd01be39ab6acaa9bedaca725912fd9e33396c32 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 09:33:13 +0200
+Subject: [PATCH] Weg Notizen zuerst: Pflichtpruefung mit nachgerechnetem
+ Zitat, unklar statt raten, Regelreste systemneutral (Server 0.4.73)
+
+- Pflichtpruefung: jedes "erzaehlt" braucht ein Zitat aus dem Kapitel, der Server
+  rechnet es nach; ohne Zitat gilt der Punkt als "fehlt", ein "widerspricht" ohne
+  Zitat als "unklar" (nur Hinweis). Nachbesserung laesst Absaetze unveraendert,
+  wenn der Ausgang doch schon dasteht.
+- Notizen, Stand, Auswahl, Kapitel: Ist nicht eindeutig, wer handelt, steht
+  "(unklar, wer)" statt einer Vermutung; das Kapitel bleibt dort vage. Die
+  Stellen stehen im Probelauf und in unklar.json.
+- Regelreste systemneutral ueber Zahlenmuster (Klammern, "N Punkte", Wuerfe) in
+  Notizen, Auswahl und Kapitel; nur die Wendung bzw. der Satzteil faellt weg.
+- Kapitel: Absatzzahl und Wortbudget vorab geplant; Auswahl nach Dauer (12/20/30).
+- Verwaltung: eigenes Modell fuer Notizen und Auswahl waehlbar (Vergleich).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/artefakte.py                              |  41 +++-
+ app/einstellungen.py                          |   4 +-
+ app/kapitelprobe.py                           |  21 ++-
+ app/modellwahl.py                             |   2 +-
+ app/sprachmodell.py                           | 157 ++++++++++++----
+ app/verwaltung/i18n.py                        |  13 ++
+ app/verwaltung/router.py                      |  10 +-
+ app/verwaltung/static/eingebaut.js            |   2 +
+ app/verwaltung/templates/probelauf.html       |  17 ++
+ app/verwaltung/templates/zusammenfassung.html |   6 +
+ app/zusammenfassung.py                        |  12 +-
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_auswahl_pflicht.py                 |   3 +-
+ tests/test_hebel_0473.py                      | 177 ++++++++++++++++++
+ tests/test_kuerzen.py                         |   5 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_notizen_zuerst.py                  |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ uv.lock                                       |   2 +-
+ 21 files changed, 421 insertions(+), 63 deletions(-)
+ create mode 100644 tests/test_hebel_0473.py
+
+diff --git a/app/artefakte.py b/app/artefakte.py
+index a6b24b6..7bb5586 100644
+--- a/app/artefakte.py
++++ b/app/artefakte.py
+@@ -37,5 +37,33 @@ _REGEL = re.compile(
+     r"|Trefferpunkt\w*|Erfahrungspunkt\w*|Abenteuerpunkt\w*|Schicksalspunkt\w*|LeP|KaP|AsP|QS ?\d|Qualitätsstufe\w*"
+     r"|\d+ ?[wWdD]\d+|[wW]20|gewürfelt|würfelt\w*|Würfelwurf\w*|Patzer\w*|Rettungswurf\w*|Probe (?:auf|gegen)"
+-    r"|(?:plus|minus) (?:eins|zwei|drei|\d+) (?:auf|Schmerz)\w*)\b")
++    r"|(?:plus|minus) (?:eins|zwei|drei|\d+) (?:auf|Schmerz)\w*"
++    # 0.4.73, systemneutral: Zahl vor „…punkte“ („2 Magiepunkte“), „N Schaden“, Würfe als Fachwort („Schwimmwurf
++    # scheiterte“, „Stabilitätswurf“) – nicht aber Alltagswörter wie Vorwurf, Entwurf, Steinwurf.
++    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b"
++    r"|(?!(?:Vorwurf|Entwurf|Auswurf|Einwurf|Überwurf|Umwurf|Abwurf|Rauswurf|Hinauswurf|Niederwurf|Steinwurf|Speerwurf"
++    r"|Hammerwurf|Diskuswurf|Aufwurf|Anwurf|Bewurf|Verwurf|Wegwurf|Fehlwurf|Freiwurf|Münzwurf)\w*\b)[A-ZÄÖÜ]\w+wurf\w*"
++    r"|\w*[Ww]urf (?:scheitert\w*|misslingt|misslang|misslungen|gelingt|gelang|gelungen|glückt\w*))\b")
++_UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)  # 0.4.73: Marke der Notizen
++# 0.4.73: „für 4 Trefferpunkte“, „um 2 Punkte“ – nur die Wendung fällt weg, der Satz bleibt („traf Charles in die Schulter“)
++_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+\d+\s*\w*[Pp]unkte?\b|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
++
++
++def regelphrase(satz: str) -> str:
++    """Zahl-plus-Punkte-Wendungen aus einem Satz nehmen, ohne den Satz zu verlieren."""
++    return re.sub(r"\s+([,.;:!?])", r"\1", _REGELPHRASE.sub("", satz))
++
++
++def regelteil(satz: str, muster: re.Pattern) -> str:
++    """Regelsprache aus einem Satz: erst die Wendung, dann der Satzteil, zuletzt der Satz („“ = fällt weg)."""
++    satz = regelphrase(satz)
++    for _ in range(3):
++        m = muster.search(satz)
++        if not m:
++            break
++        neu = _teil_entfernen(satz, m)
++        satz = neu if len(_woerter(neu)) >= 3 else ""
++        if not satz:
++            break
++    return satz
+ _FLUCH = re.compile(r"\b(?:scheiß\w*|Scheiße|Arschloch|Wichser|Hurensohn|Kacke|fick\w*|Fick\w*|Fotze)\b", re.I)
+ _VERSAL = re.compile(r"\b([A-ZÄÖÜ]{4,})\b")
+@@ -198,13 +226,7 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
+                 befunde.append({"art": "kraftausdruck", "text": satz[:200]})
+                 continue
+-            for _ in range(3):  # höchstens drei Regelstellen je Satz
+-                m = _REGEL.search(satz)
+-                if not m:
+-                    break
+-                neu = _teil_entfernen(satz, m)
++            if _REGEL.search(satz) or _REGELPHRASE.search(satz):
+                 befunde.append({"art": "regel", "text": satz[:200]})
+-                satz = neu if len(_woerter(neu)) >= 3 else ""
+-                if not satz:
+-                    break
++                satz = regelteil(satz, _REGEL)
+             if not satz:
+                 continue
+@@ -252,4 +274,5 @@ def feinschliff(t: str) -> str:
+     t = re.sub(r"\bden Spielercharakteren\b", "der Gruppe", t)
+     t = re.sub(r"\bden Spielerinnen und Spielern\b", "der Gruppe", t)
++    t = re.sub(r"\s+([,.;:!?])", r"\1", _UNKLAR.sub("", t))
+     return t
+ 
+diff --git a/app/einstellungen.py b/app/einstellungen.py
+index 40579ac..275f5c1 100644
+--- a/app/einstellungen.py
++++ b/app/einstellungen.py
+@@ -162,4 +162,5 @@ class LlmKonfig:
+     api_modell_vorschlaege: str = ""  # 0.4.61: eigenes Modell für die Vorschläge („“ = wie api_modell)
+     weg: str = "notizen"  # 0.4.72: Cloud-API „notizen“ (erst Notizen je Abschnitt) oder „abschrift“ (früherer Weg)
++    api_modell_notizen: str = ""  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl („“ = wie api_modell)
+ 
+     @property
+@@ -217,3 +218,4 @@ def llm_konfig(db: Session) -> LlmKonfig:
+                      lokal_kontext=kontext, cent_ein=preis("llm.cent_ein"), cent_aus=preis("llm.cent_aus"),
+                      api_modell_vorschlaege=(wert("llm.api_modell_vorschlaege", "") or "").strip(),
+-                     weg=wert("llm.weg", "notizen") if wert("llm.weg", "notizen") in KAPITEL_WEGE else "notizen")
++                     weg=wert("llm.weg", "notizen") if wert("llm.weg", "notizen") in KAPITEL_WEGE else "notizen",
++                     api_modell_notizen=(wert("llm.api_modell_notizen", "") or "").strip())
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+index 94d3d87..032603d 100644
+--- a/app/kapitelprobe.py
++++ b/app/kapitelprobe.py
+@@ -73,4 +73,5 @@ class Probe:
+     korrekturen: list[dict] = field(default_factory=list)  # 0.4.69: Durchgänge „Korrektur per Hinweis“ (korrektur.json)
+     korrektur_laeuft: bool = False
++    unklar: list[dict] = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus den Notizen (unklar.json)
+ 
+ 
+@@ -189,5 +190,6 @@ def datei(probe_id: str, name: str) -> Path | None:
+ 
+ DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
+-           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "transkript.txt", "ergebnis.json")
++           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "transkript.txt",
++           "ergebnis.json")
+ 
+ 
+@@ -297,5 +299,5 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
+ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
+     from app.sprachmodell import Ablauf, SprachmodellFehler
+-    from app.zusammenfassung import api_klient, api_klient_vorschlaege, attrappe, gegenpruefen_an
++    from app.zusammenfassung import api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an
+ 
+     t0 = time.monotonic()
+@@ -318,5 +320,6 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
+                             nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
+-                            notizen_zuerst=p.weg == "notizen")  # 0.4.63: nur im Probelauf wählbar
++                            notizen_zuerst=p.weg == "notizen",  # 0.4.63: hier je Probelauf wählbar
++                            notiz_klient=api_klient_notizen(k))
+             with session_factory()() as db:
+                 gegen = gegenpruefen_an(db)
+@@ -335,4 +338,5 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+                 p.entwurf = ablauf.letztes_kapitel1
+             p.lang = ablauf.letztes_lang
++            p.unklar = list(ablauf.letzte_unklar)
+             with session_factory()() as db:
+                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
+@@ -380,7 +384,9 @@ def _dateien_schreiben(p: Probe) -> None:
+             if p.lang:
+                 (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
++            if p.unklar:
++                (o / "unklar.json").write_text(json.dumps(p.unklar, ensure_ascii=False, indent=2), encoding="utf-8")
+         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
+                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
+-                                                                  "pflicht", "entwurf", "lang", "korrekturen")},
++                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar")},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+     except OSError:
+@@ -488,5 +494,8 @@ def _modellname(k) -> str:
+     if k.art != "api":
+         return "Testmodus"
++    name = k.api_modell
++    if k.api_modell_notizen and k.api_modell_notizen != k.api_modell:
++        name += f" + Notizen {k.api_modell_notizen}"
+     if k.api_modell_vorschlaege and k.api_modell_vorschlaege != k.api_modell:
+-        return f"{k.api_modell} + Vorschläge {k.api_modell_vorschlaege}"
+-    return k.api_modell
++        name += f" + Vorschläge {k.api_modell_vorschlaege}"
++    return name
+diff --git a/app/modellwahl.py b/app/modellwahl.py
+index db14704..e2e561a 100644
+--- a/app/modellwahl.py
++++ b/app/modellwahl.py
+@@ -62,5 +62,5 @@ def auswahl(db: Session, k) -> list[str]:
+     vorn = bekannte(k.anbieter)
+     rest = sorted(m for m in _gespeichert(db, k.api_url) if m not in vorn)
+-    gewaehlt = [m for m in (k.api_modell, k.api_modell_vorschlaege) if m]
++    gewaehlt = [m for m in (k.api_modell, k.api_modell_vorschlaege, getattr(k, "api_modell_notizen", "")) if m]
+     return list(dict.fromkeys([*vorn, *rest, *gewaehlt]))
+ 
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index fccd10f..e734940 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -473,9 +473,34 @@ _REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\
+                      r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
+                      r"|Initiative|erleichtert\w*|erschwert\w*|kritisch\w* (?:erfolgreich|Erfolg\w*|Patzer|Wurf\w*|Treffer|bei)|Patzer"
+-                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b"
++                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b|\d+ ?\w*[Pp]unkte?\b"
+                      r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
+                      r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
+                      r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
+ _SPIELLEITUNG = re.compile(r"\b(?:Spielleitung|Spielleiter\w*|game master|GM)\b", re.I)
++# 0.4.73: Regelreste in Klammern – systemneutral über Zahlen und Ausgangswörter („(39 von 50, Erfolg)“, „(4 Trefferpunkte)“,
++# „(Schwimmwurf: 46 von 20, gescheitert)“). Die Klammer fällt weg, die Notiz bleibt.
++_REGELKLAMMER = re.compile(
++    r"\s*\((?=[^()]*(?:\b\d+\s*(?:von|/|auf|gegen|vs\.?)\s*\d+|\b\d+ ?\w*[Pp]unkte?\b|\b\d+ [Ss]chaden\b|\w+[Ww]urf\b"
++    r"|\w*[Pp]robe\b))[^()]*\)")
++UNKLAR = "(unklar, wer)"  # 0.4.73: Marke der Notizen für Stellen, an denen die Abschrift nicht eindeutig ist
++_UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)
++
++
++def regelreste(text: str) -> str:
++    """Regelreste in Klammern entfernen und die Satzzeichen glätten."""
++    t = _REGELKLAMMER.sub("", text or "")
++    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
++    return re.sub(r"\s{2,}", " ", t).strip()
++
++
++def unklar_stellen(notizen: str) -> list[dict]:
++    """Notizen mit der Marke „(unklar …)“ → [{zeit, notiz}]: Stellen, an denen das Modell nicht raten wollte. Für die
++    Spielleitung die ehrlichste Prüfhilfe – genau hier lohnt der Blick in die Abschrift."""
++    aus = []
++    for n in (notizen or "").split("\n"):
++        if _UNKLAR.search(n):
++            zeit = _zeit_vorn(n)
++            aus.append({"zeit": zeit, "zeit_text": _zeit(zeit) if zeit is not None else "", "notiz": _ZEIT_VORN.sub("", n).strip()})
++    return aus
+ ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
+ ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
+@@ -501,9 +526,13 @@ def _zeit_vorn(zeile: str) -> float | None:
+ 
+ 
++def _minuten(ein: dict) -> float:
++    zeilen = ein.get("transkript") or []
++    return max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
++
++
+ def woerter(ein: dict, lang: bool = False) -> str:
+     """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene.
+     lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen."""
+-    zeilen = ein.get("transkript") or []
+-    minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
++    minuten = _minuten(ein)
+     if minuten > 120:
+         return "900–1500" if lang else "600–1200"
+@@ -563,5 +592,9 @@ Nichtspielercharakter – schreib dann den Namen dieser Figur; das Wort „Spiel
+ Schreib die Zeilen nicht ab, sondern fasse sie zusammen. \
+ Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
+-des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
++des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. \
++Ist aus dem Abschnitt nicht eindeutig, wer handelt oder gemeint ist – Anrede ohne Namen („du“, „dich“), verstümmelte \
++Stelle, mehrere mögliche Personen –, dann rate nicht: Schreib die Handlung ohne Namen und dahinter „(unklar, wer)“. \
++Eine Person, die im Abschnitt keinen Namen hat, bekommt auch in der Notiz keinen („eine Bedienstete“) – nicht den \
++Namen einer anderen Figur, die passen könnte. Steht vor dem Abschnitt \
+ „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
+ Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
+@@ -576,4 +609,5 @@ dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. H
+ was am Tisch gesagt wurde.
+ Für Notizen und Stand gilt außerdem (0.4.68): Eine Zusage, Abmachung, ein Kauf, ein Tod oder ein Besitzwechsel steht nur da, wenn er am Tisch ausdrücklich gesagt oder gezeigt wird (ein Ja, „abgemacht“, Handschlag, Übergabe, „der ist tot“). Eine höfliche, ausweichende oder unterbrochene Antwort ist keine Zusage – schreib dann „Antwort offen“ und was stattdessen geschieht. Gibt sich eine Figur als jemand anderes aus oder nennt einen erfundenen Namen, ist das keine neue Person: „X gibt sich als Y aus“.
++Auch im Stand gilt: Was nicht eindeutig ist, bekommt „(unklar)“ statt einer Vermutung.
+ Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
+ Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
+@@ -594,6 +628,8 @@ nächsten Session allen Spielern vorgelesen.
+ Regeln:
+ - Nur, was am Tisch als Spielgeschehen passiert ist. Nichts erfinden, nichts ausschmücken, was nicht vorkam.
+-- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {woerter} Wörter, \
+-in Absätzen von je 80 bis 180 Wörtern (ein Absatz je Szene oder Wendung), durch Leerzeilen getrennt.
++- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {laenge} \
++(ein Absatz je Szene oder Wendung), durch Leerzeilen getrennt.
++- Steht in der Grundlage „(unklar, wer)“, bleibt das Kapitel an dieser Stelle vage („einer der Gefährten“, „jemand“): \
++kein Name, keine Vermutung; die Marke selbst kommt nicht ins Kapitel.
+ - Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
+ weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
+@@ -707,20 +743,34 @@ Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Wür
+ Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
+ Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
+-der Stand am Ende), rang ("kritisch" oder "wichtig"). Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
++der Stand am Ende), rang ("kritisch" oder "wichtig"). Steht in den Notizen „(unklar, wer)“, bleibt die Person auch \
++hier ungenannt, und „(unklar, wer)“ steht hinter dem Ausgang. Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
+ Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
+ Sprache: {sprache}."""
+ AUSWAHL_HOECHSTENS = 20
+ 
++
++def auswahl_hoechstens(ein: dict) -> int:
++    """0.4.73: Zahl der Pflichtereignisse nach Dauer der Runde – 20 für 155 Minuten waren zu knapp (Kritisches fiel
++    schon aus der Auswahl)."""
++    minuten = _minuten(ein)
++    return 30 if minuten > 120 else AUSWAHL_HOECHSTENS if minuten > 60 else 12
++
+ SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
+-vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor) oder \
+-"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind kein Widerspruch. absatz: die Nummer \
++vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor, oder \
++nur das Ereignis, nicht sein Ausgang) oder "widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder \
++vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind \
++kein Widerspruch. zitat: bei "erzaehlt" die Wörter des Kapitels, die den Ausgang erzählen – wörtlich abgeschrieben, \
++höchstens 25 Wörter; findest du keine, ist der Status "fehlt". Bei "widerspricht" die Wörter des Kapitels, die dem \
++Ausgang widersprechen, ebenfalls wörtlich. absatz: die Nummer \
+ des Absatzes, in dem es steht bzw. in den es nach der Reihenfolge des Geschehens gehört. begruendung: bei "fehlt" und \
+ "widerspricht" ein kurzer Satz für die Spielleitung, ohne Zitat, sonst leer. Bewerte nur die Liste, nicht den Stil.
+-Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "begruendung": "…"}]}. Sprache: {sprache}."""
++Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "zitat": "…", "begruendung": "…"}]}. \
++Sprache: {sprache}."""
+ 
+ SYSTEM_PFLICHT_NACH = """Du überarbeitest einzelne Absätze im Kapitel einer Pen-&-Paper-Session. Je Absatz steht \
+ dabei, welches Ereignis darin fehlt oder falsch erzählt ist, mit dem richtigen Ausgang.
+ Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen – die falsche Aussage wird ersetzt, nicht zusätzlich stehen gelassen. Alles andere \
+-im Absatz bleibt, wie es ist. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
++im Absatz bleibt, wie es ist. Steht das Ereignis mit genau diesem Ausgang doch schon im Absatz, gib den Absatz \
++unverändert zurück. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
+ reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
+ Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+@@ -882,15 +932,16 @@ def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], frei
+ PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
+                   "fehlt": "fehlt", "missing": "fehlt", "widerspricht": "widerspricht", "contradicts": "widerspricht",
+-                  "contradicted": "widerspricht"}
++                  "contradicted": "widerspricht", "unklar": "unklar", "unclear": "unklar"}
++OHNE_ZITAT = {"de": "Kein Satz im Kapitel erzählt diesen Ausgang.", "en": "No sentence in the chapter tells this outcome."}
+ 
+ 
+-def auswahl_lesen(d: dict) -> list[dict]:
+-    """Antwort der Auswahl → [{zeit, ereignis, ausgang, rang}], höchstens AUSWAHL_HOECHSTENS, ohne Leeres und Doppeltes,
+-    nach Zeit sortiert."""
++def auswahl_lesen(d: dict, hoechstens: int = AUSWAHL_HOECHSTENS) -> list[dict]:
++    """Antwort der Auswahl → [{zeit, ereignis, ausgang, rang}], höchstens `hoechstens`, ohne Leeres, Doppeltes und
++    Regelreste, nach Zeit sortiert."""
+     aus, gesehen = [], set()
+     for e in d.get("ereignisse") or d.get("events") or []:
+         if not isinstance(e, dict):
+             continue
+-        ereignis = klartext(e.get("ereignis") or e.get("event") or "")[:300]
++        ereignis = regelreste(klartext(e.get("ereignis") or e.get("event") or ""))[:300]
+         if not ereignis or ereignis.casefold() in gesehen or _SPIELLEITUNG.search(ereignis):
+             continue
+@@ -898,7 +949,7 @@ def auswahl_lesen(d: dict) -> list[dict]:
+         rang = str(e.get("rang") or e.get("rank") or "").strip().lower()
+         aus.append({"zeit": zeit_lesen(e.get("zeit") if e.get("zeit") is not None else e.get("time")),
+-                    "ereignis": ereignis, "ausgang": klartext(e.get("ausgang") or e.get("outcome") or "")[:300],
++                    "ereignis": ereignis, "ausgang": regelreste(klartext(e.get("ausgang") or e.get("outcome") or ""))[:300],
+                     "rang": "kritisch" if rang in ("kritisch", "critical") else "wichtig"})
+-    aus = aus[:AUSWAHL_HOECHSTENS]
++    aus = aus[:hoechstens]
+     return sorted(aus, key=lambda e: (e["zeit"] is None, e["zeit"] or 0.0))
+ 
+@@ -909,7 +960,15 @@ def auswahl_text(punkte: list[dict]) -> str:
+ 
+ 
+-def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int) -> list[dict]:
+-    """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), begruendung}. Fehlende Punkte
+-    gelten als ungeprüft und lösen nichts aus."""
++def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str = "", sprache: str = "de") -> list[dict]:
++    """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), zitat, begruendung}. Fehlende
++    Punkte gelten als ungeprüft und lösen nichts aus.
++
++    0.4.73: Jedes „erzählt“ braucht ein Zitat aus dem Kapitel, das der Server nachrechnet (die Prüfung hatte „Jeremy ging
++    über Bord“ als „verliert das Silber“ durchgehen lassen). Ohne auffindbares Zitat gilt der Punkt als „fehlt“; ein
++    „widerspricht“ ohne auffindbares Zitat wird „unklar“ (kein Umschreiben auf Zuruf, nur ein Hinweis). Steht das Zitat
++    in einem anderen Absatz als angegeben, gilt der Absatz des Zitats."""
++    teile = absaetze(text) if text else []
++    norm = _normwoerter(text) if text else ""
++    norm_teile = [_normwoerter(t) for t in teile]
+     nach_nr = {}
+     for a in d.get("punkte") or d.get("points") or []:
+@@ -929,7 +988,19 @@ def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int) -> list[dic
+         except (TypeError, ValueError):
+             absatz = -1
+-        aus.append({"nr": nr, "status": PFLICHT_STATUS.get(str(a.get("status") or "").strip().lower(), "ungeprueft"),
+-                    "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
+-                    "begruendung": klartext(a.get("begruendung") or a.get("reason") or "")[:300]})
++        status = PFLICHT_STATUS.get(str(a.get("status") or "").strip().lower(), "ungeprueft")
++        zitat = klartext(a.get("zitat") or a.get("quote") or "")[:300] if isinstance(a.get("zitat") or a.get("quote"), str) else ""
++        begruendung = klartext(a.get("begruendung") or a.get("reason") or "")[:300]
++        if text and status in ("erzaehlt", "widerspricht"):
++            if zitat and zitat_belegt(zitat, norm):
++                wo = next((i for i, nt in enumerate(norm_teile) if zitat_belegt(zitat, nt)), None)
++                if wo is not None:
++                    absatz = wo
++            elif status == "erzaehlt":
++                status, zitat = "fehlt", ""
++                begruendung = begruendung or OHNE_ZITAT.get(sprache, OHNE_ZITAT["de"])
++            else:
++                status, zitat = "unklar", ""
++        aus.append({"nr": nr, "status": status, "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
++                    "zitat": zitat, "begruendung": begruendung})
+     return aus
+ 
+@@ -1446,4 +1517,6 @@ class Ablauf:
+     letzte_kuerzung: dict = field(default_factory=dict)  # 0.4.68: Kürzung eines zu langen Kapitels (angenommen?)
+     letztes_lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung
++    notiz_klient: Klient | None = None  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl (sonst klient)
++    letzte_unklar: list = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus Notizen und Auswahl
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1519,4 +1592,5 @@ class Ablauf:
+         notizen = _ohne_doppelte(notizen)
+         self.letzte_notizen = "\n".join(notizen)
++        self.letzte_unklar = unklar_stellen(self.letzte_notizen)
+         return "Szenennotizen (aus dem Transkript verdichtet)", self.letzte_notizen
+ 
+@@ -1531,5 +1605,5 @@ class Ablauf:
+             self.klient.temperatur = self.temperatur_notizen
+         try:
+-            d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
++            d = self.zaehler.aufruf(self.notiz_klient or self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+         except AntwortFehler:
+             if tiefe >= 2 or len(zeilen) < 8:
+@@ -1549,5 +1623,5 @@ class Ablauf:
+         notizen, zuletzt = [], None
+         for n in d.get("notizen") or []:
+-            n = _notiz_normieren(str(n))
++            n = regelreste(_notiz_normieren(str(n)))
+             m = _ZEIT_VORN.match(n)
+             if m:
+@@ -1555,5 +1629,12 @@ class Ablauf:
+             elif zuletzt is not None:
+                 n = f"{zuletzt} {n}"  # Notiz ohne Zeit gehört zur Stelle davor
+-            if not n or _REGELN.search(n) or _bruchstueck(n):
++            if n and _REGELN.search(n):  # 0.4.73: erst die Wendung bzw. den Satzteil nehmen, erst zuletzt die Notiz
++                from app.artefakte import regelteil
++
++                zeit_m = _ZEIT_VORN.match(n)
++                kopf_z = n[:zeit_m.end()] if zeit_m else ""
++                rest = regelteil(n[len(kopf_z):].strip(), _REGELN)
++                n = f"{kopf_z}{rest}".strip() if rest else ""
++            if not n or _bruchstueck(n):
+                 continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
+             if _notizkern(n) in kopien or _notizkern(_SPRECHER_VORN.sub("", n)) in kopien:
+@@ -1628,6 +1709,12 @@ class Ablauf:
+         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
+                   f"\n\n{titel}:\n{grundlage}")
++        if self.notizen_zuerst:  # 0.4.73: Länge vorab planen statt hinterher kürzen – Absatzzahl hält das Modell besser ein
++            unten, oben = untergrenze(ein, True), obergrenze(ein, True)
++            laenge = (f"Etwa {max(4, round(oben / 130))} Absätze mit zusammen {unten} bis {oben} Wörtern – nicht mehr als "
++                      f"{oben} –, je Absatz 80 bis 180 Wörter")
++        else:
++            laenge = f"{woerter(ein)} Wörter, in Absätzen von je 80 bis 180 Wörtern"
+         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
+-                  .replace("{woerter}", woerter(ein, self.notizen_zuerst)))
++                  .replace("{laenge}", laenge))
+         self._schritt("recap")
+         d = self.zaehler.aufruf(self.klient, system, nutzer)
+@@ -1639,5 +1726,5 @@ class Ablauf:
+             raise SprachmodellFehler(f"Das Sprachmodell hat keinen Recap geliefert (Antwort: {form}).")
+         faeden = [klartext(f)[:300] for f in (d.get("openThreads") or d.get("open_threads") or []) if klartext(f)][:10]
+-        text = klartext(text)
++        text = re.sub(r"\s+([,.;:!?])", r"\1", _UNKLAR.sub("", klartext(text)))  # die Marke gehört nicht ins Kapitel
+         if "\n\n" not in text and "\n" in text:  # Absätze nur mit einfachem Umbruch – für App und Prüfung trennen
+             text = re.sub(r"\n+", "\n\n", text)
+@@ -1706,8 +1793,12 @@ class Ablauf:
+         nutzer = (f"{_kopf(ein)}\n\nSzenennotizen der Runde:\n{notizen}\n\nStand am Ende der Runde (mit dem Zeitpunkt "
+                   f"der Änderung):\n{stand}")
+-        system = (SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein))
+-                  .replace("{hoechstens}", str(AUSWAHL_HOECHSTENS)))
++        hoechstens = auswahl_hoechstens(ein)
++        system = SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(hoechstens))
+         self._schritt("recap")
+-        return auswahl_lesen(self.zaehler.aufruf(self.klient, system, nutzer))
++        aus = auswahl_lesen(self.zaehler.aufruf(self.notiz_klient or self.klient, system, nutzer), hoechstens)
++        for e in aus:
++            if _UNKLAR.search(e["ereignis"] + " " + e["ausgang"]):
++                e["unklar"] = True
++        return aus
+ 
+     def pflicht_pruefen(self, ein: dict, punkte: list[dict], text: str) -> list[dict]:
+@@ -1717,5 +1808,5 @@ class Ablauf:
+         self._schritt("review")
+         return pflicht_lesen(self.zaehler.aufruf(self.klient, SYSTEM_PFLICHT.replace("{sprache}", _sprache(ein)), nutzer),
+-                             len(punkte), len(teile))
++                             len(punkte), len(teile), text, "en" if ein.get("sprache") == "en" else "de")
+ 
+     def pflicht_nachbessern(self, ein: dict, punkte: list[dict], befund: list[dict], text: str) -> str | None:
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index a927d4d..2bacdd8 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -110,4 +110,17 @@ EN: dict[str, str] = {
+     "Notizen und Stand liegen nach dem ersten Weg in der ZIP-Datei.": "With the first approach, notes and state are included in the ZIP file.",
+     "Weg zum Kapitel": "How the chapter is written",
++    "Modell für Notizen und Auswahl": "Model for notes and selection",
++    "Nur zum Vergleichen: Das Zuhören (Notizen, Stand, Auswahl der Pflichtereignisse) ist der teuerste Schritt. Ein anderes Modell hier spart Kosten, muss aber in Probeläufen zeigen, dass die Kapitel gleich gut bleiben.":
++        "For comparison only: listening (notes, state, selection of must-have events) is the most expensive step. A different model here saves cost, but trial runs must show that chapters stay as good.",
++    "Unklare Stellen ({n})": "Unclear passages ({n})",
++    "Hier war die Aufnahme nicht eindeutig; das Kapitel bleibt an dieser Stelle vage. Ein Satz im Korrekturfeld klärt es.": "The recording was ambiguous here; the chapter stays vague at this point. One sentence in the correction field settles it.",
++    "Pflichtereignisse ({n})": "Must-have events ({n})",
++    "erzählt": "told",
++    "fehlt": "missing",
++    "widerspricht": "contradicts",
++    "unklar": "unclear",
++    "ungeprüft": "unchecked",
++    "nachgebessert": "revised",
++    "Einzelheiten": "Details",
+     "Erst Notizen je Abschnitt, dann das Kapitel (empfohlen)": "Notes per section first, then the chapter (recommended)",
+     "Ganze Abschrift auf einmal (früherer Weg)": "Whole transcript at once (previous approach)",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 0ec87b0..932a4f9 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -894,4 +894,5 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+                               api_url: str = Form(""), api_modell: str = Form(""), api_key: str = Form(""),
+                               api_modell_text: str = Form(""), api_modell_vorschlaege: str = Form(""),
++                              api_modell_notizen: str = Form(""),
+                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
+                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
+@@ -923,11 +924,15 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+     modell = (api_modell_text.strip() if bekannt is None and api_modell_text.strip() else api_modell.strip())
+     lokal, fuer_vorschlaege = lokal_modell.strip(), api_modell_vorschlaege.strip()
+-    if not modell or not lokal or len(modell) > 100 or len(lokal) > 100 or len(fuer_vorschlaege) > 100:
++    fuer_notizen = api_modell_notizen.strip()
++    if (not modell or not lokal or len(modell) > 100 or len(lokal) > 100 or len(fuer_vorschlaege) > 100
++            or len(fuer_notizen) > 100):
+         return fehler(_("Bitte die Modellnamen angeben."))
+-    for m in (modell, fuer_vorschlaege):
++    for m in (modell, fuer_vorschlaege, fuer_notizen):
+         if m and bekannt is not None and not modellwahl.erlaubt(db, url, bekannt, m):
+             return fehler(_("Bitte ein Modell aus der Liste wählen."))
+     if fuer_vorschlaege == modell:
+         fuer_vorschlaege = ""
++    if fuer_notizen == modell:
++        fuer_notizen = ""
+     try:
+         kontext = int(lokal_kontext)
+@@ -954,4 +959,5 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+     meta_schreiben(db, "llm.api_modell", modell)
+     meta_schreiben(db, "llm.api_modell_vorschlaege", fuer_vorschlaege)
++    meta_schreiben(db, "llm.api_modell_notizen", fuer_notizen)
+     meta_schreiben(db, "llm.lokal_modell", lokal)
+     meta_schreiben(db, "llm.lokal_kontext", str(kontext))
+diff --git a/app/verwaltung/static/eingebaut.js b/app/verwaltung/static/eingebaut.js
+index 3b73d67..a937a55 100644
+--- a/app/verwaltung/static/eingebaut.js
++++ b/app/verwaltung/static/eingebaut.js
+@@ -26,4 +26,5 @@
+   var modell = document.getElementById("anbieter-modell");
+   var vorschlag = document.getElementById("anbieter-modell-vorschlaege");
++  var notizen = document.getElementById("anbieter-modell-notizen");
+   var wahlFeld = document.getElementById("modell-wahl-feld");
+   var textFeld = document.getElementById("modell-text-feld");
+@@ -49,4 +50,5 @@
+       fuellen(liste, modell, false, o.dataset.modell);
+       fuellen(liste, vorschlag, true, o.dataset.vorschlaege);
++      fuellen(liste, notizen, true, "");
+     }
+     var frei = wahl.value === "andere" && (!modell || modell.options.length === 0);
+diff --git a/app/verwaltung/templates/probelauf.html b/app/verwaltung/templates/probelauf.html
+index e724284..84171b1 100644
+--- a/app/verwaltung/templates/probelauf.html
++++ b/app/verwaltung/templates/probelauf.html
+@@ -77,4 +77,21 @@
+   {% else %}<p class="leise">{{ _("Keine Vorschläge.") }}</p>{% endfor %}
+ </div>
++{% if p.unklar %}
++<div class="karte">
++  <h2>{{ _("Unklare Stellen ({n})", n=p.unklar|length) }}</h2>
++  <p class="hilfe">{{ _("Hier war die Aufnahme nicht eindeutig; das Kapitel bleibt an dieser Stelle vage. Ein Satz im Korrekturfeld klärt es.") }}</p>
++  <ul>{% for u in p.unklar %}<li>{% if u.zeit_text %}<span class="leise">[{{ u.zeit_text }}]</span> {% endif %}{{ u.notiz }}</li>{% endfor %}</ul>
++</div>
++{% endif %}
++{% if p.pflicht and p.pflicht.vorher %}
++<div class="karte">
++  <h2>{{ _("Pflichtereignisse ({n})", n=p.auswahl|length) }}</h2>
++  {% set befund = p.pflicht.nachher if p.pflicht.nachher else p.pflicht.vorher %}
++  <p class="leise">{% if p.pflicht.nachgebessert %}{{ _("nachgebessert") }} · {% endif %}{% for st in ["erzaehlt", "fehlt", "widerspricht", "unklar", "ungeprueft"] %}{% set n = befund|selectattr("status", "equalto", st)|list|length %}{% if n %}{{ _({"erzaehlt": "erzählt", "fehlt": "fehlt", "widerspricht": "widerspricht", "unklar": "unklar", "ungeprueft": "ungeprüft"}[st]) }}: {{ n }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}</p>
++  <details><summary>{{ _("Einzelheiten") }}</summary>
++    <ol>{% for b in befund %}{% set a = p.auswahl[b.nr - 1] if b.nr <= p.auswahl|length else none %}<li>{% if a %}{{ a.ereignis }}{% if a.ausgang %} – {{ a.ausgang }}{% endif %} ({{ a.rang }})<br>{% endif %}<span class="{% if b.status == 'erzaehlt' %}leise{% else %}marke-status marke-status--warten{% endif %}">{{ _({"erzaehlt": "erzählt", "fehlt": "fehlt", "widerspricht": "widerspricht", "unklar": "unklar", "ungeprueft": "ungeprüft"}[b.status]) }}</span>{% if b.absatz is not none %} · {{ _("Absatz {n}", n=b.absatz + 1) }}{% endif %}{% if b.zitat %} · „{{ b.zitat }}“{% endif %}{% if b.begruendung %} · {{ b.begruendung }}{% endif %}</li>{% endfor %}</ol>
++  </details>
++</div>
++{% endif %}
+ {% if p.pruefung and p.pruefung.paragraphs %}
+ <div class="karte">
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index 6b4d40d..95d2e5b 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -68,4 +68,10 @@
+         </select>
+         <span class="hilfe">{{ _("Zur Auswahl stehen die bekannten Modelle des Anbieters und – sobald ein Schlüssel hinterlegt ist – alle, die er für diesen Schlüssel freigibt. Beim Wechsel des Anbieters werden die empfohlenen eingetragen. Bei Mistral empfohlen: Kapitel mit mistral-medium-latest, Vorschläge mit mistral-large-latest (Messung an einer langen Runde).") }}</span></label>
++      <label>{{ _("Modell für Notizen und Auswahl") }}
++        <select name="api_modell_notizen" id="anbieter-modell-notizen">
++          <option value="" {% if not k.api_modell_notizen %}selected{% endif %}>{{ _("wie für das Kapitel") }}</option>
++          {% for m in llm.modelle %}<option value="{{ m }}" {% if m == k.api_modell_notizen %}selected{% endif %}>{{ m }}</option>{% endfor %}
++        </select>
++        <span class="hilfe">{{ _("Nur zum Vergleichen: Das Zuhören (Notizen, Stand, Auswahl der Pflichtereignisse) ist der teuerste Schritt. Ein anderes Modell hier spart Kosten, muss aber in Probeläufen zeigen, dass die Kapitel gleich gut bleiben.") }}</span></label>
+       <label>{{ _("API-Schlüssel") }}
+         <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
+diff --git a/app/zusammenfassung.py b/app/zusammenfassung.py
+index 99c3dca..8a1ef3e 100644
+--- a/app/zusammenfassung.py
++++ b/app/zusammenfassung.py
+@@ -297,4 +297,14 @@ def api_klient_vorschlaege(k):
+ 
+ 
++def api_klient_notizen(k):
++    """0.4.73: eigener Klient für Notizen, Stand und Auswahl, wenn ein anderes Modell gewählt ist (sonst None) – zum
++    Messen, ob ein günstigeres Modell beim Zuhören mithält."""
++    from app.sprachmodell import OpenAIKlient
++
++    if not k.api_modell_notizen or k.api_modell_notizen == k.api_modell:
++        return None
++    return OpenAIKlient(k.api_url, k.api_key, k.api_modell_notizen)
++
++
+ def zusammenfasser(db: Session):
+     """Was die Zentrale selbst ausführt: fn(db, session) → (Ergebnis, engine). None = nicht die Zentrale
+@@ -316,5 +326,5 @@ def zusammenfasser(db: Session):
+             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
+                             vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
+-                            notizen_zuerst=k.weg == "notizen")
++                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k))
+             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
+                                   gegenpruefen=gegenpruefen_an(db_))
+diff --git a/pyproject.toml b/pyproject.toml
+index 4ab53ea..4fdb3f3 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.72"
++version = "0.4.73"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 63e7f20..3846ddb 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.72"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.73"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index db60e75..1e38a19 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.72"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.73"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_auswahl_pflicht.py b/tests/test_auswahl_pflicht.py
+index e7372d2..16ba389 100644
+--- a/tests/test_auswahl_pflicht.py
++++ b/tests/test_auswahl_pflicht.py
+@@ -40,6 +40,7 @@ class Anbieter:
+             zweite = [a for a in self.aufrufe if a["system"].startswith("Du vergleichst das Kapitel")]
+             falsch = len(zweite) == 1 or self.bleibt_falsch
+-            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1},
++            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "floh aus der Stadt"},
+                                {"nr": 2, "status": "widerspricht" if falsch else "erzaehlt", "absatz": 2,
++                                "zitat": "Mara starb in den Trümmern" if falsch else "Mara überlebte verletzt",
+                                 "begruendung": "Mara überlebt, sie stirbt nicht." if falsch else ""}]}
+         if system.startswith("Du überarbeitest einzelne Absätze im Kapitel"):
+diff --git a/tests/test_hebel_0473.py b/tests/test_hebel_0473.py
+new file mode 100644
+index 0000000..3706ea6
+--- /dev/null
++++ b/tests/test_hebel_0473.py
+@@ -0,0 +1,177 @@
++"""Server 0.4.73, Weg „Notizen zuerst“: Pflichtprüfung mit nachgerechnetem Zitat, „unklar statt raten“, Regelreste
++systemneutral, Länge vorab geplant, Auswahl nach Dauer, eigenes Modell für Notizen und Auswahl."""
++import json
++import re
++
++import httpx
++import pytest
++
++from app import artefakte
++from app import sprachmodell as sm
++from tests.test_notizen_zuerst import _eingabe
++from tests.test_step2b import _kleine_teile, transkribiert  # noqa: F401
++from tests.test_verwaltung import admin  # noqa: F401
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++KAPITEL = ("Mara floh aus der Stadt und ließ das Schwert Eisenwind zurück.\n\n"
++           "Am Hafen ging Hanna Kessler über Bord. Jemand zog sie zurück ins Boot.")
++PUNKTE = [{"zeit": 60.0, "ereignis": "Mara lässt das Schwert zurück.", "ausgang": "Eisenwind bleibt in der Stadt.",
++           "rang": "kritisch"},
++          {"zeit": 120.0, "ereignis": "Hanna geht über Bord und verliert das Silber.",
++           "ausgang": "Das Silber ist weg.", "rang": "kritisch"},
++          {"zeit": 130.0, "ereignis": "Hanna wird gerettet.", "ausgang": "Hanna lebt (unklar, wer).", "rang": "kritisch"}]
++
++
++def test_pflicht_zitat_wird_nachgerechnet():
++    """„erzählt“ ohne auffindbares Zitat ist „fehlt“; ein falscher Absatz wird nach dem Zitat berichtigt;
++    „widerspricht“ ohne Zitat wird „unklar“ und löst keine Nachbesserung aus."""
++    d = {"punkte": [
++        {"nr": 1, "status": "erzaehlt", "absatz": 2, "zitat": "ließ das Schwert Eisenwind zurück"},
++        {"nr": 2, "status": "erzaehlt", "absatz": 2, "zitat": "Hanna verlor das Silber"},  # erfunden
++        {"nr": 3, "status": "widerspricht", "absatz": 2, "zitat": "Mara zog sie zurück", "begruendung": "Es war nicht Mara."}]}
++    aus = sm.pflicht_lesen(d, 3, 2, KAPITEL)
++    assert aus[0]["status"] == "erzaehlt" and aus[0]["absatz"] == 0  # Zitat steht in Absatz 1
++    assert aus[1]["status"] == "fehlt" and aus[1]["zitat"] == "" and aus[1]["begruendung"] == sm.OHNE_ZITAT["de"]
++    assert aus[2]["status"] == "unklar"
++    # ohne Kapitel (ältere Aufrufer) bleibt alles wie vom Modell gemeldet
++    assert [p["status"] for p in sm.pflicht_lesen(d, 3, 2)] == ["erzaehlt", "erzaehlt", "widerspricht"]
++    assert "zitat" in sm.SYSTEM_PFLICHT and "findest du keine, ist der Status \"fehlt\"" in sm.SYSTEM_PFLICHT
++    assert "gib den Absatz" in sm.SYSTEM_PFLICHT_NACH
++
++
++def test_unklar_nicht_nachgebessert():
++    class Klient:
++        modell = "m"
++        aufrufe = 0
++
++        def chat(self, system, nutzer):
++            Klient.aufrufe += 1
++            return sm.Antwort(json.dumps({"absaetze": []}), 1, 1)
++
++    befund = [{"nr": 3, "status": "unklar", "absatz": 1, "begruendung": "", "zitat": ""}]
++    ein = {"kampagne": "K", "session_nummer": 1, "personen": []}
++    assert sm.Ablauf(Klient()).pflicht_nachbessern(ein, PUNKTE, befund, KAPITEL) is None and Klient.aufrufe == 0
++
++
++def test_regelreste_und_unklar_marke():
++    assert sm.regelreste("[1:57] Mara schlägt zu (39 von 50, Erfolg).") == "[1:57] Mara schlägt zu."
++    assert sm.regelreste("Hanna springt ins Wasser (Schwimmwurf: 46 von 20, gescheitert).") == "Hanna springt ins Wasser."
++    assert sm.regelreste("Mara wird getroffen (4 Trefferpunkte).") == "Mara wird getroffen."
++    assert sm.regelreste("Kano: tot (seit [1:02:10]), Rita (Deckname), (Witz?)") == "Kano: tot (seit [1:02:10]), Rita (Deckname), (Witz?)"
++    text, befunde = artefakte.kapitel("Mara verlor unwillkürlich 2 Magiepunkte und zitterte. Ihr Schwimmwurf scheiterte. "
++                                      "Sie machte ihm einen Vorwurf. Jemand half ihr nach oben (unklar, wer).")
++    assert text == "Sie machte ihm einen Vorwurf. Jemand half ihr nach oben."
++    assert [b["art"] for b in befunde] == ["regel", "regel"]
++    u = sm.unklar_stellen("[2:20:04] Jemand packt Hanna an den Schultern (unklar, wer).\n[2:21] Der Motor springt an.")
++    assert u == [{"zeit": 8404.0, "zeit_text": "2:20:04", "notiz": "Jemand packt Hanna an den Schultern (unklar, wer)."}]
++    for prompt in (sm.SYSTEM_NOTIZEN, sm.ZUSATZ_STAND, sm.SYSTEM_AUSWAHL, sm.SYSTEM_RECAP):
++        assert "unklar" in prompt
++
++
++def test_auswahl_nach_dauer_und_regelreste():
++    kurz = {"transkript": [{"start": 50 * 60.0}]}
++    mittel = {"transkript": [{"start": 90 * 60.0}]}
++    lang = {"transkript": [{"start": 155 * 60.0}]}
++    assert (sm.auswahl_hoechstens(kurz), sm.auswahl_hoechstens(mittel), sm.auswahl_hoechstens(lang)) == (12, 20, 30)
++    roh = {"ereignisse": [{"zeit": f"{i}:00", "ereignis": f"Ereignis {i} (3 Trefferpunkte)", "ausgang": "offen (Probe gelungen)",
++                           "rang": "kritisch"} for i in range(40)]}
++    aus = sm.auswahl_lesen(roh, 30)
++    assert len(aus) == 30 and aus[0]["ereignis"] == "Ereignis 0" and aus[0]["ausgang"] == "offen"
++    assert len(sm.auswahl_lesen(roh)) == sm.AUSWAHL_HOECHSTENS
++
++
++class Anbieter:
++    """Notizen mit einer unklaren Stelle und einem Regelrest; Pflichtprüfung meldet ein erfundenes Zitat."""
++
++    def __init__(self):
++        self.aufrufe = []
++        self.modelle = []
++
++    def antwort(self, system: str, nutzer: str) -> dict:
++        if "Schreibe Szenennotizen" in system:
++            eigen = nutzer.split("des Transkripts:\n")[1]
++            zeiten = re.findall(r"^\[(\d+:\d{2}(?::\d{2})?)\]", eigen, re.M)
++            return {"notizen": [f"[{zeiten[0]}] Mara wird getroffen (4 Trefferpunkte).",
++                                f"[{zeiten[-1]}] Jemand zieht Hanna aus dem Wasser (unklar, wer)."],
++                    "stand": ["Hanna: gerettet (unklar, von wem)"]}
++        if system.startswith("Du bereitest das Kapitel"):
++            return {"ereignisse": [
++                {"zeit": "2:00", "ereignis": "Hanna wird aus dem Wasser gezogen.", "ausgang": "gerettet (unklar, wer)",
++                 "rang": "kritisch"},
++                {"zeit": "1:00", "ereignis": "Mara wird getroffen.", "ausgang": "verletzt", "rang": "wichtig"}]}
++        if system.startswith("Du schreibst den Recap"):
++            return {"title": "Kapitel 1", "text": "Mara wurde getroffen (unklar, wer).\n\nJemand zog Hanna aus dem Wasser.",
++                    "openThreads": []}
++        if system.startswith("Du vergleichst das Kapitel"):
++            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "Mara wurde getroffen"},
++                               {"nr": 2, "status": "erzaehlt", "absatz": 2, "zitat": "Hanna wurde von Mara gerettet"}]}
++        if system.startswith("Du überarbeitest einzelne Absätze im Kapitel"):
++            return {"absaetze": [{"nr": 2, "text": "Jemand zog Hanna aus dem Wasser, sie lebte."}]}
++        if "Du prüfst den Recap" in system:
++            return {"absaetze": [{"nr": 1, "urteil": "belegt"}, {"nr": 2, "urteil": "belegt"}]}
++        if "Kampagnen-Bibel" in system:
++            return {"proposals": []}
++        return {}
++
++    def __call__(self, request: httpx.Request) -> httpx.Response:
++        body = json.loads(request.content)
++        system, nutzer = body["messages"][0]["content"], body["messages"][1]["content"]
++        self.aufrufe.append({"system": system, "nutzer": nutzer, "modell": body.get("model")})
++        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(self.antwort(system, nutzer),
++                                                                                         ensure_ascii=False)}}],
++                                         "usage": {"prompt_tokens": 1000, "completion_tokens": 100}})
++
++
++def test_ablauf_0473(client, world, dbs, tmp_path):
++    recap_ein, vorschlag_ein = _eingabe(client, world, dbs, tmp_path)
++    anbieter = Anbieter()
++    http = httpx.Client(transport=httpx.MockTransport(anbieter))
++    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "medium", http)
++    notiz = sm.OpenAIKlient("https://llm.example/v1", "sk", "large", http)
++    a = sm.Ablauf(klient, schritt=lambda _n: None, nachbesserung=False, notizen_zuerst=True, notiz_stueck=2000,
++                  notiz_klient=notiz)
++    d = a.ausfuehren(recap_ein, vorschlag_ein, gegenpruefen=True)
++    # Notizen und Auswahl mit dem Notizen-Modell, Kapitel und Prüfung mit dem Kapitel-Modell
++    def modell(anfang: str) -> str:
++        return next(x["modell"] for x in anbieter.aufrufe if x["system"].startswith(anfang))
++
++    assert modell("Du hilfst bei der Nachbereitung") == "large" and modell("Du bereitest das Kapitel") == "large"
++    assert modell("Du schreibst den Recap") == "medium" and modell("Du vergleichst das Kapitel") == "medium"
++    # Regelrest aus der Notiz entfernt, unklare Stelle gesammelt
++    assert "(4 Trefferpunkte)" not in a.letzte_notizen and "Mara wird getroffen." in a.letzte_notizen
++    assert len(a.letzte_unklar) == 1 and "unklar, wer" in a.letzte_unklar[0]["notiz"]
++    assert a.letzte_auswahl[1].get("unklar") is True and a.letzte_auswahl[1]["ausgang"] == "gerettet (unklar, wer)"
++    # Auswahl nach Dauer (150 min → 30) und geplante Länge im Prompt
++    auswahl = next(x for x in anbieter.aufrufe if x["system"].startswith("Du bereitest das Kapitel"))
++    assert "höchstens 30" in auswahl["system"]
++    recap = next(x for x in anbieter.aufrufe if x["system"].startswith("Du schreibst den Recap"))
++    assert re.search(r"Etwa \d+ Absätze mit zusammen 900 bis 1500 Wörtern", recap["system"])
++    # Die Marke steht nicht im Kapitel; das erfundene Zitat macht Punkt 2 zu „fehlt“ → Nachbesserung
++    assert "(unklar" not in d["text"] and d["text"].startswith("Mara wurde getroffen.")
++    assert a.letzte_pflicht["vorher"][1]["status"] == "fehlt" and a.letzte_pflicht["nachgebessert"] is True
++    assert d["text"].endswith("Jemand zog Hanna aus dem Wasser, sie lebte.")
++
++
++def test_einstellung_notizenmodell(client, dbs, admin):  # noqa: F811
++    from app.einstellungen import llm_konfig
++    from app.zusammenfassung import api_klient_notizen
++
++    daten = {"csrf": admin, "art": "api", "anbieter": "mistral", "api_modell": "mistral-medium-latest",
++             "api_modell_notizen": "mistral-large-latest", "lokal_modell": "auto", "lokal_kontext": "12288",
++             "api_key": "sk-abcdefghijklmnop1234"}
++    client.post("/verwaltung/zusammenfassung", data=daten)
++    dbs.expire_all()
++    k = llm_konfig(dbs)
++    assert k.api_modell_notizen == "mistral-large-latest" and api_klient_notizen(k).modell == "mistral-large-latest"
++    seite = client.get("/verwaltung/zusammenfassung").text
++    assert 'name="api_modell_notizen"' in seite and "Modell für Notizen und Auswahl" in seite
++    client.post("/verwaltung/zusammenfassung", data={**daten, "api_modell_notizen": "mistral-medium-latest"})
++    dbs.expire_all()
++    assert llm_konfig(dbs).api_modell_notizen == "" and api_klient_notizen(llm_konfig(dbs)) is None
++
++
++def test_probelauf_dateien_0473():
++    from app import kapitelprobe
++
++    assert "unklar.json" in kapitelprobe.DATEIEN
+diff --git a/tests/test_kuerzen.py b/tests/test_kuerzen.py
+index 1ee5732..a928ab5 100644
+--- a/tests/test_kuerzen.py
++++ b/tests/test_kuerzen.py
+@@ -45,6 +45,7 @@ class Anbieter:
+             gekuerzt = "Alte Laternen flackerten" not in nutzer
+             zweiter = "fehlt" if (gekuerzt and self.verliert) else "erzaehlt"
+-            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1},
+-                               {"nr": 2, "status": zweiter, "absatz": 2, "begruendung": ""}]}
++            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "gab ihr das Schwert Eisenwind"},
++                               {"nr": 2, "status": zweiter, "absatz": 2, "begruendung": "",
++                                "zitat": "" if zweiter == "fehlt" else "floh die Gruppe aus der Stadt"}]}
+         if "Du prüfst den Recap" in system:
+             return {"absaetze": [{"nr": 1, "urteil": "belegt"}, {"nr": 2, "urteil": "belegt"}]}
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 79a28b0..dcd2dbd 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.72"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.73"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_notizen_zuerst.py b/tests/test_notizen_zuerst.py
+index 14ecf3e..943b128 100644
+--- a/tests/test_notizen_zuerst.py
++++ b/tests/test_notizen_zuerst.py
+@@ -78,5 +78,5 @@ def test_notizen_zuerst_mit_stand_und_ueberlappung(client, world, dbs, tmp_path)
+     recap = next(a for a in anbieter.aufrufe if a["system"].startswith("Du schreibst den Recap"))
+     assert "Stand am Ende der Runde" in recap["nutzer"] and "Kano: tot" in recap["nutzer"]
+-    assert "900–1500" in recap["system"]
++    assert "900 bis 1500" in recap["system"]  # 0.4.73: geplante Länge statt bloßer Spanne
+     vorschlag = next(a for a in anbieter.aufrufe if "Kampagnen-Bibel" in a["system"])
+     assert "\nTranskript:\n" in vorschlag["nutzer"] and "Zeile 149:" in vorschlag["nutzer"]
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 902b680..4f18cd0 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.72"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.73"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index 8a474e2..67ead26 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.72"
++version = "0.4.73"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
