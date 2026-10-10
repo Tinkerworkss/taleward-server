@@ -1,0 +1,311 @@
+From 7accaba868819a4e178969ce6519b54b1c5f2f9a Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 13:35:16 +0200
+Subject: [PATCH] Verwaltung: neuer API-Schluessel wird vor dem Speichern beim
+ Anbieter geprueft (Server 0.4.77)
+
+Browser setzen in Passwortfelder trotz autocomplete="off" gern ein gespeichertes Passwort
+ein; beim Speichern (etwa nach einem Modellwechsel) ueberschrieb das den gueltigen
+Schluessel. Jetzt:
+- Schluesselfelder mit autocomplete="new-password" und Hinweisen fuer Passwortmanager
+- Zusammenfassung und Transkription: lehnt der Anbieter den neu eingetragenen Schluessel
+  ab (401/403 bei GET /models), wird nichts gespeichert und der bisherige bleibt;
+  nicht erreichbar gilt nicht als abgelehnt
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/modellwahl.py                             | 15 +++++
+ app/verwaltung/i18n.py                        |  4 ++
+ app/verwaltung/router.py                      | 12 ++++
+ app/verwaltung/templates/anmeldung.html       |  2 +-
+ app/verwaltung/templates/assistent.html       |  6 +-
+ app/verwaltung/templates/einstellungen.html   |  2 +-
+ app/verwaltung/templates/transkription.html   |  4 +-
+ app/verwaltung/templates/zusammenfassung.html |  2 +-
+ pyproject.toml                                |  2 +-
+ tests/test_aktualisierung.py                  |  2 +-
+ tests/test_assistent.py                       |  2 +-
+ tests/test_modellablage.py                    |  2 +-
+ tests/test_schluessel_0477.py                 | 57 +++++++++++++++++++
+ tests/test_worker_app.py                      |  2 +-
+ uv.lock                                       |  2 +-
+ 15 files changed, 102 insertions(+), 14 deletions(-)
+ create mode 100644 tests/test_schluessel_0477.py
+
+diff --git a/app/modellwahl.py b/app/modellwahl.py
+index e2e561a..6b1804f 100644
+--- a/app/modellwahl.py
++++ b/app/modellwahl.py
+@@ -51,4 +51,19 @@ def holen(db: Session, k) -> None:
+ 
+ 
++def schluessel_abgelehnt(url: str, key: str) -> bool:
++    """0.4.77: Lehnt der Anbieter einen neu eingetragenen Schlüssel ab (401/403 bei GET /models)? Browser setzen in
++    Passwortfelder gern ein gespeichertes Passwort ein; ohne diese Probe überschrieb das beim Speichern den gültigen
++    Schlüssel. Nicht erreichbar oder keine Liste: gilt nicht als abgelehnt (offline einrichten bleibt möglich)."""
++    from app.sprachmodell import OpenAIKlient, SprachmodellFehler
++
++    if not HOLEN or not url or not key:
++        return False
++    try:
++        OpenAIKlient(url, key, "", client=httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0))).modelle()
++    except SprachmodellFehler:
++        return True
++    return False
++
++
+ def bekannte(anbieter) -> list[str]:
+     if anbieter is None:
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 6ed0bd1..0d63da9 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -623,4 +623,8 @@ EN: dict[str, str] = {
+     "Wartezeit bitte in Stunden zwischen 1 und 720 angeben.": "Please enter a waiting time between 1 and 720 hours.",
+     "Der API-Schlüssel sieht nicht vollständig aus.": "The API key does not look complete.",
++    ("Der Anbieter lehnt den eingetragenen API-Schlüssel ab – gespeichert wurde nichts, der bisherige Schlüssel bleibt. "
++     "Hat der Browser vielleicht ein gespeichertes Passwort in das Feld gesetzt? Feld leeren, um den bisherigen Schlüssel "
++     "zu behalten."): ("The provider rejects the API key you entered – nothing was saved, the previous key stays. Did the "
++                      "browser perhaps fill a saved password into the field? Clear the field to keep the previous key."),
+     "Zum Freigeben bitte den API-Schlüssel eintragen.": "To enable it, please enter the API key.",
+     # Warteschlange
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index b537c41..74c1f19 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -660,4 +660,9 @@ def lokal_beenden(user: User = Depends(verwalter), db: Session = Depends(get_db)
+ 
+ 
++SCHLUESSEL_ABGELEHNT = ("Der Anbieter lehnt den eingetragenen API-Schlüssel ab – gespeichert wurde nichts, der bisherige "
++                        "Schlüssel bleibt. Hat der Browser vielleicht ein gespeichertes Passwort in das Feld gesetzt? "
++                        "Feld leeren, um den bisherigen Schlüssel zu behalten.")
++
++
+ @router.post("/transkription/extern", dependencies=[Depends(csrf_pruefen)])
+ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str = Form(""), key_loeschen: str = Form(""),
+@@ -680,4 +685,9 @@ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str =
+     if anbieter and not key and not extern_konfig(db).api_key and not key_loeschen:
+         return _transkription_fehler(request, user, db, _("Zum Freigeben bitte den API-Schlüssel eintragen."))
++    if key and not key_loeschen:
++        from app import cloudanbieter, modellwahl
++
++        if modellwahl.schluessel_abgelehnt(cloudanbieter.finden("mistral").url, key):
++            return _transkription_fehler(request, user, db, _(SCHLUESSEL_ABGELEHNT))
+     meta_schreiben(db, "extern.anbieter", anbieter)
+     meta_schreiben(db, "extern.after_hours", f"{h:g}")
+@@ -957,4 +967,6 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+     if key and (len(key) < 16 or len(key) > 300 or any(c.isspace() for c in key)):
+         return fehler(_("Der API-Schlüssel sieht nicht vollständig aus."))
++    if key and not key_loeschen and modellwahl.schluessel_abgelehnt(url, key):
++        return fehler(_(SCHLUESSEL_ABGELEHNT))
+     meta_schreiben(db, "llm.art", art)
+     meta_schreiben(db, "llm.api_url", url)
+diff --git a/app/verwaltung/templates/anmeldung.html b/app/verwaltung/templates/anmeldung.html
+index 1701cb7..a9bdab4 100644
+--- a/app/verwaltung/templates/anmeldung.html
++++ b/app/verwaltung/templates/anmeldung.html
+@@ -28,5 +28,5 @@
+     <label>{{ _("Privater Schlüssel (.p8)") }} <textarea name="private_key" rows="4" placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.private_key else '-----BEGIN PRIVATE KEY-----' }}"></textarea></label>
+     {% else %}
+-    <label>{{ _("Clientschlüssel (Secret)") }} <input type="password" name="client_secret" autocomplete="off" placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.client_secret else '' }}"></label>
++    <label>{{ _("Clientschlüssel (Secret)") }} <input type="password" name="client_secret" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.client_secret else '' }}"></label>
+     {% endif %}
+     {% if d.k.eingerichtet %}<label class="haken"><input type="checkbox" name="entfernen" value="1"> {{ _("Diesen Dienst ausschalten und Schlüssel löschen") }}</label>{% endif %}
+diff --git a/app/verwaltung/templates/assistent.html b/app/verwaltung/templates/assistent.html
+index b84da19..5e53e76 100644
+--- a/app/verwaltung/templates/assistent.html
++++ b/app/verwaltung/templates/assistent.html
+@@ -55,5 +55,5 @@
+     <fieldset><legend>Mistral</legend>
+       <label>{{ _("API-Schlüssel") }}
+-        <input type="password" name="mistral_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=mistral_ende) if mistral_ende else _('von console.mistral.ai') }}">
++        <input type="password" name="mistral_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=mistral_ende) if mistral_ende else _('von console.mistral.ai') }}">
+         <span class="hilfe">{{ _("Konto bei console.mistral.ai anlegen, Zahlungsmittel hinterlegen, unter „API Keys“ einen Schlüssel erzeugen. Er gilt für Transkription und Zusammenfassung und wird nach dem Speichern nie wieder angezeigt.") }}</span></label>
+       <label>{{ _("Monatliches Kostenlimit (Euro)") }} <input type="number" name="limit_euro" value="{{ '%g'|format(limit_euro) }}" min="0" max="10000" step="1">
+@@ -74,5 +74,5 @@
+       </ol>
+       <label>{{ _("Zugangsschlüssel") }}
+-        <input type="password" name="hf_token" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=hf_ende) if hf_ende else 'hf_…' }}">
++        <input type="password" name="hf_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=hf_ende) if hf_ende else 'hf_…' }}">
+         <span class="hilfe">{{ _("Der Schlüssel bleibt auf dem Server. Eure Worker brauchen keinen.") }}</span></label>
+     </fieldset>
+@@ -129,5 +129,5 @@
+     </div>
+     {% if not mistral %}
+-    <label>{{ _("API-Schlüssel von Mistral (nur für die Cloud-API)") }} <input type="password" name="mistral_key" autocomplete="off" placeholder="{{ _('von console.mistral.ai') }}"></label>
++    <label>{{ _("API-Schlüssel von Mistral (nur für die Cloud-API)") }} <input type="password" name="mistral_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('von console.mistral.ai') }}"></label>
+     {% endif %}
+     <div class="knopfzeile"><button class="tw-btn tw-btn--primary" type="submit">{{ _("Weiter") }}</button>
+diff --git a/app/verwaltung/templates/einstellungen.html b/app/verwaltung/templates/einstellungen.html
+index 9e83375..358a2cf 100644
+--- a/app/verwaltung/templates/einstellungen.html
++++ b/app/verwaltung/templates/einstellungen.html
+@@ -87,5 +87,5 @@
+   <div class="formular">
+     <label>{{ _("ntfy-Adresse") }} <input type="url" name="ntfy_url" value="{{ melden.ntfy_url }}" maxlength="500" placeholder="https://ntfy.sh/mein-verein-taleward-7k2q"></label>
+-    <label>{{ _("Zugangstoken (nur bei eigenem ntfy-Server mit Anmeldung)") }} <input type="password" name="ntfy_token" autocomplete="off" placeholder="{{ _('gespeichert – leer lassen, um ihn zu behalten') if melden.ntfy_token else '' }}"></label>
++    <label>{{ _("Zugangstoken (nur bei eigenem ntfy-Server mit Anmeldung)") }} <input type="password" name="ntfy_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('gespeichert – leer lassen, um ihn zu behalten') if melden.ntfy_token else '' }}"></label>
+   </div>
+   <h3>{{ _("E-Mail-Versand") }}</h3>
+diff --git a/app/verwaltung/templates/transkription.html b/app/verwaltung/templates/transkription.html
+index 01f3caf..142b453 100644
+--- a/app/verwaltung/templates/transkription.html
++++ b/app/verwaltung/templates/transkription.html
+@@ -221,5 +221,5 @@
+   <form class="formular" method="post" action="/verwaltung/transkription/hf">
+     <input type="hidden" name="csrf" value="{{ csrf }}">
+-    <label>{{ _("Zugangsschlüssel") }} <input type="password" name="hf_token" autocomplete="off" placeholder="hf_…">
++    <label>{{ _("Zugangsschlüssel") }} <input type="password" name="hf_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="hf_…">
+       <span class="hilfe">{{ _("Bleibt auf dem Server. Damit lädt er das Sprechermodell und neue Fassungen nach Updates.") }}</span></label>
+     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Prüfen und speichern") }}</button></div>
+@@ -246,5 +246,5 @@
+       </select></label>
+     <label>{{ _("API-Schlüssel") }}
+-      <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=ext.key_ende) if ext.key_ende else _('von console.mistral.ai') }}">
++      <input type="password" name="api_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=ext.key_ende) if ext.key_ende else _('von console.mistral.ai') }}">
+       <span class="hilfe">{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
+     {% if ext.key_ende %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index 171a406..29a4c4d 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -75,5 +75,5 @@
+         <span class="hilfe">{{ _("Nur zum Vergleichen: Das Zuhören (Notizen, Stand, Auswahl der Pflichtereignisse) ist der teuerste Schritt. Ein anderes Modell hier spart Kosten, muss aber in Probeläufen zeigen, dass die Kapitel gleich gut bleiben.") }}</span></label>
+       <label>{{ _("API-Schlüssel") }}
+-        <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
++        <input type="password" name="api_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
+         <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
+       {% if k.eigener_key %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
+diff --git a/pyproject.toml b/pyproject.toml
+index 581657a..66f6722 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.76"
++version = "0.4.77"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 2d39d8b..0b03968 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.76"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.77"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 25f58db..5209ce6 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.76"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.77"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 0e8fb7a..6eba2a7 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.76"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.77"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_schluessel_0477.py b/tests/test_schluessel_0477.py
+new file mode 100644
+index 0000000..392e347
+--- /dev/null
++++ b/tests/test_schluessel_0477.py
+@@ -0,0 +1,57 @@
++"""Server 0.4.77: Ein neu eingetragener API-Schlüssel wird vor dem Speichern beim Anbieter geprüft; lehnt der ihn ab,
++bleibt der bisherige. Schlüsselfelder bitten den Browser, kein gespeichertes Passwort einzusetzen."""
++import httpx
++
++from app import modellwahl
++from tests.test_verwaltung import admin  # noqa: F401
++
++DATEN = {"art": "api", "anbieter": "mistral", "api_modell": "mistral-medium-latest", "lokal_modell": "auto",
++         "lokal_kontext": "12288"}
++
++
++def test_abgelehnter_schluessel_ueberschreibt_nicht(client, dbs, admin, monkeypatch):  # noqa: F811
++    from app.einstellungen import extern_konfig, llm_konfig
++
++    r = client.post("/verwaltung/zusammenfassung", data={**DATEN, "csrf": admin, "api_key": "sk-gueltig-abcdefgh1111"})
++    assert r.status_code == 200
++    monkeypatch.setattr(modellwahl, "schluessel_abgelehnt", lambda url, key: key.endswith("9999"))
++    r = client.post("/verwaltung/zusammenfassung", data={**DATEN, "csrf": admin, "api_key": "browser-passwort-9999",
++                                                         "api_modell": "mistral-large-latest"})
++    assert r.status_code == 400 and "gespeichert wurde nichts" in r.text
++    dbs.expire_all()
++    k = llm_konfig(dbs)
++    assert k.api_key.endswith("1111") and k.api_modell == "mistral-medium-latest"  # nichts geändert
++    # leeres Feld: Modell wechseln ohne Probe, Schlüssel bleibt
++    client.post("/verwaltung/zusammenfassung", data={**DATEN, "csrf": admin, "api_modell": "mistral-large-latest"})
++    dbs.expire_all()
++    assert llm_konfig(dbs).api_key.endswith("1111") and llm_konfig(dbs).api_modell == "mistral-large-latest"
++    # dasselbe für die Transkription
++    url = "/verwaltung/transkription/extern"
++    client.post(url, data={"csrf": admin, "anbieter": "mistral", "api_key": "sk-gueltig-abcdefgh2222", "stunden": "12"})
++    r = client.post(url, data={"csrf": admin, "anbieter": "mistral", "api_key": "browser-passwort-9999", "stunden": "12"})
++    assert r.status_code == 400 and "gespeichert wurde nichts" in r.text
++    dbs.expire_all()
++    assert extern_konfig(dbs).api_key.endswith("2222")
++
++
++def test_probe_beim_anbieter(monkeypatch):
++    monkeypatch.setattr(modellwahl, "HOLEN", True)
++    echt = httpx.Client
++
++    def transport(status):
++        def client(**kw):
++            return echt(transport=httpx.MockTransport(lambda req: httpx.Response(status, json={"data": []})))
++        return client
++
++    monkeypatch.setattr(modellwahl.httpx, "Client", transport(401))
++    assert modellwahl.schluessel_abgelehnt("https://llm.example/v1", "sk-falsch") is True
++    monkeypatch.setattr(modellwahl.httpx, "Client", transport(200))
++    assert modellwahl.schluessel_abgelehnt("https://llm.example/v1", "sk-gut") is False
++    monkeypatch.setattr(modellwahl.httpx, "Client", transport(503))  # nicht erreichbar: nicht abgelehnt
++    assert modellwahl.schluessel_abgelehnt("https://llm.example/v1", "sk-gut") is False
++
++
++def test_kein_autofill_in_schluesselfeldern(client, admin):  # noqa: F811
++    for seite in ("/verwaltung/zusammenfassung", "/verwaltung/transkription"):
++        text = client.get(seite).text
++        assert 'name="api_key" autocomplete="new-password"' in text and 'autocomplete="off"' not in text
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 63e469d..ed744c6 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.76"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.77"
+ 
+ 
+diff --git a/uv.lock b/uv.lock
+index cf16628..f432732 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.76"
++version = "0.4.77"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
