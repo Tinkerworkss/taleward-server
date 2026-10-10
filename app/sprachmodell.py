@@ -840,21 +840,20 @@ def stand_bis(stand: list[str], bis_s: float) -> list[str]:
 # Kein Einschnitt → keine Teile. Der Server prüft Lage, Mindestdauer und das Zitat aus den Notizen.
 TEILE_AB_MIN = 240  # ab so vielen Minuten Spielzeit wird ein Einschnitt gesucht
 TEILE_ZWEI_AB_MIN = 420  # ab so vielen Minuten sind zwei Einschnitte möglich
-TEILE_FENSTER = (0.3, 0.7)  # Einschnitte nur in diesem Anteil der Runde
+TEILE_FENSTER = (0.25, 0.75)  # Einschnitte nur in diesem Anteil der Runde (0.4.80: vorher 30–70 %)
 TEIL_MIN_MIN = 60  # jeder Teil dauert mindestens so viele Minuten
 EINSCHNITT_NAEHE_S = 600.0  # die zitierte Notiz liegt höchstens so weit vom genannten Zeitpunkt
-# 0.4.79: Nur Zeitsprung und Ortswechsel zählen (gemessen: „Ende eines Strangs“ und „Pause“ schnitten mitten in
-# Gespräche); einen zweiten Einschnitt gibt es nur als Zeitsprung.
-_EINSCHNITT_ARTEN = {"zeitsprung": "zeitsprung", "time_skip": "zeitsprung", "ortswechsel": "ortswechsel",
-                     "scene_change": "ortswechsel"}
+# 0.4.79: „Ende eines Strangs“ und „Pause“ schnitten mitten in Gespräche. 0.4.80: Auch „Ortswechsel“ nicht mehr – das
+# Modell nannte so die Ankunft einer Figur mitten in der Szene. Es zählt nur ein Zeitsprung in der Spielwelt.
+_EINSCHNITT_ARTEN = {"zeitsprung": "zeitsprung", "time_skip": "zeitsprung"}
 SYSTEM_EINSCHNITT = """Du gliederst die Szenennotizen einer langen Pen-&-Paper-Runde. Gesucht ist ein natürlicher \
 Einschnitt, an dem die Geschichte selbst einen Schnitt macht – nur zwischen {von} und {bis}, höchstens {anzahl}:
-- ein Zeitsprung in der Spielwelt: die Figuren schlafen, ein neuer Tag oder Abend beginnt („am nächsten Morgen“, „eine \
-Woche später“) – das ist der beste Einschnitt;
-- oder ein Wechsel von Ort und Szene, nach dem etwas ganz Neues beginnt.
-Kein Einschnitt mitten in einer Szene, einem Kampf oder einem Gespräch, und nicht nur, weil eine Figur geht oder ein \
-Gespräch endet. Gibt es keinen klaren Einschnitt, liefere eine leere Liste – lieber keiner als ein erzwungener.
-Je Einschnitt: zeit (Zeitstempel der ersten Notiz nach dem Einschnitt), art ("zeitsprung" oder "ortswechsel"), zitat (diese Notiz, wörtlich, höchstens 20 Wörter), titel (Überschrift für den Teil ab hier, 2 bis 5 \
+einen Zeitsprung in der Spielwelt: die Figuren schlafen, ein neuer Tag oder Abend beginnt („am nächsten Morgen“, \
+„eine Woche später“, jemand wacht auf, ein neuer Tag wird beschrieben). Achte auch auf leise Zeitsprünge, die nur \
+eine Notiz zeigt (eine Figur erwacht am Morgen). Kein Einschnitt mitten in einer Szene, einem Kampf oder einem Gespräch, \
+und nicht, weil eine Figur kommt, geht oder ein Gespräch endet. Gibt es keinen Zeitsprung, liefere eine leere Liste – \
+lieber keiner als ein erzwungener.
+Je Einschnitt: zeit (Zeitstempel der ersten Notiz nach dem Zeitsprung), art ("zeitsprung"), zitat (diese Notiz, wörtlich, höchstens 20 Wörter), titel (Überschrift für den Teil ab hier, 2 bis 5 \
 Wörter, ohne Nummer). Dazu titel_anfang: die Überschrift für den Teil davor. Überschriften im Ton der Kampagne, ohne \
 Namen der Menschen am Tisch, keine Regeln, nichts erfinden.
 Antworte nur mit JSON: {"titel_anfang": "…", "einschnitte": [{"zeit": "h:mm:ss", "art": "…", "zitat": "…", \
@@ -877,6 +876,11 @@ TEIL_OHNE_SCHLUSS = """
 
 TEIL_MIN_WOERTER = 300  # so viel Platz bekommt auch ein kurzer Teil mindestens
 TEIL_MIN_PFLICHT = 12  # so viele Pflichtereignisse bekommt auch ein kurzer Teil mindestens
+
+
+def absatzzahl(unten: int, oben: int) -> int:
+    """0.4.80: So viele Absätze zu je etwa 150 Wörtern treffen die Mitte der Längenvorgabe."""
+    return max(4, round((unten + oben) / 2 / 150))
 
 
 def teil_grenzen(teil: dict, dauer_s: float, lang: bool = True) -> tuple[int, int]:
@@ -935,8 +939,7 @@ def einschnitte_lesen(d: dict, notizen: str, dauer_s: float, hoechstens: int, sp
                 aus.append((schnitt, titel))
         return aus
 
-    # Zeitsprünge gehen vor; mehr als ein Einschnitt nur aus Zeitsprüngen, ein Ortswechsel höchstens allein
-    gewaehlt = waehlen([k for k in kandidaten if k[2] == "zeitsprung"], hoechstens) or waehlen(kandidaten, 1)
+    gewaehlt = waehlen([k for k in kandidaten if k[2] == "zeitsprung"], hoechstens)
     if not gewaehlt:
         return []
     ersatz = "Part {n}" if sprache == "en" else "Teil {n}"
@@ -1085,8 +1088,10 @@ def _fenster(zeilen: list[tuple[float, str]], zeit: float, davor: float = ZWEITE
 # 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
 # danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
 # lange Fassung: gekürzt wird nur, wenn keine Information verloren geht.
-SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session auf {unten} bis {ziel} Wörter (nicht weniger), \
-damit es vorlesbar bleibt. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
+SYSTEM_KUERZEN = """Du kürzt das Kapitel einer Pen-&-Paper-Session, damit es vorlesbar bleibt. Es hat {woerter} Wörter. \
+Streiche etwa {weg} Wörter – nicht mehr; das Ergebnis hat etwa {ziel} Wörter. Kürze gleichmäßig über das ganze Kapitel, \
+Absatz für Absatz: Das Ende ist so wichtig wie der Anfang und wird nie weggelassen oder zusammengefasst; der letzte \
+Absatz bleibt der letzte. Streiche nur Ausschmückung: Kulisse, Kleidung, Essen und Getränke, Wege von A nach B, wörtliche Rede, die \
 nichts Neues sagt, Wiederholungen. Alles andere bleibt: jede Handlung mit ihrem Ausgang und mit den richtigen Personen, \
 jeder Name, jeder benannte Gegenstand, jede Abmachung und jede Information, in derselben Reihenfolge. Die Ereignisse \
 der Liste kommen alle mit genau diesem Ausgang vor. Verändere keine Aussage, füge nichts hinzu. Gleicher Ton, \
@@ -1094,6 +1099,19 @@ Vergangenheit, Absätze durch Leerzeilen getrennt, reiner Text ohne Markdown.
 Antworte nur mit JSON: {"text": "…"}. Sprache: {sprache}."""
 KUERZEN_AB = 1.2  # erst ab 20 % über der oberen Grenze kürzen
 KUERZEN_MINDESTENS = 0.1  # weniger als 10 % gespart: lohnt nicht, lange Fassung bleibt
+KUERZEN_UNTEN = 0.95  # 0.4.80: kürzer als 95 % der Untergrenze: zu viel gestrichen, lange Fassung bleibt
+ENDE_ERHALTEN = 0.5  # 0.4.80: so viele Wortstämme des letzten Absatzes müssen in den letzten zwei Absätzen bleiben
+
+
+def ende_erhalten(lang: str, kurz: str) -> bool:
+    """0.4.80: Hat die Kürzung das Ende des Kapitels behalten? Die Wortstämme des letzten Absatzes der langen Fassung
+    müssen zur Hälfte in den letzten zwei Absätzen der kurzen stehen – ein abgeschnittenes oder zu einem Satz
+    zusammengefasstes Ende fällt so auf (die Pflichtprüfung prüft zusätzlich jedes Ereignis)."""
+    alt, neu = absaetze(lang), absaetze(kurz)
+    if not alt or not neu:
+        return False
+    s = _staemme(alt[-1])
+    return not s or len(s & _staemme(" ".join(neu[-2:]))) / len(s) >= ENDE_ERHALTEN
 _NAMENSFOLGE = re.compile(r"(?<=[a-zäöüß,;:–] )[A-ZÄÖÜ][\w’'-]+(?: [A-ZÄÖÜ][\w’'-]+)+")
 
 
@@ -2242,8 +2260,10 @@ class Ablauf:
                   f"\n\n{titel}:\n{grundlage}")
         unten, oben = grenzen or (untergrenze(ein, self.notizen_zuerst), obergrenze(ein, self.notizen_zuerst))
         if self.notizen_zuerst:  # 0.4.73: Länge vorab planen statt hinterher kürzen – Absatzzahl hält das Modell besser ein
-            laenge = (f"Etwa {max(4, round(oben / 130))} Absätze mit zusammen {unten} bis {oben} Wörtern – nicht mehr als "
-                      f"{oben} –, je Absatz 80 bis 180 Wörter")
+            # 0.4.80: Die Absatzzahl ergibt die Länge – „Obergrenze / 130“ Absätze zu je ≈ 170 Wörtern ergaben ein Viertel
+            # mehr als erlaubt (7 h: 18 Absätze, ≈ 3.000 statt höchstens 2.400 Wörter). Jetzt: Mitte der Vorgabe / 150.
+            laenge = (f"Etwa {absatzzahl(unten, oben)} Absätze mit zusammen {unten} bis {oben} Wörtern – nicht mehr als "
+                      f"{oben} –, je Absatz etwa 150 Wörter")
         else:
             laenge = f"{unten}–{oben} Wörter, in Absätzen von je 80 bis 180 Wörtern"
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
@@ -2511,13 +2531,17 @@ class Ablauf:
             self.letzte_kuerzung["grund"] = "nicht zu lang"
             return None
         nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
+        # 0.4.80: „Streiche etwa N Wörter“ statt „kürze auf X bis Y“ – mit der Zielspanne kürzte das Modell 3.000 Wörter
+        # zweimal auf 1.100. Übernommen wird nur, was mindestens bei der Untergrenze bleibt und das Ende behält.
+        weg = n - grenze
         system = (SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein)).replace("{ziel}", str(grenze))
-                  .replace("{unten}", str(unten)))
+                  .replace("{woerter}", str(n)).replace("{weg}", str(weg)))
         self._schritt("revision")
         t, m = "", 0
-        for versuch in range(2):  # 0.4.76: zu kurz geraten → einmal nachfordern, mit der Zahl
-            zusatz = "" if not versuch else (f"\n\nDeine erste Kürzung hatte nur {m} Wörter. Schreib mindestens {unten} "
-                                             f"Wörter; streiche nur Ausschmückung.")
+        for versuch in range(2):  # zu viel gestrichen → einmal nachfordern, mit den Zahlen
+            zusatz = "" if not versuch else (
+                f"\n\nDeine erste Kürzung hatte nur {m} Wörter – du hast {n - m} gestrichen statt etwa {weg}. Streiche nur "
+                f"etwa {weg} Wörter, gleichmäßig über alle Absätze; das Ende bleibt vollständig.")
             d = self.zaehler.aufruf(self.klient, system, nutzer + zusatz)
             t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
             if "\n\n" not in t and "\n" in t:
@@ -2525,11 +2549,14 @@ class Ablauf:
             t = absaetze_teilen(t) if t else ""
             m = len(t.split())
             self.letzte_kuerzung["woerter_neu"] = m
-            if not t or m >= grenze * 0.5:
+            if not t or m >= unten * KUERZEN_UNTEN:
                 break
             self.letzte_kuerzung["zu_kurz"] = m
-        if not t or m > n * (1 - KUERZEN_MINDESTENS) or m < grenze * 0.5:
+        if not t or m > n * (1 - KUERZEN_MINDESTENS) or m < unten * KUERZEN_UNTEN:
             self.letzte_kuerzung["grund"] = "Länge passt nicht"
+            return None
+        if not ende_erhalten(r["text"], t):
+            self.letzte_kuerzung["grund"] = "Ende fehlt"
             return None
         extra = [p.get("charakter") or "" for p in ein.get("personen") or []] + \
                 [e.get("name") or "" for e in ein.get("bibel") or []]

@@ -16,7 +16,7 @@ _SAETZE = [f"{a} {n} {v} still." for a in ("Alte", "Graue", "Nasse", "Kalte", "D
            for n in ("Laternen", "Mauern", "Gassen", "Dächer", "Fenster", "Brücken", "Türme", "Höfe", "Boote", "Wagen")
            for v in ("flackerten", "glänzten", "schwiegen", "warteten", "knarrten", "tropften")]
 SCHMUCK = " ".join(_SAETZE[:260])  # ≈ 1040 Wörter Ausschmückung
-REST = " ".join(_SAETZE[260:460])  # ≈ 800 Wörter, bleiben in der Kurzfassung
+REST = " ".join(_SAETZE[260:480])  # ≈ 880 Wörter, bleiben (0.4.80: Kurzfassung nicht unter der Untergrenze)
 LANG = (f"Mara traf Hanna Kessler am Hafen und gab ihr das Schwert Eisenwind. {SCHMUCK}\n\n"
         f"Später floh die Gruppe aus der Stadt. {REST}")
 KURZ = f"Mara traf Hanna Kessler am Hafen und gab ihr das Schwert Eisenwind.\n\nSpäter floh die Gruppe aus der Stadt. {REST}"
@@ -70,7 +70,7 @@ def _lauf(anbieter, client, world, dbs, tmp_path):
 def test_kuerzung_ohne_verlust_wird_uebernommen(client, world, dbs, tmp_path):
     a, d = _lauf(Anbieter(), client, world, dbs, tmp_path)
     assert "Alte Laternen flackerten" not in d["text"] and "Hanna Kessler" in d["text"] and a.letztes_lang
-    assert a.letzte_kuerzung["angenommen"] is True and a.letzte_pflicht["kuerzung"]["woerter_neu"] < 900
+    assert a.letzte_kuerzung["angenommen"] is True and a.letzte_pflicht["kuerzung"]["woerter_neu"] < 1000
 
 
 def test_kuerzung_ohne_namen_wird_verworfen(client, world, dbs, tmp_path):

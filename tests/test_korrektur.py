@@ -111,7 +111,8 @@ def test_korrektur_im_probelauf(client, world, dbs, tmp_path, admin):  # noqa: F
 
 
 def test_kuerzen_nennt_untergrenze():
-    assert "{unten} bis {ziel} Wörter (nicht weniger)" in sm.SYSTEM_KUERZEN
+    # 0.4.80: statt einer Zielspanne „streiche etwa N Wörter“; die Untergrenze prüft der Server (KUERZEN_UNTEN)
+    assert "Streiche etwa {weg} Wörter – nicht mehr" in sm.SYSTEM_KUERZEN and sm.KUERZEN_UNTEN == 0.95
     assert sm.untergrenze({"transkript": [{"start": 9000}]}, True) == 900
 
 

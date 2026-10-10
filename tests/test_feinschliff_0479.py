@@ -16,16 +16,16 @@ def _schnitt(zeit, art, minute, titel="T"):
 def test_nur_zeitsprung_und_ortswechsel():
     for art in ("strangende", "pause", "end_of_thread"):
         assert sm.einschnitte_lesen({"einschnitte": [_schnitt("3:10:00", art, 190)]}, NOTIZEN, DAUER, 2) == []
-    # ein Ortswechsel allein zählt
-    teile = sm.einschnitte_lesen({"einschnitte": [_schnitt("3:10:00", "ortswechsel", 190)]}, NOTIZEN, DAUER, 2)
-    assert [t["von"] for t in teile] == [0.0, 11400.0]
-    # Zeitsprung geht vor; ein zweiter Einschnitt nur als Zeitsprung
+    # 0.4.80: ein Ortswechsel zählt nicht mehr, auch nicht allein
+    assert sm.einschnitte_lesen({"einschnitte": [_schnitt("3:10:00", "ortswechsel", 190)]}, NOTIZEN, DAUER, 2) == []
+    # nur Zeitsprünge zählen
     d = {"einschnitte": [_schnitt("2:20:00", "ortswechsel", 140), _schnitt("3:10:00", "zeitsprung", 190),
                          _schnitt("5:00:00", "ortswechsel", 300)]}
     assert [t["von"] for t in sm.einschnitte_lesen(d, NOTIZEN, DAUER, 2)] == [0.0, 11400.0]
     d["einschnitte"][2]["art"] = "zeitsprung"
     assert [t["von"] for t in sm.einschnitte_lesen(d, NOTIZEN, DAUER, 2)] == [0.0, 11400.0, 18000.0]
     assert "zeitsprung" in sm.SYSTEM_EINSCHNITT and "strangende" not in sm.SYSTEM_EINSCHNITT
+    assert '"ortswechsel"' not in sm.SYSTEM_EINSCHNITT
 
 
 def test_teile_teilen_sich_den_platz():
