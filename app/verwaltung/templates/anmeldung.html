@@ -27,7 +27,7 @@
     <label>{{ _("Key-ID") }} <input type="text" name="key_id" value="{{ d.k.key_id }}" maxlength="40" autocomplete="off"></label>
     <label>{{ _("Privater Schlüssel (.p8)") }} <textarea name="private_key" rows="4" placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.private_key else '-----BEGIN PRIVATE KEY-----' }}"></textarea></label>
     {% else %}
-    <label>{{ _("Clientschlüssel (Secret)") }} <input type="password" name="client_secret" autocomplete="off" placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.client_secret else '' }}"></label>
+    <label>{{ _("Clientschlüssel (Secret)") }} <input type="password" name="client_secret" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt – leer lassen, um ihn zu behalten') if d.k.client_secret else '' }}"></label>
     {% endif %}
     {% if d.k.eingerichtet %}<label class="haken"><input type="checkbox" name="entfernen" value="1"> {{ _("Diesen Dienst ausschalten und Schlüssel löschen") }}</label>{% endif %}
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Speichern") }}</button></div>

@@ -86,7 +86,7 @@
   <p class="hilfe">{{ _("App „ntfy“ installieren, ein schwer zu erratendes Thema abonnieren (z. B. mein-verein-taleward-7k2q) und hier dieselbe Adresse eintragen.") }}</p>
   <div class="formular">
     <label>{{ _("ntfy-Adresse") }} <input type="url" name="ntfy_url" value="{{ melden.ntfy_url }}" maxlength="500" placeholder="https://ntfy.sh/mein-verein-taleward-7k2q"></label>
-    <label>{{ _("Zugangstoken (nur bei eigenem ntfy-Server mit Anmeldung)") }} <input type="password" name="ntfy_token" autocomplete="off" placeholder="{{ _('gespeichert – leer lassen, um ihn zu behalten') if melden.ntfy_token else '' }}"></label>
+    <label>{{ _("Zugangstoken (nur bei eigenem ntfy-Server mit Anmeldung)") }} <input type="password" name="ntfy_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('gespeichert – leer lassen, um ihn zu behalten') if melden.ntfy_token else '' }}"></label>
   </div>
   <h3>{{ _("E-Mail-Versand") }}</h3>
   <p class="hilfe">{{ _("Derselbe Mailserver verschickt Benachrichtigungen an dich und – für Mitglieder, die freiwillig eine Adresse hinterlegen – Links für „Passwort vergessen“.") }}</p>

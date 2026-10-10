@@ -622,6 +622,10 @@ EN: dict[str, str] = {
     "Unbekannter Anbieter.": "Unknown provider.",
     "Wartezeit bitte in Stunden zwischen 1 und 720 angeben.": "Please enter a waiting time between 1 and 720 hours.",
     "Der API-Schlüssel sieht nicht vollständig aus.": "The API key does not look complete.",
+    ("Der Anbieter lehnt den eingetragenen API-Schlüssel ab – gespeichert wurde nichts, der bisherige Schlüssel bleibt. "
+     "Hat der Browser vielleicht ein gespeichertes Passwort in das Feld gesetzt? Feld leeren, um den bisherigen Schlüssel "
+     "zu behalten."): ("The provider rejects the API key you entered – nothing was saved, the previous key stays. Did the "
+                      "browser perhaps fill a saved password into the field? Clear the field to keep the previous key."),
     "Zum Freigeben bitte den API-Schlüssel eintragen.": "To enable it, please enter the API key.",
     # Warteschlange
     "{n} offen · die letzten 100 Aufträge": "{n} open · the last 100 jobs",

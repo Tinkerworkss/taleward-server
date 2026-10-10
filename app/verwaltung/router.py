@@ -659,6 +659,11 @@ def lokal_beenden(user: User = Depends(verwalter), db: Session = Depends(get_db)
     return _zurueck("/transkription", "beendet")
 
 
+SCHLUESSEL_ABGELEHNT = ("Der Anbieter lehnt den eingetragenen API-Schlüssel ab – gespeichert wurde nichts, der bisherige "
+                        "Schlüssel bleibt. Hat der Browser vielleicht ein gespeichertes Passwort in das Feld gesetzt? "
+                        "Feld leeren, um den bisherigen Schlüssel zu behalten.")
+
+
 @router.post("/transkription/extern", dependencies=[Depends(csrf_pruefen)])
 def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str = Form(""), key_loeschen: str = Form(""),
                      stunden: str = Form("24"), user: User = Depends(verwalter), db: Session = Depends(get_db)):
@@ -679,6 +684,11 @@ def extern_speichern(request: Request, anbieter: str = Form(""), api_key: str = 
         return _transkription_fehler(request, user, db, _("Der API-Schlüssel sieht nicht vollständig aus."))
     if anbieter and not key and not extern_konfig(db).api_key and not key_loeschen:
         return _transkription_fehler(request, user, db, _("Zum Freigeben bitte den API-Schlüssel eintragen."))
+    if key and not key_loeschen:
+        from app import cloudanbieter, modellwahl
+
+        if modellwahl.schluessel_abgelehnt(cloudanbieter.finden("mistral").url, key):
+            return _transkription_fehler(request, user, db, _(SCHLUESSEL_ABGELEHNT))
     meta_schreiben(db, "extern.anbieter", anbieter)
     meta_schreiben(db, "extern.after_hours", f"{h:g}")
     if key_loeschen:
@@ -956,6 +966,8 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     key = api_key.strip()
     if key and (len(key) < 16 or len(key) > 300 or any(c.isspace() for c in key)):
         return fehler(_("Der API-Schlüssel sieht nicht vollständig aus."))
+    if key and not key_loeschen and modellwahl.schluessel_abgelehnt(url, key):
+        return fehler(_(SCHLUESSEL_ABGELEHNT))
     meta_schreiben(db, "llm.art", art)
     meta_schreiben(db, "llm.api_url", url)
     meta_schreiben(db, "llm.api_modell", modell)

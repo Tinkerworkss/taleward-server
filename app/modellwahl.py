@@ -50,6 +50,21 @@ def holen(db: Session, k) -> None:
         db.commit()
 
 
+def schluessel_abgelehnt(url: str, key: str) -> bool:
+    """0.4.77: Lehnt der Anbieter einen neu eingetragenen Schlüssel ab (401/403 bei GET /models)? Browser setzen in
+    Passwortfelder gern ein gespeichertes Passwort ein; ohne diese Probe überschrieb das beim Speichern den gültigen
+    Schlüssel. Nicht erreichbar oder keine Liste: gilt nicht als abgelehnt (offline einrichten bleibt möglich)."""
+    from app.sprachmodell import OpenAIKlient, SprachmodellFehler
+
+    if not HOLEN or not url or not key:
+        return False
+    try:
+        OpenAIKlient(url, key, "", client=httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0))).modelle()
+    except SprachmodellFehler:
+        return True
+    return False
+
+
 def bekannte(anbieter) -> list[str]:
     if anbieter is None:
         return []

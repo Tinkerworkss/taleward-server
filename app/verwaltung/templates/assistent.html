@@ -54,7 +54,7 @@
     {% if art in ("cloud", "beides") %}
     <fieldset><legend>Mistral</legend>
       <label>{{ _("API-Schlüssel") }}
-        <input type="password" name="mistral_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=mistral_ende) if mistral_ende else _('von console.mistral.ai') }}">
+        <input type="password" name="mistral_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=mistral_ende) if mistral_ende else _('von console.mistral.ai') }}">
         <span class="hilfe">{{ _("Konto bei console.mistral.ai anlegen, Zahlungsmittel hinterlegen, unter „API Keys“ einen Schlüssel erzeugen. Er gilt für Transkription und Zusammenfassung und wird nach dem Speichern nie wieder angezeigt.") }}</span></label>
       <label>{{ _("Monatliches Kostenlimit (Euro)") }} <input type="number" name="limit_euro" value="{{ '%g'|format(limit_euro) }}" min="0" max="10000" step="1">
         <span class="hilfe">{{ _("Ist es erreicht, warten Aufnahmen bis zum nächsten Monat. 0 = ohne Limit.") }}</span></label>
@@ -73,7 +73,7 @@
         <li>{{ _("Unter „Settings → Access Tokens“ einen Schlüssel mit Leserecht („Read“) erzeugen.") }}</li>
       </ol>
       <label>{{ _("Zugangsschlüssel") }}
-        <input type="password" name="hf_token" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=hf_ende) if hf_ende else 'hf_…' }}">
+        <input type="password" name="hf_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=hf_ende) if hf_ende else 'hf_…' }}">
         <span class="hilfe">{{ _("Der Schlüssel bleibt auf dem Server. Eure Worker brauchen keinen.") }}</span></label>
     </fieldset>
     {% endif %}
@@ -128,7 +128,7 @@
       {% endif %}
     </div>
     {% if not mistral %}
-    <label>{{ _("API-Schlüssel von Mistral (nur für die Cloud-API)") }} <input type="password" name="mistral_key" autocomplete="off" placeholder="{{ _('von console.mistral.ai') }}"></label>
+    <label>{{ _("API-Schlüssel von Mistral (nur für die Cloud-API)") }} <input type="password" name="mistral_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('von console.mistral.ai') }}"></label>
     {% endif %}
     <div class="knopfzeile"><button class="tw-btn tw-btn--primary" type="submit">{{ _("Weiter") }}</button>
       <a class="tw-btn tw-btn--quiet" href="/verwaltung/assistent/datenschutz">{{ _("Später") }}</a></div>

@@ -220,7 +220,7 @@
   <p>{% if hf_ende %}<span class="marke-status marke-status--gut">{{ _("hinterlegt") }}</span> {{ _("endet auf …{ende}", ende=hf_ende) }}{% else %}<span class="marke-status">{{ _("nicht hinterlegt") }}</span>{% endif %}</p>
   <form class="formular" method="post" action="/verwaltung/transkription/hf">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>{{ _("Zugangsschlüssel") }} <input type="password" name="hf_token" autocomplete="off" placeholder="hf_…">
+    <label>{{ _("Zugangsschlüssel") }} <input type="password" name="hf_token" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="hf_…">
       <span class="hilfe">{{ _("Bleibt auf dem Server. Damit lädt er das Sprechermodell und neue Fassungen nach Updates.") }}</span></label>
     <div><button class="tw-btn tw-btn--primary" type="submit">{{ _("Prüfen und speichern") }}</button></div>
   </form>
@@ -245,7 +245,7 @@
         <option value="mistral" {% if ext.gewaehlt == "mistral" %}selected{% endif %}>Mistral (Voxtral)</option>
       </select></label>
     <label>{{ _("API-Schlüssel") }}
-      <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=ext.key_ende) if ext.key_ende else _('von console.mistral.ai') }}">
+      <input type="password" name="api_key" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=ext.key_ende) if ext.key_ende else _('von console.mistral.ai') }}">
       <span class="hilfe">{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>
     {% if ext.key_ende %}<label class="haken"><input type="checkbox" name="key_loeschen" value="1"> {{ _("Hinterlegten Schlüssel löschen") }}</label>{% endif %}
     <label>{{ _("Wartezeit in Stunden") }} <input type="number" name="stunden" value="{{ "%g"|format(ext.stunden) }}" min="0" max="720" step="0.5">
