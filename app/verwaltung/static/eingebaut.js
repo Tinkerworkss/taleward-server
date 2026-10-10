@@ -25,6 +25,7 @@
   var url = document.getElementById("anbieter-url");
   var modell = document.getElementById("anbieter-modell");
   var vorschlag = document.getElementById("anbieter-modell-vorschlaege");
+  var notizen = document.getElementById("anbieter-modell-notizen");
   var wahlFeld = document.getElementById("modell-wahl-feld");
   var textFeld = document.getElementById("modell-text-feld");
   function fuellen(liste, sel, mitLeer, wert) {
@@ -48,6 +49,7 @@
       try { liste = JSON.parse(o.dataset.modelle || "[]"); } catch (e) { liste = []; }
       fuellen(liste, modell, false, o.dataset.modell);
       fuellen(liste, vorschlag, true, o.dataset.vorschlaege);
+      fuellen(liste, notizen, true, "");
     }
     var frei = wahl.value === "andere" && (!modell || modell.options.length === 0);
     if (wahlFeld) wahlFeld.hidden = frei;

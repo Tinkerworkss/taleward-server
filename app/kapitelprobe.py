@@ -72,6 +72,7 @@ class Probe:
     lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung (Datei lang.txt)
     korrekturen: list[dict] = field(default_factory=list)  # 0.4.69: Durchgänge „Korrektur per Hinweis“ (korrektur.json)
     korrektur_laeuft: bool = False
+    unklar: list[dict] = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus den Notizen (unklar.json)
 
 
 def aktueller_text(p: Probe) -> str:
@@ -188,7 +189,8 @@ def datei(probe_id: str, name: str) -> Path | None:
 
 
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
-           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "transkript.txt", "ergebnis.json")
+           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "transkript.txt",
+           "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -296,7 +298,7 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
 
 def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
     from app.sprachmodell import Ablauf, SprachmodellFehler
-    from app.zusammenfassung import api_klient, api_klient_vorschlaege, attrappe, gegenpruefen_an
+    from app.zusammenfassung import api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an
 
     t0 = time.monotonic()
     try:
@@ -317,7 +319,8 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
 
             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
                             nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
-                            notizen_zuerst=p.weg == "notizen")  # 0.4.63: nur im Probelauf wählbar
+                            notizen_zuerst=p.weg == "notizen",  # 0.4.63: hier je Probelauf wählbar
+                            notiz_klient=api_klient_notizen(k))
             with session_factory()() as db:
                 gegen = gegenpruefen_an(db)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
@@ -334,6 +337,7 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
             if p.pflicht.get("nachgebessert"):
                 p.entwurf = ablauf.letztes_kapitel1
             p.lang = ablauf.letztes_lang
+            p.unklar = list(ablauf.letzte_unklar)
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -379,9 +383,11 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "entwurf.txt").write_text(p.entwurf + "\n", encoding="utf-8")
             if p.lang:
                 (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
+            if p.unklar:
+                (o / "unklar.json").write_text(json.dumps(p.unklar, ensure_ascii=False, indent=2), encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
-                                                                  "pflicht", "entwurf", "lang", "korrekturen")},
+                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)
@@ -487,6 +493,9 @@ def _korrektur_dateien(p: Probe) -> None:
 def _modellname(k) -> str:
     if k.art != "api":
         return "Testmodus"
+    name = k.api_modell
+    if k.api_modell_notizen and k.api_modell_notizen != k.api_modell:
+        name += f" + Notizen {k.api_modell_notizen}"
     if k.api_modell_vorschlaege and k.api_modell_vorschlaege != k.api_modell:
-        return f"{k.api_modell} + Vorschläge {k.api_modell_vorschlaege}"
-    return k.api_modell
+        name += f" + Vorschläge {k.api_modell_vorschlaege}"
+    return name

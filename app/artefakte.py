@@ -36,7 +36,35 @@ _REGEL = re.compile(
     r"\b(?:\w*[Ll]ebenspunkt\w*|\w*[Kk]armapunkt\w*|\w*[Aa]stralpunkt\w*|\w*[Zz]auberpunkt\w*|\w*[Ss]chadenspunkt\w*"
     r"|Trefferpunkt\w*|Erfahrungspunkt\w*|Abenteuerpunkt\w*|Schicksalspunkt\w*|LeP|KaP|AsP|QS ?\d|Qualitätsstufe\w*"
     r"|\d+ ?[wWdD]\d+|[wW]20|gewürfelt|würfelt\w*|Würfelwurf\w*|Patzer\w*|Rettungswurf\w*|Probe (?:auf|gegen)"
-    r"|(?:plus|minus) (?:eins|zwei|drei|\d+) (?:auf|Schmerz)\w*)\b")
+    r"|(?:plus|minus) (?:eins|zwei|drei|\d+) (?:auf|Schmerz)\w*"
+    # 0.4.73, systemneutral: Zahl vor „…punkte“ („2 Magiepunkte“), „N Schaden“, Würfe als Fachwort („Schwimmwurf
+    # scheiterte“, „Stabilitätswurf“) – nicht aber Alltagswörter wie Vorwurf, Entwurf, Steinwurf.
+    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b"
+    r"|(?!(?:Vorwurf|Entwurf|Auswurf|Einwurf|Überwurf|Umwurf|Abwurf|Rauswurf|Hinauswurf|Niederwurf|Steinwurf|Speerwurf"
+    r"|Hammerwurf|Diskuswurf|Aufwurf|Anwurf|Bewurf|Verwurf|Wegwurf|Fehlwurf|Freiwurf|Münzwurf)\w*\b)[A-ZÄÖÜ]\w+wurf\w*"
+    r"|\w*[Ww]urf (?:scheitert\w*|misslingt|misslang|misslungen|gelingt|gelang|gelungen|glückt\w*))\b")
+_UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)  # 0.4.73: Marke der Notizen
+# 0.4.73: „für 4 Trefferpunkte“, „um 2 Punkte“ – nur die Wendung fällt weg, der Satz bleibt („traf Charles in die Schulter“)
+_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+\d+\s*\w*[Pp]unkte?\b|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
+
+
+def regelphrase(satz: str) -> str:
+    """Zahl-plus-Punkte-Wendungen aus einem Satz nehmen, ohne den Satz zu verlieren."""
+    return re.sub(r"\s+([,.;:!?])", r"\1", _REGELPHRASE.sub("", satz))
+
+
+def regelteil(satz: str, muster: re.Pattern) -> str:
+    """Regelsprache aus einem Satz: erst die Wendung, dann der Satzteil, zuletzt der Satz („“ = fällt weg)."""
+    satz = regelphrase(satz)
+    for _ in range(3):
+        m = muster.search(satz)
+        if not m:
+            break
+        neu = _teil_entfernen(satz, m)
+        satz = neu if len(_woerter(neu)) >= 3 else ""
+        if not satz:
+            break
+    return satz
 _FLUCH = re.compile(r"\b(?:scheiß\w*|Scheiße|Arschloch|Wichser|Hurensohn|Kacke|fick\w*|Fick\w*|Fotze)\b", re.I)
 _VERSAL = re.compile(r"\b([A-ZÄÖÜ]{4,})\b")
 _ROEMISCH = re.compile(r"^[IVXLCDM]+$")
@@ -197,15 +225,9 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
             if _FLUCH.search(satz):
                 befunde.append({"art": "kraftausdruck", "text": satz[:200]})
                 continue
-            for _ in range(3):  # höchstens drei Regelstellen je Satz
-                m = _REGEL.search(satz)
-                if not m:
-                    break
-                neu = _teil_entfernen(satz, m)
+            if _REGEL.search(satz) or _REGELPHRASE.search(satz):
                 befunde.append({"art": "regel", "text": satz[:200]})
-                satz = neu if len(_woerter(neu)) >= 3 else ""
-                if not satz:
-                    break
+                satz = regelteil(satz, _REGEL)
             if not satz:
                 continue
             satz_neu, geaendert = _namen_ersetzen(satz, personen, geschuetzt)
@@ -251,6 +273,7 @@ def feinschliff(t: str) -> str:
     t = re.sub(r"\bden Spielern\b", "der Gruppe", t)
     t = re.sub(r"\bden Spielercharakteren\b", "der Gruppe", t)
     t = re.sub(r"\bden Spielerinnen und Spielern\b", "der Gruppe", t)
+    t = re.sub(r"\s+([,.;:!?])", r"\1", _UNKLAR.sub("", t))
     return t
 
 

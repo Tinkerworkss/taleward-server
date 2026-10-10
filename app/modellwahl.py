@@ -61,7 +61,7 @@ def auswahl(db: Session, k) -> list[str]:
     """Modelle für die Auswahl: Empfehlung und bekannte zuerst, dann die Liste des Anbieters, dazu die gewählten."""
     vorn = bekannte(k.anbieter)
     rest = sorted(m for m in _gespeichert(db, k.api_url) if m not in vorn)
-    gewaehlt = [m for m in (k.api_modell, k.api_modell_vorschlaege) if m]
+    gewaehlt = [m for m in (k.api_modell, k.api_modell_vorschlaege, getattr(k, "api_modell_notizen", "")) if m]
     return list(dict.fromkeys([*vorn, *rest, *gewaehlt]))
 
 

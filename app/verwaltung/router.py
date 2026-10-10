@@ -893,6 +893,7 @@ def _api_adresse_ok(url: str) -> bool:
 def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter: str = Form("mistral"),
                               api_url: str = Form(""), api_modell: str = Form(""), api_key: str = Form(""),
                               api_modell_text: str = Form(""), api_modell_vorschlaege: str = Form(""),
+                              api_modell_notizen: str = Form(""),
                               key_loeschen: str = Form(""), lokal_modell: str = Form(""),
                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
@@ -922,13 +923,17 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     # Bekannte Anbieter: Modell aus der Auswahl; „Anderer“: freie Eingabe, solange der Anbieter keine Liste geliefert hat
     modell = (api_modell_text.strip() if bekannt is None and api_modell_text.strip() else api_modell.strip())
     lokal, fuer_vorschlaege = lokal_modell.strip(), api_modell_vorschlaege.strip()
-    if not modell or not lokal or len(modell) > 100 or len(lokal) > 100 or len(fuer_vorschlaege) > 100:
+    fuer_notizen = api_modell_notizen.strip()
+    if (not modell or not lokal or len(modell) > 100 or len(lokal) > 100 or len(fuer_vorschlaege) > 100
+            or len(fuer_notizen) > 100):
         return fehler(_("Bitte die Modellnamen angeben."))
-    for m in (modell, fuer_vorschlaege):
+    for m in (modell, fuer_vorschlaege, fuer_notizen):
         if m and bekannt is not None and not modellwahl.erlaubt(db, url, bekannt, m):
             return fehler(_("Bitte ein Modell aus der Liste wählen."))
     if fuer_vorschlaege == modell:
         fuer_vorschlaege = ""
+    if fuer_notizen == modell:
+        fuer_notizen = ""
     try:
         kontext = int(lokal_kontext)
         if not 4096 <= kontext <= 262144:
@@ -953,6 +958,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
     meta_schreiben(db, "llm.api_url", url)
     meta_schreiben(db, "llm.api_modell", modell)
     meta_schreiben(db, "llm.api_modell_vorschlaege", fuer_vorschlaege)
+    meta_schreiben(db, "llm.api_modell_notizen", fuer_notizen)
     meta_schreiben(db, "llm.lokal_modell", lokal)
     meta_schreiben(db, "llm.lokal_kontext", str(kontext))
     meta_schreiben(db, "llm.cent_ein", preise[0])

@@ -44,8 +44,9 @@ class Anbieter:
         if system.startswith("Du vergleichst das Kapitel"):
             gekuerzt = "Alte Laternen flackerten" not in nutzer
             zweiter = "fehlt" if (gekuerzt and self.verliert) else "erzaehlt"
-            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1},
-                               {"nr": 2, "status": zweiter, "absatz": 2, "begruendung": ""}]}
+            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "gab ihr das Schwert Eisenwind"},
+                               {"nr": 2, "status": zweiter, "absatz": 2, "begruendung": "",
+                                "zitat": "" if zweiter == "fehlt" else "floh die Gruppe aus der Stadt"}]}
         if "Du prüfst den Recap" in system:
             return {"absaetze": [{"nr": 1, "urteil": "belegt"}, {"nr": 2, "urteil": "belegt"}]}
         return {}

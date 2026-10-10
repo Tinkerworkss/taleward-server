@@ -296,6 +296,16 @@ def api_klient_vorschlaege(k):
     return OpenAIKlient(k.api_url, k.api_key, k.api_modell_vorschlaege)
 
 
+def api_klient_notizen(k):
+    """0.4.73: eigener Klient für Notizen, Stand und Auswahl, wenn ein anderes Modell gewählt ist (sonst None) – zum
+    Messen, ob ein günstigeres Modell beim Zuhören mithält."""
+    from app.sprachmodell import OpenAIKlient
+
+    if not k.api_modell_notizen or k.api_modell_notizen == k.api_modell:
+        return None
+    return OpenAIKlient(k.api_url, k.api_key, k.api_modell_notizen)
+
+
 def zusammenfasser(db: Session):
     """Was die Zentrale selbst ausführt: fn(db, session) → (Ergebnis, engine). None = nicht die Zentrale
     (aus, oder lokal – dann holt ein Worker mit Sprachmodell den Auftrag)."""
@@ -315,7 +325,7 @@ def zusammenfasser(db: Session):
             # Abschnitt, dann das Kapitel“ (in der Messung auf zwei Systemen deutlich besser); Rückweg in der Verwaltung
             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
                             vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
-                            notizen_zuerst=k.weg == "notizen")
+                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k))
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"

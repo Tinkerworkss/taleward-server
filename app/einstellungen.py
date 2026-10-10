@@ -161,6 +161,7 @@ class LlmKonfig:
     cent_aus: float | None
     api_modell_vorschlaege: str = ""  # 0.4.61: eigenes Modell für die Vorschläge („“ = wie api_modell)
     weg: str = "notizen"  # 0.4.72: Cloud-API „notizen“ (erst Notizen je Abschnitt) oder „abschrift“ (früherer Weg)
+    api_modell_notizen: str = ""  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl („“ = wie api_modell)
 
     @property
     def ist_mistral(self) -> bool:
@@ -216,4 +217,5 @@ def llm_konfig(db: Session) -> LlmKonfig:
                      lokal_modell=wert("llm.lokal_modell", s.llm_local_model) or s.llm_local_model,
                      lokal_kontext=kontext, cent_ein=preis("llm.cent_ein"), cent_aus=preis("llm.cent_aus"),
                      api_modell_vorschlaege=(wert("llm.api_modell_vorschlaege", "") or "").strip(),
-                     weg=wert("llm.weg", "notizen") if wert("llm.weg", "notizen") in KAPITEL_WEGE else "notizen")
+                     weg=wert("llm.weg", "notizen") if wert("llm.weg", "notizen") in KAPITEL_WEGE else "notizen",
+                     api_modell_notizen=(wert("llm.api_modell_notizen", "") or "").strip())

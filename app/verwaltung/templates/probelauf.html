@@ -76,6 +76,23 @@
     <p><strong>{{ v.title }}</strong> <span class="leise">({{ v.entryType or v.entry_type }} · {{ v.action }} · {{ v.suggestedVisibility or v.suggested_visibility }})</span><br>{{ v.detail }}</p>
   {% else %}<p class="leise">{{ _("Keine Vorschläge.") }}</p>{% endfor %}
 </div>
+{% if p.unklar %}
+<div class="karte">
+  <h2>{{ _("Unklare Stellen ({n})", n=p.unklar|length) }}</h2>
+  <p class="hilfe">{{ _("Hier war die Aufnahme nicht eindeutig; das Kapitel bleibt an dieser Stelle vage. Ein Satz im Korrekturfeld klärt es.") }}</p>
+  <ul>{% for u in p.unklar %}<li>{% if u.zeit_text %}<span class="leise">[{{ u.zeit_text }}]</span> {% endif %}{{ u.notiz }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if p.pflicht and p.pflicht.vorher %}
+<div class="karte">
+  <h2>{{ _("Pflichtereignisse ({n})", n=p.auswahl|length) }}</h2>
+  {% set befund = p.pflicht.nachher if p.pflicht.nachher else p.pflicht.vorher %}
+  <p class="leise">{% if p.pflicht.nachgebessert %}{{ _("nachgebessert") }} · {% endif %}{% for st in ["erzaehlt", "fehlt", "widerspricht", "unklar", "ungeprueft"] %}{% set n = befund|selectattr("status", "equalto", st)|list|length %}{% if n %}{{ _({"erzaehlt": "erzählt", "fehlt": "fehlt", "widerspricht": "widerspricht", "unklar": "unklar", "ungeprueft": "ungeprüft"}[st]) }}: {{ n }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}</p>
+  <details><summary>{{ _("Einzelheiten") }}</summary>
+    <ol>{% for b in befund %}{% set a = p.auswahl[b.nr - 1] if b.nr <= p.auswahl|length else none %}<li>{% if a %}{{ a.ereignis }}{% if a.ausgang %} – {{ a.ausgang }}{% endif %} ({{ a.rang }})<br>{% endif %}<span class="{% if b.status == 'erzaehlt' %}leise{% else %}marke-status marke-status--warten{% endif %}">{{ _({"erzaehlt": "erzählt", "fehlt": "fehlt", "widerspricht": "widerspricht", "unklar": "unklar", "ungeprueft": "ungeprüft"}[b.status]) }}</span>{% if b.absatz is not none %} · {{ _("Absatz {n}", n=b.absatz + 1) }}{% endif %}{% if b.zitat %} · „{{ b.zitat }}“{% endif %}{% if b.begruendung %} · {{ b.begruendung }}{% endif %}</li>{% endfor %}</ol>
+  </details>
+</div>
+{% endif %}
 {% if p.pruefung and p.pruefung.paragraphs %}
 <div class="karte">
   <h2>{{ _("Prüfung") }}</h2>

@@ -39,8 +39,9 @@ class Anbieter:
         if system.startswith("Du vergleichst das Kapitel"):
             zweite = [a for a in self.aufrufe if a["system"].startswith("Du vergleichst das Kapitel")]
             falsch = len(zweite) == 1 or self.bleibt_falsch
-            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1},
+            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "floh aus der Stadt"},
                                {"nr": 2, "status": "widerspricht" if falsch else "erzaehlt", "absatz": 2,
+                                "zitat": "Mara starb in den Trümmern" if falsch else "Mara überlebte verletzt",
                                 "begruendung": "Mara überlebt, sie stirbt nicht." if falsch else ""}]}
         if system.startswith("Du überarbeitest einzelne Absätze im Kapitel"):
             return {"absaetze": [{"nr": 2, "text": FALSCH if self.bleibt_falsch else RICHTIG}]}

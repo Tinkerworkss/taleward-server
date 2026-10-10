@@ -67,6 +67,12 @@
           {% for m in llm.modelle %}<option value="{{ m }}" {% if m == k.api_modell_vorschlaege %}selected{% endif %}>{{ m }}</option>{% endfor %}
         </select>
         <span class="hilfe">{{ _("Zur Auswahl stehen die bekannten Modelle des Anbieters und – sobald ein Schlüssel hinterlegt ist – alle, die er für diesen Schlüssel freigibt. Beim Wechsel des Anbieters werden die empfohlenen eingetragen. Bei Mistral empfohlen: Kapitel mit mistral-medium-latest, Vorschläge mit mistral-large-latest (Messung an einer langen Runde).") }}</span></label>
+      <label>{{ _("Modell für Notizen und Auswahl") }}
+        <select name="api_modell_notizen" id="anbieter-modell-notizen">
+          <option value="" {% if not k.api_modell_notizen %}selected{% endif %}>{{ _("wie für das Kapitel") }}</option>
+          {% for m in llm.modelle %}<option value="{{ m }}" {% if m == k.api_modell_notizen %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+        <span class="hilfe">{{ _("Nur zum Vergleichen: Das Zuhören (Notizen, Stand, Auswahl der Pflichtereignisse) ist der teuerste Schritt. Ein anderes Modell hier spart Kosten, muss aber in Probeläufen zeigen, dass die Kapitel gleich gut bleiben.") }}</span></label>
       <label>{{ _("API-Schlüssel") }}
         <input type="password" name="api_key" autocomplete="off" placeholder="{{ _('hinterlegt, endet auf …{ende}', ende=llm.key_ende) if llm.key_ende and not llm.key_von_extern else _('Schlüssel des Anbieters') }}">
         <span class="hilfe">{% if llm.key_von_extern %}{{ _("Leer lassen: Es gilt der Mistral-Schlüssel der externen Transkription.") }} {% elif llm.mistral and llm.extern_key %}{{ _("Ohne eigenen Schlüssel gilt der Mistral-Schlüssel der externen Transkription.") }} {% endif %}{{ _("Leer lassen, um den hinterlegten Schlüssel zu behalten. Er steht in der Datenbank (auch in Sicherungen) und wird nie wieder angezeigt.") }}</span></label>

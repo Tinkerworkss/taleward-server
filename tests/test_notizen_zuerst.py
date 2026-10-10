@@ -77,7 +77,7 @@ def test_notizen_zuerst_mit_stand_und_ueberlappung(client, world, dbs, tmp_path)
     assert ablauf.letzter_stand[0].startswith("Kano: tot (seit [")
     recap = next(a for a in anbieter.aufrufe if a["system"].startswith("Du schreibst den Recap"))
     assert "Stand am Ende der Runde" in recap["nutzer"] and "Kano: tot" in recap["nutzer"]
-    assert "900–1500" in recap["system"]
+    assert "900 bis 1500" in recap["system"]  # 0.4.73: geplante Länge statt bloßer Spanne
     vorschlag = next(a for a in anbieter.aufrufe if "Kampagnen-Bibel" in a["system"])
     assert "\nTranskript:\n" in vorschlag["nutzer"] and "Zeile 149:" in vorschlag["nutzer"]
     assert ablauf.letzte_notizen.count("Ereignis in Abschnitt") == len(notizaufrufe)

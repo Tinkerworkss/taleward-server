@@ -472,11 +472,36 @@ _ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] �
 _REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
                      r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
                      r"|Initiative|erleichtert\w*|erschwert\w*|kritisch\w* (?:erfolgreich|Erfolg\w*|Patzer|Wurf\w*|Treffer|bei)|Patzer"
-                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b"
+                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b|\d+ ?\w*[Pp]unkte?\b"
                      r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
                      r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
                      r"|Wiederholung aus Bisher|Gewinnspiel|Pause)\b")
 _SPIELLEITUNG = re.compile(r"\b(?:Spielleitung|Spielleiter\w*|game master|GM)\b", re.I)
+# 0.4.73: Regelreste in Klammern – systemneutral über Zahlen und Ausgangswörter („(39 von 50, Erfolg)“, „(4 Trefferpunkte)“,
+# „(Schwimmwurf: 46 von 20, gescheitert)“). Die Klammer fällt weg, die Notiz bleibt.
+_REGELKLAMMER = re.compile(
+    r"\s*\((?=[^()]*(?:\b\d+\s*(?:von|/|auf|gegen|vs\.?)\s*\d+|\b\d+ ?\w*[Pp]unkte?\b|\b\d+ [Ss]chaden\b|\w+[Ww]urf\b"
+    r"|\w*[Pp]robe\b))[^()]*\)")
+UNKLAR = "(unklar, wer)"  # 0.4.73: Marke der Notizen für Stellen, an denen die Abschrift nicht eindeutig ist
+_UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)
+
+
+def regelreste(text: str) -> str:
+    """Regelreste in Klammern entfernen und die Satzzeichen glätten."""
+    t = _REGELKLAMMER.sub("", text or "")
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
+def unklar_stellen(notizen: str) -> list[dict]:
+    """Notizen mit der Marke „(unklar …)“ → [{zeit, notiz}]: Stellen, an denen das Modell nicht raten wollte. Für die
+    Spielleitung die ehrlichste Prüfhilfe – genau hier lohnt der Blick in die Abschrift."""
+    aus = []
+    for n in (notizen or "").split("\n"):
+        if _UNKLAR.search(n):
+            zeit = _zeit_vorn(n)
+            aus.append({"zeit": zeit, "zeit_text": _zeit(zeit) if zeit is not None else "", "notiz": _ZEIT_VORN.sub("", n).strip()})
+    return aus
 ABDECKUNG = 0.75  # so weit (zeitlich) müssen die Notizen in den Abschnitt hineinreichen, sonst wird der Rest nachgeholt
 ZEIT_ANTEIL = 0.5  # weniger Notizen mit Zeitstempel: einmal neu anfordern – ohne Zeiten greift keine Prüfung
 ERINNERUNG_ZEIT = ("\n\nWichtig: Jede Notiz beginnt mit dem Zeitstempel der Zeile, aus der sie stammt, in eckigen "
@@ -500,11 +525,15 @@ def _zeit_vorn(zeile: str) -> float | None:
     return zeit_lesen(m.group(1)) if m else None
 
 
+def _minuten(ein: dict) -> float:
+    zeilen = ein.get("transkript") or []
+    return max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
+
+
 def woerter(ein: dict, lang: bool = False) -> str:
     """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene.
     lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen."""
-    zeilen = ein.get("transkript") or []
-    minuten = max((float(z.get("start") or 0) for z in zeilen), default=0.0) / 60
+    minuten = _minuten(ein)
     if minuten > 120:
         return "900–1500" if lang else "600–1200"
     if minuten > 60:
@@ -562,7 +591,11 @@ Der Sprecher „Spielleitung“ ist keine Figur der Geschichte: Spricht er, erz�
 Nichtspielercharakter – schreib dann den Namen dieser Figur; das Wort „Spielleitung“ kommt in den Notizen nicht vor. \
 Schreib die Zeilen nicht ab, sondern fasse sie zusammen. \
 Lass Regelfragen, Würfelwürfe, Werte (Lebenspunkte, Karma, Proben, Qualitätsstufen), Pausen und Gespräche außerhalb \
-des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. Steht vor dem Abschnitt \
+des Spiels ganz weg. Offensichtliche Witze markierst du mit „(Witz?)“. Erfinde nichts. \
+Ist aus dem Abschnitt nicht eindeutig, wer handelt oder gemeint ist – Anrede ohne Namen („du“, „dich“), verstümmelte \
+Stelle, mehrere mögliche Personen –, dann rate nicht: Schreib die Handlung ohne Namen und dahinter „(unklar, wer)“. \
+Eine Person, die im Abschnitt keinen Namen hat, bekommt auch in der Notiz keinen („eine Bedienstete“) – nicht den \
+Namen einer anderen Figur, die passen könnte. Steht vor dem Abschnitt \
 „Bisher“, ist das nur zur Orientierung – nicht wiederholen.
 Antworte nur mit JSON: {"notizen": ["[m:ss] …", …]}. Sprache der Notizen: {sprache}."""
 
@@ -575,6 +608,7 @@ Eine kurze Zeile je Tatsache. Ändert sich etwas, ersetze die alte Zeile und sch
 dazu, z. B. „Kano: tot (seit [1:02:10])“. Was nicht mehr gilt, fällt weg. Höchstens {stand_hoechstens} Zeilen. Nur, \
 was am Tisch gesagt wurde.
 Für Notizen und Stand gilt außerdem (0.4.68): Eine Zusage, Abmachung, ein Kauf, ein Tod oder ein Besitzwechsel steht nur da, wenn er am Tisch ausdrücklich gesagt oder gezeigt wird (ein Ja, „abgemacht“, Handschlag, Übergabe, „der ist tot“). Eine höfliche, ausweichende oder unterbrochene Antwort ist keine Zusage – schreib dann „Antwort offen“ und was stattdessen geschieht. Gibt sich eine Figur als jemand anderes aus oder nennt einen erfundenen Namen, ist das keine neue Person: „X gibt sich als Y aus“.
+Auch im Stand gilt: Was nicht eindeutig ist, bekommt „(unklar)“ statt einer Vermutung.
 Steht vor dem Abschnitt „Unmittelbar davor“, ist das nur zum Verständnis – dazu schreibst du keine Notizen.
 Antworte dann mit JSON: {"notizen": ["[m:ss] …", …], "stand": ["…", …]}."""
 STAND_HOECHSTENS = 40
@@ -593,8 +627,10 @@ SYSTEM_RECAP = """Du schreibst den Recap („Was bisher geschah“) einer Pen-&-
 nächsten Session allen Spielern vorgelesen.
 Regeln:
 - Nur, was am Tisch als Spielgeschehen passiert ist. Nichts erfinden, nichts ausschmücken, was nicht vorkam.
-- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {woerter} Wörter, \
-in Absätzen von je 80 bis 180 Wörtern (ein Absatz je Szene oder Wendung), durch Leerzeilen getrennt.
+- Erzählstimme in der Vergangenheit, lebendig und vorlesbar, im Ton der Kampagne und ihrer Welt. {laenge} \
+(ein Absatz je Szene oder Wendung), durch Leerzeilen getrennt.
+- Steht in der Grundlage „(unklar, wer)“, bleibt das Kapitel an dieser Stelle vage („einer der Gefährten“, „jemand“): \
+kein Name, keine Vermutung; die Marke selbst kommt nicht ins Kapitel.
 - Alle Wendepunkte der Grundlage in ihrer Reihenfolge, jeder mit seinem Ausgang – lieber knapp erzählt als \
 weggelassen. Ausgänge genau wie in der Grundlage: Wer verletzt ist, ist nicht tot; was angedroht war, ist nicht \
 geschehen; wer etwas wofür gibt, steht so in der Grundlage.
@@ -706,22 +742,36 @@ Wichtig ist, was einem Spieler vor der nächsten Runde Wissen nehmen würde, wen
 Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.
 Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
 Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
-der Stand am Ende), rang ("kritisch" oder "wichtig"). Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
+der Stand am Ende), rang ("kritisch" oder "wichtig"). Steht in den Notizen „(unklar, wer)“, bleibt die Person auch \
+hier ungenannt, und „(unklar, wer)“ steht hinter dem Ausgang. Eine Zusage, eine Abmachung, ein Kauf oder ein Tod ist nur dann der Ausgang, wenn die Notizen ihn ausdrücklich nennen; sonst ist der Ausgang „offen“ (z. B. „Antwort offen, dann Angriff“). Decknamen sind keine eigenen Personen. Die Spielleitung ist keine Figur. Erfinde nichts.
 Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausgang": "…", "rang": "…"}]}. \
 Sprache: {sprache}."""
 AUSWAHL_HOECHSTENS = 20
 
+
+def auswahl_hoechstens(ein: dict) -> int:
+    """0.4.73: Zahl der Pflichtereignisse nach Dauer der Runde – 20 für 155 Minuten waren zu knapp (Kritisches fiel
+    schon aus der Auswahl)."""
+    minuten = _minuten(ein)
+    return 30 if minuten > 120 else AUSWAHL_HOECHSTENS if minuten > 60 else 12
+
 SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
-vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor) oder \
-"widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind kein Widerspruch. absatz: die Nummer \
+vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor, oder \
+nur das Ereignis, nicht sein Ausgang) oder "widerspricht" (kommt vor, aber mit anderem Ausgang, anderer Person oder \
+vertauschter Richtung). Abweichende Zahlen, Beträge, Uhrzeiten oder Formulierungen, die am Ausgang nichts ändern, sind \
+kein Widerspruch. zitat: bei "erzaehlt" die Wörter des Kapitels, die den Ausgang erzählen – wörtlich abgeschrieben, \
+höchstens 25 Wörter; findest du keine, ist der Status "fehlt". Bei "widerspricht" die Wörter des Kapitels, die dem \
+Ausgang widersprechen, ebenfalls wörtlich. absatz: die Nummer \
 des Absatzes, in dem es steht bzw. in den es nach der Reihenfolge des Geschehens gehört. begruendung: bei "fehlt" und \
 "widerspricht" ein kurzer Satz für die Spielleitung, ohne Zitat, sonst leer. Bewerte nur die Liste, nicht den Stil.
-Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "begruendung": "…"}]}. Sprache: {sprache}."""
+Antworte nur mit JSON: {"punkte": [{"nr": 1, "status": "…", "absatz": 2, "zitat": "…", "begruendung": "…"}]}. \
+Sprache: {sprache}."""
 
 SYSTEM_PFLICHT_NACH = """Du überarbeitest einzelne Absätze im Kapitel einer Pen-&-Paper-Session. Je Absatz steht \
 dabei, welches Ereignis darin fehlt oder falsch erzählt ist, mit dem richtigen Ausgang.
 Schreib nur diese Absätze neu: Fehlendes knapp an der passenden Stelle einfügen, Falsches richtigstellen – die falsche Aussage wird ersetzt, nicht zusätzlich stehen gelassen. Alles andere \
-im Absatz bleibt, wie es ist. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
+im Absatz bleibt, wie es ist. Steht das Ereignis mit genau diesem Ausgang doch schon im Absatz, gib den Absatz \
+unverändert zurück. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
 reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
 # 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
@@ -881,25 +931,26 @@ def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], frei
 
 PFLICHT_STATUS = {"erzaehlt": "erzaehlt", "erzählt": "erzaehlt", "told": "erzaehlt", "present": "erzaehlt",
                   "fehlt": "fehlt", "missing": "fehlt", "widerspricht": "widerspricht", "contradicts": "widerspricht",
-                  "contradicted": "widerspricht"}
+                  "contradicted": "widerspricht", "unklar": "unklar", "unclear": "unklar"}
+OHNE_ZITAT = {"de": "Kein Satz im Kapitel erzählt diesen Ausgang.", "en": "No sentence in the chapter tells this outcome."}
 
 
-def auswahl_lesen(d: dict) -> list[dict]:
-    """Antwort der Auswahl → [{zeit, ereignis, ausgang, rang}], höchstens AUSWAHL_HOECHSTENS, ohne Leeres und Doppeltes,
-    nach Zeit sortiert."""
+def auswahl_lesen(d: dict, hoechstens: int = AUSWAHL_HOECHSTENS) -> list[dict]:
+    """Antwort der Auswahl → [{zeit, ereignis, ausgang, rang}], höchstens `hoechstens`, ohne Leeres, Doppeltes und
+    Regelreste, nach Zeit sortiert."""
     aus, gesehen = [], set()
     for e in d.get("ereignisse") or d.get("events") or []:
         if not isinstance(e, dict):
             continue
-        ereignis = klartext(e.get("ereignis") or e.get("event") or "")[:300]
+        ereignis = regelreste(klartext(e.get("ereignis") or e.get("event") or ""))[:300]
         if not ereignis or ereignis.casefold() in gesehen or _SPIELLEITUNG.search(ereignis):
             continue
         gesehen.add(ereignis.casefold())
         rang = str(e.get("rang") or e.get("rank") or "").strip().lower()
         aus.append({"zeit": zeit_lesen(e.get("zeit") if e.get("zeit") is not None else e.get("time")),
-                    "ereignis": ereignis, "ausgang": klartext(e.get("ausgang") or e.get("outcome") or "")[:300],
+                    "ereignis": ereignis, "ausgang": regelreste(klartext(e.get("ausgang") or e.get("outcome") or ""))[:300],
                     "rang": "kritisch" if rang in ("kritisch", "critical") else "wichtig"})
-    aus = aus[:AUSWAHL_HOECHSTENS]
+    aus = aus[:hoechstens]
     return sorted(aus, key=lambda e: (e["zeit"] is None, e["zeit"] or 0.0))
 
 
@@ -908,9 +959,17 @@ def auswahl_text(punkte: list[dict]) -> str:
                      + (f" – Ausgang: {p['ausgang']}" if p["ausgang"] else "") for i, p in enumerate(punkte))
 
 
-def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int) -> list[dict]:
-    """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), begruendung}. Fehlende Punkte
-    gelten als ungeprüft und lösen nichts aus."""
+def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str = "", sprache: str = "de") -> list[dict]:
+    """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), zitat, begruendung}. Fehlende
+    Punkte gelten als ungeprüft und lösen nichts aus.
+
+    0.4.73: Jedes „erzählt“ braucht ein Zitat aus dem Kapitel, das der Server nachrechnet (die Prüfung hatte „Jeremy ging
+    über Bord“ als „verliert das Silber“ durchgehen lassen). Ohne auffindbares Zitat gilt der Punkt als „fehlt“; ein
+    „widerspricht“ ohne auffindbares Zitat wird „unklar“ (kein Umschreiben auf Zuruf, nur ein Hinweis). Steht das Zitat
+    in einem anderen Absatz als angegeben, gilt der Absatz des Zitats."""
+    teile = absaetze(text) if text else []
+    norm = _normwoerter(text) if text else ""
+    norm_teile = [_normwoerter(t) for t in teile]
     nach_nr = {}
     for a in d.get("punkte") or d.get("points") or []:
         if not isinstance(a, dict):
@@ -928,9 +987,21 @@ def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int) -> list[dic
             absatz = int(a.get("absatz") or a.get("paragraph") or 0) - 1
         except (TypeError, ValueError):
             absatz = -1
-        aus.append({"nr": nr, "status": PFLICHT_STATUS.get(str(a.get("status") or "").strip().lower(), "ungeprueft"),
-                    "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
-                    "begruendung": klartext(a.get("begruendung") or a.get("reason") or "")[:300]})
+        status = PFLICHT_STATUS.get(str(a.get("status") or "").strip().lower(), "ungeprueft")
+        zitat = klartext(a.get("zitat") or a.get("quote") or "")[:300] if isinstance(a.get("zitat") or a.get("quote"), str) else ""
+        begruendung = klartext(a.get("begruendung") or a.get("reason") or "")[:300]
+        if text and status in ("erzaehlt", "widerspricht"):
+            if zitat and zitat_belegt(zitat, norm):
+                wo = next((i for i, nt in enumerate(norm_teile) if zitat_belegt(zitat, nt)), None)
+                if wo is not None:
+                    absatz = wo
+            elif status == "erzaehlt":
+                status, zitat = "fehlt", ""
+                begruendung = begruendung or OHNE_ZITAT.get(sprache, OHNE_ZITAT["de"])
+            else:
+                status, zitat = "unklar", ""
+        aus.append({"nr": nr, "status": status, "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
+                    "zitat": zitat, "begruendung": begruendung})
     return aus
 
 
@@ -1445,6 +1516,8 @@ class Ablauf:
     letzte_pflicht: dict = field(default_factory=dict)  # 0.4.65: Prüfung gegen die Pflichtpunkte, vorher/nachher
     letzte_kuerzung: dict = field(default_factory=dict)  # 0.4.68: Kürzung eines zu langen Kapitels (angenommen?)
     letztes_lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung
+    notiz_klient: Klient | None = None  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl (sonst klient)
+    letzte_unklar: list = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus Notizen und Auswahl
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1518,6 +1591,7 @@ class Ablauf:
             fortschritt(min(0.6, 0.6 * (i + 1) / len(teile)))
         notizen = _ohne_doppelte(notizen)
         self.letzte_notizen = "\n".join(notizen)
+        self.letzte_unklar = unklar_stellen(self.letzte_notizen)
         return "Szenennotizen (aus dem Transkript verdichtet)", self.letzte_notizen
 
     def _notizen(self, system: str, vorspann: str, zeilen: list[str], tiefe: int = 0, erinnert: bool = False) -> list[str]:
@@ -1530,7 +1604,7 @@ class Ablauf:
         if self.temperatur_notizen is not None and hasattr(self.klient, "temperatur"):
             self.klient.temperatur = self.temperatur_notizen
         try:
-            d = self.zaehler.aufruf(self.klient, system, vorspann + "\n".join(zeilen), retten=True)
+            d = self.zaehler.aufruf(self.notiz_klient or self.klient, system, vorspann + "\n".join(zeilen), retten=True)
         except AntwortFehler:
             if tiefe >= 2 or len(zeilen) < 8:
                 raise
@@ -1548,13 +1622,20 @@ class Ablauf:
         kopien = _zeilenkerne(zeilen)
         notizen, zuletzt = [], None
         for n in d.get("notizen") or []:
-            n = _notiz_normieren(str(n))
+            n = regelreste(_notiz_normieren(str(n)))
             m = _ZEIT_VORN.match(n)
             if m:
                 zuletzt = f"[{m.group(1)}]"
             elif zuletzt is not None:
                 n = f"{zuletzt} {n}"  # Notiz ohne Zeit gehört zur Stelle davor
-            if not n or _REGELN.search(n) or _bruchstueck(n):
+            if n and _REGELN.search(n):  # 0.4.73: erst die Wendung bzw. den Satzteil nehmen, erst zuletzt die Notiz
+                from app.artefakte import regelteil
+
+                zeit_m = _ZEIT_VORN.match(n)
+                kopf_z = n[:zeit_m.end()] if zeit_m else ""
+                rest = regelteil(n[len(kopf_z):].strip(), _REGELN)
+                n = f"{kopf_z}{rest}".strip() if rest else ""
+            if not n or _bruchstueck(n):
                 continue  # Würfe und Werte gehören nicht in die Geschichte; Bruchstücke auch nicht
             if _notizkern(n) in kopien or _notizkern(_SPRECHER_VORN.sub("", n)) in kopien:
                 continue  # abgeschriebene Transkriptzeile statt Notiz
@@ -1627,8 +1708,14 @@ class Ablauf:
                           for e in ein["bibel"])
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"\n\n{titel}:\n{grundlage}")
+        if self.notizen_zuerst:  # 0.4.73: Länge vorab planen statt hinterher kürzen – Absatzzahl hält das Modell besser ein
+            unten, oben = untergrenze(ein, True), obergrenze(ein, True)
+            laenge = (f"Etwa {max(4, round(oben / 130))} Absätze mit zusammen {unten} bis {oben} Wörtern – nicht mehr als "
+                      f"{oben} –, je Absatz 80 bis 180 Wörter")
+        else:
+            laenge = f"{woerter(ein)} Wörter, in Absätzen von je 80 bis 180 Wörtern"
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
-                  .replace("{woerter}", woerter(ein, self.notizen_zuerst)))
+                  .replace("{laenge}", laenge))
         self._schritt("recap")
         d = self.zaehler.aufruf(self.klient, system, nutzer)
         text = recap_text(d)
@@ -1638,7 +1725,7 @@ class Ablauf:
             log.warning("Sprachmodell: Recap-Antwort ohne text (%s)", form)
             raise SprachmodellFehler(f"Das Sprachmodell hat keinen Recap geliefert (Antwort: {form}).")
         faeden = [klartext(f)[:300] for f in (d.get("openThreads") or d.get("open_threads") or []) if klartext(f)][:10]
-        text = klartext(text)
+        text = re.sub(r"\s+([,.;:!?])", r"\1", _UNKLAR.sub("", klartext(text)))  # die Marke gehört nicht ins Kapitel
         if "\n\n" not in text and "\n" in text:  # Absätze nur mit einfachem Umbruch – für App und Prüfung trennen
             text = re.sub(r"\n+", "\n\n", text)
         text = absaetze_teilen(text)
@@ -1705,10 +1792,14 @@ class Ablauf:
         stand = "\n".join(f"- {s}" for s in self.letzter_stand) or "(kein Stand)"
         nutzer = (f"{_kopf(ein)}\n\nSzenennotizen der Runde:\n{notizen}\n\nStand am Ende der Runde (mit dem Zeitpunkt "
                   f"der Änderung):\n{stand}")
-        system = (SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein))
-                  .replace("{hoechstens}", str(AUSWAHL_HOECHSTENS)))
+        hoechstens = auswahl_hoechstens(ein)
+        system = SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(hoechstens))
         self._schritt("recap")
-        return auswahl_lesen(self.zaehler.aufruf(self.klient, system, nutzer))
+        aus = auswahl_lesen(self.zaehler.aufruf(self.notiz_klient or self.klient, system, nutzer), hoechstens)
+        for e in aus:
+            if _UNKLAR.search(e["ereignis"] + " " + e["ausgang"]):
+                e["unklar"] = True
+        return aus
 
     def pflicht_pruefen(self, ein: dict, punkte: list[dict], text: str) -> list[dict]:
         teile = absaetze(text)
@@ -1716,7 +1807,7 @@ class Ablauf:
                   + "\n\n".join(f"Absatz {i + 1}:\n{a}" for i, a in enumerate(teile)))
         self._schritt("review")
         return pflicht_lesen(self.zaehler.aufruf(self.klient, SYSTEM_PFLICHT.replace("{sprache}", _sprache(ein)), nutzer),
-                             len(punkte), len(teile))
+                             len(punkte), len(teile), text, "en" if ein.get("sprache") == "en" else "de")
 
     def pflicht_nachbessern(self, ein: dict, punkte: list[dict], befund: list[dict], text: str) -> str | None:
         """Genau eine Nachbesserung, nur für Absätze mit fehlenden oder falsch erzählten Pflichtpunkten. Ein Absatz
