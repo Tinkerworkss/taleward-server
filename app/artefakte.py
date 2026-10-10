@@ -97,10 +97,19 @@ def _du_form(text: str) -> bool:
         vor = text[:m.start()].strip(" \t\n(–-")
         if vor and not vor.endswith(":"):
             continue  # großgeschrieben mitten im Satz: Name (nach Doppelpunkt beginnt Rede)
-        if wort.casefold() == "du" and text[m.end():].lstrip()[:1].isupper():
+        rest = text[m.end():].lstrip()
+        if wort.casefold() == "du" and rest[:1].isupper():
             continue  # „Du Hanlin …“
+        # 0.4.81: „Du erhöhte …“, „Du ist …“ – das Verb steht in der 3. Person, also ist „Du“ ein Name; die Anrede hieße
+        # „du erhöhtest“. Vorher fielen solche Sätze ganz aus dem Kapitel.
+        verb = re.match(r"[a-zäöüß]+", rest)
+        if wort.casefold() == "du" and verb and (verb.group(0) == "ist" or not _ZWEITE_PERSON.search(verb.group(0))):
+            continue
         return True
     return False
+
+
+_ZWEITE_PERSON = re.compile(r"(?:st|[sßzx]t)$")  # du gehst, gingst, bist, kannst, heißt, sitzt
 
 
 def _ohne_zitate(satz: str) -> str:
@@ -147,6 +156,11 @@ def _saetze(absatz: str) -> list[tuple[str, str]]:
 
 def _woerter(t: str) -> list[str]:
     return [w for w in re.findall(r"\w+", t.casefold()) if len(w) > 2]
+
+
+def _grosswoerter(t: str) -> set[str]:
+    """Großgeschriebene Wörter eines Satzes (Namen, Nomen, Satzanfang) – zum Unterscheiden gleich gebauter Sätze."""
+    return {w.casefold() for w in re.findall(r"\b[A-ZÄÖÜ]\w*", t) if len(w) > 2}
 
 
 def _teil_entfernen(satz: str, m: re.Match) -> str:
@@ -246,7 +260,7 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
             geschuetzt.add(p["charakter"].casefold())
             geschuetzt.update(w.casefold() for w in p["charakter"].split() if len(w) >= 3)
     befunde: list[dict] = []
-    gesehen: list[set[str]] = []
+    gesehen: list[tuple[set[str], set[str]]] = []
     zuletzt: list[str] = []  # die letzten NAH Sätze, nur Wörter (über Absätze hinweg)
     absaetze_aus = []
     for absatz in re.split(r"\n\s*\n", text or ""):
@@ -281,10 +295,13 @@ def _kapitel(text: str, personen: list[dict] | None, geschuetzte_namen: list[str
                 befunde.append({"art": "name_ersetzt", "text": satz[:200]})
             satz = satz_neu
             w = set(_woerter(satz))
-            if len(w) >= 6 and any(len(w & alt) >= 0.8 * len(w) for alt in gesehen):
+            gross = _grosswoerter(satz)
+            # 0.4.81: Nur eine Wiederholung, wenn kein neuer Name dazukommt – „Dan übergab ihnen eine Visitenkarte …“ nach
+            # „Matteo übergab ihr eine Visitenkarte …“ erzählt etwas Neues.
+            if len(w) >= 6 and any(len(w & alt) >= 0.8 * len(w) and gross <= alt_gross for alt, alt_gross in gesehen):
                 befunde.append({"art": "wiederholung", "text": satz[:200]})
                 continue
-            gesehen.append(w)
+            gesehen.append((w, gross))
             zuletzt[:] = (zuletzt + [kern])[-NAH:]
             saetze_aus.append(satz)
         if saetze_aus:

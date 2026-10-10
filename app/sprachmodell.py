@@ -1611,10 +1611,16 @@ KURZER_ENTWURF = 0.5  # 0.4.78: Entwurf unter diesem Anteil der Untergrenze → 
 ROHANTWORT_ZEICHEN = 20000  # so viel der Rohantwort eines zu kurzen Entwurfs bleibt für die Fehlersuche
 ABSATZ_HOECHSTENS = 220  # Wörter; längere Absätze werden an Satzgrenzen geteilt
 ABSATZ_ZIEL = 140
-_SATZENDE = re.compile(r"(?<=[.!?…])[»«“\"')]*\s+(?=[„\"»«(]?[A-ZÄÖÜ0-9])")
+# 0.4.81: Schließende Zeichen bleiben am Satz (vorher fielen „…“ beim Teilen weg)
+_SATZENDE = re.compile(r"(?:(?<=[.!?…])|(?<=[.!?…][»«“\"')])|(?<=[.!?…][»«“\"')]{2}))\s+(?=[„\"»«(]?[A-ZÄÖÜ0-9])")
 
 
 _ZAHL_ANFANG = re.compile(r"\d{1,3}\.\s")
+
+
+def _rede_offen(text: str) -> bool:
+    """0.4.81: Steht der Text mitten in wörtlicher Rede? Dort wird kein Absatz geteilt."""
+    return text.count("„") > text.count("“") or text.count("»") > text.count("«")
 
 
 def absaetze_teilen(text: str) -> str:
@@ -1638,7 +1644,7 @@ def absaetze_teilen(text: str) -> str:
         stueck: list[str] = []
         for satz in saetze:
             stueck.append(satz.strip())
-            if sum(len(x.split()) for x in stueck) >= ABSATZ_ZIEL:
+            if sum(len(x.split()) for x in stueck) >= ABSATZ_ZIEL and not _rede_offen(" ".join(stueck)):
                 aus.append(" ".join(stueck))
                 stueck = []
         if stueck:
