@@ -70,6 +70,12 @@ EN: dict[str, str] = {
     "Hinweis abgeschrieben": "note copied verbatim",
     "vom Filter geleert": "emptied by the filter",
     "Hinweis nicht umgesetzt: Absatz {liste}": "Note not applied: paragraph {liste}",
+    "Zum Abhaken": "To check off",
+    "neu": "new",
+    "gestrichen": "removed",
+    "nicht umgesetzt": "not applied",
+    "Im nächsten Durchgang mit eindeutigem Satz noch einmal eintragen: wer tat was.":
+        "Enter it again in the next pass as one clear sentence: who did what.",
     "Hinweise und Vorher/Nachher": "Notes and before/after",
     "Absatz {n} vorher": "Paragraph {n} before",
     "Absatz {n} nachher": "Paragraph {n} after",

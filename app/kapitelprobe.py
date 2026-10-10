@@ -427,23 +427,23 @@ def korrigieren_starten(db: Session, p: Probe, hinweise: dict[int, str], fehlt: 
 
 
 def _korrigieren(p: Probe, k, ein: dict, hinweise: dict[int, str], fehlt: str) -> None:
-    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze, hinweis_saetze
+    from app.sprachmodell import Ablauf, SprachmodellFehler, absaetze, hinweis_liste, pruefliste
 
     vorher = aktueller_text(p)
     runde = {"nr": len(p.korrekturen) + 1, "gestartet": utcnow().isoformat().replace("+00:00", "Z"),
              "hinweise": [{"absatz": i + 1, "text": h} for i, h in sorted(hinweise.items())], "fehlt": fehlt,
              "vorher": vorher, "nachher": "", "geaendert": [], "verworfen": [], "ohne_aenderung": [],
-             "anzahl": len(hinweise) + (max(hinweis_saetze(fehlt), 1) if fehlt else 0),
+             "anzahl": len(hinweise) + len(hinweis_liste(fehlt) or ([fehlt] if fehlt.strip() else [])),
+             "pruefliste": [],
              "woerter_vorher": len(vorher.split()), "kosten_cent": 0, "fehler": None}
     with _REIHE:
         t0 = time.monotonic()
         try:
             if k.art == "attrappe":  # Testmodus: hängt an jeden genannten Absatz eine Markierung
                 teile = absaetze(vorher)
-                for i in hinweise:
-                    if 0 <= i < len(teile):
-                        teile[i] += " (Testmodus: korrigiert)"
-                runde["nachher"] = "\n\n".join(teile)
+                neu = {i: teile[i] + " (Testmodus: korrigiert)" for i in hinweise if 0 <= i < len(teile)}
+                runde["nachher"] = "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
+                runde["pruefliste"] = pruefliste(hinweise, hinweis_liste(fehlt), {}, teile, neu)
                 runde["geaendert"] = [i + 1 for i in sorted(hinweise) if 0 <= i < len(teile)]
             else:
                 from app.zusammenfassung import api_klient

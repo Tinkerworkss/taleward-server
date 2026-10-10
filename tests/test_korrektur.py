@@ -64,7 +64,9 @@ def test_ablauf_korrigieren_laesst_den_rest_zeichengleich():
                                                    "[1:00] Hanna bringt die Gruppe mit dem Boot über den Fluss.")
     teile = text.split("\n\n")
     assert teile[0] == TEILE[0] and teile[2] == TEILE[2] and "Floß" in teile[1]
-    assert bericht == {"anzahl": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
+    assert {k: bericht[k] for k in ("anzahl", "geaendert", "verworfen", "ohne_aenderung")} == {
+        "anzahl": 1, "geaendert": [2], "verworfen": [], "ohne_aenderung": []}
+    assert bericht["pruefliste"][0]["umgesetzt"] and bericht["pruefliste"][0]["absaetze"][0]["absatz"] == 2
     assert "Absatz 2: Es war ein Floß" in anbieter.nutzer and "bei Widerspruch gilt der Hinweis" in anbieter.nutzer
 
 
@@ -101,6 +103,7 @@ def test_korrektur_im_probelauf(client, world, dbs, tmp_path, admin):  # noqa: F
     assert nachher[0].endswith("(Testmodus: korrigiert)") and nachher[1:] == vorher[1:]
     seite = client.get(f"/verwaltung/probelauf/{pid}").text
     assert "Durchgang 1" in seite and "Stand nach 1 Korrekturdurchgängen" in seite
+    assert "Zum Abhaken" in seite and "Das stimmt so nicht." in seite
     assert {"korrektur.json", "recap-korrigiert.txt"} <= {n for n in probelauf.DATEIEN if probelauf.datei(pid, n)}
     # fremdes Konto sieht nichts und kann nichts auslösen
     assert client.post("/verwaltung/probelauf/00000000-0000-0000-0000-000000000000/korrektur",
@@ -139,3 +142,24 @@ def test_bericht_ueberschreibt_die_hinweise_nicht(client, world, dbs, tmp_path, 
     runde = probelauf.lesen(p.id).korrekturen[0]
     assert runde["hinweise"] == [{"absatz": 1, "text": "Stimmt nicht."}] and runde["anzahl"] == 2
     assert probelauf.aktueller_text(probelauf.lesen(p.id)).startswith(TEILE[0] + " Richtig.")
+
+
+def test_freie_hinweise_einzeln_mit_geaenderten_saetzen():
+    """0.4.71: Jeder Satz des freien Felds ist ein eigener Hinweis. Die Prüfliste zeigt je Hinweis die neuen und
+    gestrichenen Sätze; ein Hinweis, den das Modell keinem geänderten Absatz zuordnet, gilt als nicht umgesetzt."""
+    frei = "Hanna kam mit einem Floß. Mr. Kessler war nicht dabei.\nSie schliefen im Kloster."
+    assert sm.hinweis_liste(frei) == ["Hanna kam mit einem Floß.", "Mr. Kessler war nicht dabei.",
+                                      "Sie schliefen im Kloster."]
+    anbieter = Anbieter({"absaetze": [{"nr": 2, "hinweise": [1], "text": "Am Hafen wartete Hanna Kessler mit einem "
+                                       "Floß und brachte die Gruppe über den Fluss."},
+                                      {"nr": 3, "hinweise": ["H3"], "text": TEILE[2] + " Dort schliefen sie."}]})
+    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "m", httpx.Client(transport=httpx.MockTransport(anbieter)))
+    ein = {"kampagne": "K", "session_number": 1, "session_nummer": 1, "personen": [], "bibel": []}
+    _text, bericht = sm.Ablauf(klient).korrigieren(ein, TEXT, {}, frei, "")
+    assert "- H2 (ohne Absatzangabe): Mr. Kessler war nicht dabei." in anbieter.nutzer
+    eins, zwei, drei = bericht["pruefliste"]
+    assert eins["absaetze"] == [{"absatz": 2, "neu": ["Am Hafen wartete Hanna Kessler mit einem Floß und brachte die "
+                                                       "Gruppe über den Fluss."], "weg": [TEILE[1]]}]
+    assert not zwei["umgesetzt"] and zwei["absaetze"] == []
+    assert drei["absaetze"][0] == {"absatz": 3, "neu": ["Dort schliefen sie."], "weg": []}
+    assert bericht["anzahl"] == 3

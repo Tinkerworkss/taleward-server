@@ -54,7 +54,14 @@
     <p>{{ _("{n} Hinweise", n=k.anzahl if k.anzahl is defined else k.hinweise|length + (1 if k.fehlt else 0)) }} · {{ _("geändert: Absatz {liste}", liste=k.geaendert|join(", ")) if k.geaendert else _("nichts geändert") }} · {{ _("{a} → {b} Wörter", a=k.woerter_vorher, b=k.woerter_nachher) }} · {{ _("etwa {cent} Cent", cent=k.kosten_cent) }}</p>
     {% if k.fehler %}<p class="hilfe">{{ _("Hinweis") }}: {{ k.fehler }}</p>{% endif %}
     {% for v in k.verworfen %}<p class="hilfe">{{ _("Verworfen (Absatz {n}): {grund}", n=v.absatz, grund=_(v.grund)) }}</p>{% endfor %}
-    {% if k.ohne_aenderung %}<p class="hilfe">{{ _("Hinweis nicht umgesetzt: Absatz {liste}", liste=k.ohne_aenderung|join(", ")) }}</p>{% endif %}
+    {% if k.pruefliste %}
+    <h4>{{ _("Zum Abhaken") }}</h4>
+    <ol>{% for h in k.pruefliste %}<li><strong>{{ h.text }}</strong>
+      {% if h.umgesetzt %}{% for a in h.absaetze %}<br><span class="leise">{{ _("Absatz {n}", n=a.absatz) }}</span>
+        {% for t in a.neu %}<br>{{ _("neu") }}: „{{ t }}“{% endfor %}{% for t in a.weg %}<br><span class="leise">{{ _("gestrichen") }}: „{{ t }}“</span>{% endfor %}
+      {% endfor %}{% else %}<br><span class="marke-status marke-status--warten">{{ _("nicht umgesetzt") }}</span> <span class="leise">{{ _("Im nächsten Durchgang mit eindeutigem Satz noch einmal eintragen: wer tat was.") }}</span>{% endif %}
+    </li>{% endfor %}</ol>
+    {% elif k.ohne_aenderung %}<p class="hilfe">{{ _("Hinweis nicht umgesetzt: Absatz {liste}", liste=k.ohne_aenderung|join(", ")) }}</p>{% endif %}
     <details><summary>{{ _("Hinweise und Vorher/Nachher") }}</summary>
       <ul>{% for h in k.hinweise %}<li>{{ _("Absatz {n}", n=h.absatz) }}: {{ h.text }}</li>{% endfor %}{% if k.fehlt %}<li>{{ _("Ohne Absatzangabe") }}: {{ k.fehlt }}</li>{% endif %}</ul>
       {% set alt = k.vorher.split("\n\n") %}{% set neu = (k.nachher or k.vorher).split("\n\n") %}

@@ -774,23 +774,76 @@ SYSTEM_KORREKTUR = """Du überarbeitest das Kapitel einer Pen-&-Paper-Session na
 Spielleitung war dabei und hat immer recht: Was in einem Hinweis steht, gilt, auch wenn die Notizen etwas anderes sagen.
 - Ein Hinweis zu einem Absatz: Schreib genau diesen Absatz neu. Stell die beanstandete Stelle richtig oder streich \
 sie; alles andere im Absatz bleibt, wie es ist.
-- Hinweise ohne Absatzangabe (Fehler oder Fehlendes): Ordne jeden selbst dem Absatz zu, den er betrifft – Fehlendes \
-dem Absatz, in den es nach der Reihenfolge des Geschehens gehört – und ändere nur diese Absätze. Fehlendes knapp \
-einfügen, der Rest des Absatzes bleibt.
+- Hinweise ohne Absatzangabe (H1, H2 …; Fehler oder Fehlendes): Ordne jeden selbst dem Absatz zu, den er betrifft – \
+Fehlendes dem Absatz, in den es nach der Reihenfolge des Geschehens gehört – und ändere nur diese Absätze. Fehlendes \
+knapp einfügen, der Rest des Absatzes bleibt. Steht etwas Falsches schon im Absatz, ersetze es, statt das Richtige \
+nur dazuzuschreiben.
 - Ein Hinweis ist eine Anweisung, kein Text zum Abschreiben: Ins Kapitel kommt nur, was die Spielleitung darin sehen \
 will, ohne Wörter wie „Hinweis“ oder „Spielleitung“. Nichts darüber hinaus erfinden.
 Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, reiner Text ohne Markdown. \
 Keine Regeln, Würfe oder Punkte.
-Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]} – nur die geänderten Absätze. Sprache: {sprache}."""
+Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…", "hinweise": [1, 3]}]} – nur die geänderten Absätze; \
+"hinweise" nennt die Nummern der H-Hinweise, die du in diesem Absatz umgesetzt hast. Sprache: {sprache}."""
 KORREKTUR_NOTIZEN_ZEICHEN = 60_000  # Notizen als Hintergrund, gekürzt
 KORREKTUR_MINDESTENS = 0.3  # ein Absatz darf beim Richtigstellen nicht auf weniger als 30 % schrumpfen
 KORREKTUR_FREI_HOECHSTENS = 5  # so viele Absätze darf ein Hinweistext ohne Absatzangabe höchstens ändern
 _META = re.compile(r"\b(?:Hinweis|Spielleitung|Spielleiter|game master|hint)\b", re.I)
 
 
+def hinweis_liste(frei: str) -> list[str]:
+    """Ein freier Hinweistext → einzelne Hinweise, ein Satz bzw. eine Zeile je Hinweis („Mr. Du“ trennt nicht)."""
+    from app.artefakte import _saetze
+
+    aus = []
+    for zeile in (frei or "").splitlines():
+        aus += [satz for satz, _m in _saetze(" ".join(zeile.split())) if len(satz.split()) >= 2]
+    return aus
+
+
 def hinweis_saetze(frei: str) -> int:
-    """Wie viele Hinweise stecken in einem freien Text? Ein Satz bzw. eine Zeile je Hinweis."""
-    return len([x for x in re.split(r"(?<=[.!?])\s+|\n+", frei or "") if len(x.split()) >= 2])
+    """Wie viele Hinweise stecken in einem freien Text?"""
+    return len(hinweis_liste(frei))
+
+
+def satz_aenderung(alt: str, neu: str) -> dict:
+    """Welche Sätze ein Korrekturdurchgang in einem Absatz neu geschrieben bzw. gestrichen hat (zum Abhaken)."""
+    from app.artefakte import _saetze
+
+    a, n = [x for x, _m in _saetze(alt)], [x for x, _m in _saetze(neu)]
+    return {"neu": [x for x in n if x not in a], "weg": [x for x in a if x not in n]}
+
+
+def pruefliste(hinweise: dict[int, str], frei: list[str], zuordnung: dict[int, list[int]], alt: list[str],
+               neu: dict[int, str]) -> list[dict]:
+    """Je Hinweis: Text, Absätze (1-basiert), in denen er umgesetzt wurde, und die geänderten Sätze dort. Ohne Absatz
+    gilt er als nicht umgesetzt. zuordnung: {Nummer des freien Hinweises (1-basiert): [Absatz-Index]}."""
+    def eintrag(text: str, idx: list[int]) -> dict:
+        idx = sorted(i for i in set(idx) if i in neu)
+        return {"text": text, "umgesetzt": bool(idx),
+                "absaetze": [{"absatz": i + 1, **satz_aenderung(alt[i], neu[i])} for i in idx]}
+
+    return ([eintrag(h, [i]) for i, h in sorted(hinweise.items())]
+            + [eintrag(h, zuordnung.get(n, [])) for n, h in enumerate(frei, 1)])
+
+
+def hinweis_zuordnung(d: dict, anzahl: int) -> dict[int, list[int]]:
+    """Aus der Modellantwort: welcher freie Hinweis (1-basiert) in welchem Absatz (Index) umgesetzt wurde."""
+    aus: dict[int, list[int]] = {}
+    for a in d.get("absaetze") or d.get("paragraphs") or []:
+        if not isinstance(a, dict) or not isinstance(a.get("hinweise"), list):
+            continue
+        try:
+            i = int(a.get("nr") or a.get("index") or 0) - 1
+        except (TypeError, ValueError):
+            continue
+        for h in a["hinweise"]:
+            try:
+                n = int(str(h).lstrip("Hh"))
+            except ValueError:
+                continue
+            if 1 <= n <= anzahl:
+                aus.setdefault(n, []).append(i)
+    return aus
 
 
 def korrektur_anwenden(d: dict, teile: list[str], hinweise: dict[int, str], frei: str) -> tuple[dict[int, str], list[dict]]:
@@ -1762,13 +1815,13 @@ class Ablauf:
         teile = absaetze(text)
         hinweise = {i: h.strip() for i, h in hinweise.items() if 0 <= i < len(teile) and h.strip()}
         frei = frei.strip()
-        bericht = {"anzahl": len(hinweise) + (max(hinweis_saetze(frei), 1) if frei else 0), "geaendert": [],
-                   "verworfen": [], "ohne_aenderung": []}
+        frei_liste = hinweis_liste(frei) or ([frei] if frei else [])
+        bericht = {"anzahl": len(hinweise) + len(frei_liste), "geaendert": [], "verworfen": [],
+                   "ohne_aenderung": [], "pruefliste": []}
         if not hinweise and not frei:
             return text, bericht
         liste = [f"- Absatz {i + 1}: {h}" for i, h in sorted(hinweise.items())]
-        if frei:
-            liste.append(f"- Ohne Absatzangabe: {frei}")
+        liste += [f"- H{n} (ohne Absatzangabe): {h}" for n, h in enumerate(frei_liste, 1)]
         grund = (f"Szenennotizen (nur zur Orientierung; bei Widerspruch gilt der Hinweis):\n"
                  f"{notizen[:KORREKTUR_NOTIZEN_ZEICHEN]}\n\n") if notizen.strip() else ""
         nutzer = (f"{_kopf(ein)}\n\n{grund}Kapitel, Absatz für Absatz:\n"
@@ -1788,6 +1841,7 @@ class Ablauf:
                 neu[i] = sauber
         bericht["geaendert"] = [i + 1 for i in sorted(neu)]
         bericht["ohne_aenderung"] = [i + 1 for i in sorted(hinweise) if i not in neu]
+        bericht["pruefliste"] = pruefliste(hinweise, frei_liste, hinweis_zuordnung(d, len(frei_liste)), teile, neu)
         return "\n\n".join(neu.get(i, a) for i, a in enumerate(teile)), bericht
 
     def relationen(self, ein: dict, text: str, befund: list[dict]) -> list[dict]:
