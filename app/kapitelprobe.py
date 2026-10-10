@@ -379,8 +379,9 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
         p.dauer_s = time.monotonic() - t0
         p.schritt = ""
         p.beendet = utcnow().isoformat().replace("+00:00", "Z")
-        _speichern(p)
+        # erst die Dateien, dann der Stand: Wer „fertig“ liest, findet die Dateien schon vor
         _dateien_schreiben(p)
+        _speichern(p)
 
 
 def _dateien_schreiben(p: Probe) -> None:
