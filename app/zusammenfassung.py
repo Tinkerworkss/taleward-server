@@ -288,13 +288,15 @@ def attrappe(e: Eingabe) -> Ergebnis:
 
 def ergebnis_aus(d: dict, kosten_cent: int = 0) -> Ergebnis:
     """Ergebnis des Sprachmodells (sprachmodell.Ablauf bzw. Worker) → Ergebnis."""
+    from app.sprachmodell import titel_saeubern  # 0.4.78: „Kapitel 1: Kapitel 1: …“ auch von älteren Workern
+
     v = [Vorschlag(entry_type=p["entryType"], action=p["action"], title=p["title"], detail=p.get("detail") or "",
                    target_entry_id=p.get("targetEntryId"), gm_notes=p.get("gmNotes"),
                    suggested_visibility=p.get("suggestedVisibility") or "gm_only",
                    visibility_reason=p.get("visibilityReason"), confidence=float(p.get("confidence", 0.5)),
                    flags=list(p.get("flags") or []), evidence=list(p.get("evidence") or []))
          for p in d.get("proposals") or []]
-    return Ergebnis(titel=d.get("title") or "", text=d["text"], offene_faeden=list(d.get("openThreads") or []),
+    return Ergebnis(titel=titel_saeubern(d.get("title") or ""), text=d["text"], offene_faeden=list(d.get("openThreads") or []),
                     vorschlaege=v, modell=d.get("model") or "?", tokens_in=int(d.get("tokensIn") or 0),
                     tokens_out=int(d.get("tokensOut") or 0), kosten_cent=kosten_cent,
                     pruefung=d.get("review") if isinstance(d.get("review"), dict) else None)

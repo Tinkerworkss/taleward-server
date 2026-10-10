@@ -824,6 +824,7 @@ def probelauf_seite(request: Request, probe_id: str, user: User = Depends(verwal
                 "proposals": "Vorschläge"}
     return _seite(request, "probelauf.html", user, db, p=p, schritt=schritte.get(p.schritt, p.schritt),
                   aktuell=probelauf.aktueller_text(p),
+                  teile={t["firstParagraph"]: t["title"] for t in p.teile},  # 0.4.78: Teile im Kapitel
                   dateien=[n for n in probelauf.DATEIEN if probelauf.datei(p.id, n) is not None])
 
 

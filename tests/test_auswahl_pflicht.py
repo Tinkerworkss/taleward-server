@@ -72,8 +72,10 @@ def test_auswahl_pflicht_und_nachbesserung(client, world, dbs, tmp_path):
     d = a.ausfuehren(recap_ein, vorschlag_ein, gegenpruefen=True)
     systeme = [x["system"][:40] for x in anbieter.aufrufe]
     # Auswahl sieht Notizen und Stand; Spielleitung fällt heraus; nach Zeit sortiert
-    auswahl = next(x for x in anbieter.aufrufe if x["system"].startswith("Du bereitest das Kapitel"))
-    assert "Stand am Ende der Runde" in auswahl["nutzer"] and "Mara: verletzt, lebt" in auswahl["nutzer"]
+    auswahlen = [x for x in anbieter.aufrufe if x["system"].startswith("Du bereitest das Kapitel")]
+    # 0.4.78: der Abschnitt (hier nur der erste hat Notizen) sieht den Stand bis zu seinem Ende
+    assert len(auswahlen) == 1 and "Stand bis 37:15" in auswahlen[0]["nutzer"]
+    assert "Mara: verletzt, lebt" in auswahlen[0]["nutzer"]
     assert [p["zeit"] for p in a.letzte_auswahl] == [60.0, 120.0]
     # Das Kapitel bekommt die Pflichtpunkte mit Ausgang
     recap = next(x for x in anbieter.aufrufe if x["system"].startswith("Du schreibst den Recap"))

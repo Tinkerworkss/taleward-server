@@ -74,6 +74,26 @@ class Probe:
     korrektur_laeuft: bool = False
     unklar: list[dict] = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus den Notizen (unklar.json)
     zweiter_blick: list[dict] = field(default_factory=list)  # 0.4.74: Ereignisse gegen die Abschrift (zweiter-blick.json)
+    teile: list[dict] = field(default_factory=list)  # 0.4.78: Teile im Kapitel [{title, firstParagraph}]
+    einschnitte: dict = field(default_factory=dict)  # 0.4.78: Antwort der Suche nach Einschnitten (einschnitte.json)
+    kurzer_entwurf: list[dict] = field(default_factory=list)  # 0.4.78: zu kurze Entwürfe mit Rohantwort (rohantwort.txt)
+
+
+def text_mit_teilen(text: str, teile: list[dict]) -> str:
+    """0.4.78: Kapiteltext mit den Überschriften der Teile (für recap.txt)."""
+    if not teile:
+        return text
+    absaetze = [a.strip() for a in re.split(r"\n\s*\n", text.strip()) if a.strip()]
+    vor = {t["firstParagraph"]: t["title"] for t in teile}
+    return "\n\n".join((f"– {vor[i]} –\n\n" if i in vor else "") + a for i, a in enumerate(absaetze))
+
+
+def _json_sicher(d) -> dict:
+    """Nur, was sich als JSON schreiben lässt (die Antwort des Modells ist es; zur Sicherheit)."""
+    try:
+        return json.loads(json.dumps(d, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return {}
 
 
 def aktueller_text(p: Probe) -> str:
@@ -191,7 +211,7 @@ def datei(probe_id: str, name: str) -> Path | None:
 
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
            "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "zweiter-blick.json",
-           "transkript.txt", "ergebnis.json")
+           "transkript.txt", "ergebnis.json", "einschnitte.json", "rohantwort.txt")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -341,6 +361,9 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
             p.lang = ablauf.letztes_lang
             p.unklar = list(ablauf.letzte_unklar)
             p.zweiter_blick = list(ablauf.letzter_zweiter_blick)
+            p.teile = list(ablauf.letzte_teile)
+            p.einschnitte = _json_sicher(ablauf.letzte_einschnitte)
+            p.kurzer_entwurf = list(ablauf.letzter_kurzer_entwurf)
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -364,7 +387,7 @@ def _dateien_schreiben(p: Probe) -> None:
     o = ordner(p.id)
     try:
         if p.zustand == "fertig":
-            text = f"{p.titel}\n\n{p.text}\n"
+            text = f"{p.titel}\n\n{text_mit_teilen(p.text, p.teile)}\n"
             if p.offene_faeden:
                 text += "\nOffene Fäden:\n" + "\n".join(f"- {f}" for f in p.offene_faeden) + "\n"
             (o / "recap.txt").write_text(text, encoding="utf-8")
@@ -388,13 +411,20 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
             if p.unklar:
                 (o / "unklar.json").write_text(json.dumps(p.unklar, ensure_ascii=False, indent=2), encoding="utf-8")
+            if p.einschnitte:
+                (o / "einschnitte.json").write_text(json.dumps(p.einschnitte, ensure_ascii=False, indent=2),
+                                                    encoding="utf-8")
+            if p.kurzer_entwurf:
+                (o / "rohantwort.txt").write_text("\n\n".join(
+                    f"Entwurf mit {k['woerter']} Wörtern (Untergrenze {k['untergrenze']}), Antwort des Modells:\n{k['antwort']}"
+                    for k in p.kurzer_entwurf) + "\n", encoding="utf-8")
             if p.zweiter_blick:
                 (o / "zweiter-blick.json").write_text(json.dumps(p.zweiter_blick, ensure_ascii=False, indent=2),
                                                       encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
                                                                   "pflicht", "entwurf", "lang", "korrekturen", "unklar",
-                                                                  "zweiter_blick")},
+                                                                  "zweiter_blick", "einschnitte", "kurzer_entwurf")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)

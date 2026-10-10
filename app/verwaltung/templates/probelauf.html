@@ -27,9 +27,9 @@
   {% if p.korrekturen %}<p class="leise">{{ _("Stand nach {n} Korrekturdurchgängen", n=p.korrekturen|length) }}</p>{% endif %}
   {% if p.korrektur_laeuft %}
     <p><span class="marke-status marke-status--warten">{{ _("läuft") }}</span> {{ _("Korrekturdurchgang") }} · <span class="leise">{{ _("Die Seite lädt alle 10 Sekunden neu.") }}</span></p>
-    {% for absatz in aktuell.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
+    {% for absatz in aktuell.split("\n\n") %}{% if loop.index0 in teile %}<h3>{{ teile[loop.index0] }}</h3>{% endif %}<p>{{ absatz }}</p>{% endfor %}
   {% else %}
-  {% for absatz in aktuell.split("\n\n") %}<p>{{ absatz }}</p>{% endfor %}
+  {% for absatz in aktuell.split("\n\n") %}{% if loop.index0 in teile %}<h3>{{ teile[loop.index0] }}</h3>{% endif %}<p>{{ absatz }}</p>{% endfor %}
   <form method="post" action="/verwaltung/probelauf/{{ p.id }}/korrektur">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label for="fehlt">{{ _("Stimmt etwas nicht oder fehlt etwas?") }}</label>

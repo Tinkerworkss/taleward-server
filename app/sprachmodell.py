@@ -536,8 +536,20 @@ def _minuten(ein: dict) -> float:
 
 def woerter(ein: dict, lang: bool = False) -> str:
     """Länge des Recaps nach Länge der Runde: Ein langer Abend hat mehr Wendepunkte als eine kurze Szene.
-    lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen."""
-    minuten = _minuten(ein)
+    lang (0.4.63, Weg „Notizen zuerst“): sehr lange Runden bekommen mehr Platz, damit kurze Ereignisse nicht wegfallen.
+    0.4.78: ab 3 h je angefangene Stunde mehr Platz, mit Deckel ab 5 h – sonst wird es ein Protokoll (gemessen: 7 h in
+    ≈ 1.000 Wörtern, die zweite Hälfte des Abends in drei Absätzen)."""
+    return woerter_fuer(_minuten(ein), lang)
+
+
+def woerter_fuer(minuten: float, lang: bool = False) -> str:
+    """Längenvorgabe für eine Dauer in Minuten (siehe woerter)."""
+    if minuten > 300:
+        return "1800–2400" if lang else "1200–1800"
+    if minuten > 240:
+        return "1500–2100" if lang else "1000–1600"
+    if minuten > 180:
+        return "1200–1800" if lang else "800–1400"
     if minuten > 120:
         return "900–1500" if lang else "600–1200"
     if minuten > 60:
@@ -754,28 +766,207 @@ Sprache: {sprache}."""
 AUSWAHL_HOECHSTENS = 20
 # 0.4.76: Die Auswahl über eine ganze lange Runde in einem Aufruf füllte ihr Kontingent in Zeitfolge und hörte auf – in
 # zwei von sechs Messläufen hatte die letzte Stunde kein einziges Pflichtereignis. Darum wählt das Modell je
-# Zeitabschnitt mit eigenem Anteil am Kontingent; der Stand am Ende der Runde geht jedem Abschnitt mit.
+# Zeitabschnitt mit eigenem Anteil am Kontingent. 0.4.78: Jeder Abschnitt bekommt den Stand nur bis zu seinem Ende –
+# mit dem Stand am Ende der Runde wanderten Beträge und Abmachungen in Ereignisse Stunden davor (gemessen: der erst
+# nach fünf Stunden vereinbarte Preis schon bei einer Anwerbung drei Stunden davor, in zwei von drei Läufen).
 AUSWAHL_ABSCHNITT_MIN = 45  # Minuten je Abschnitt, etwa
 AUSWAHL_ABSCHNITT_AB = 60  # erst Runden über so vielen Minuten werden geteilt
 AUSWAHL_ABSCHNITT = """
 Du bekommst nur Abschnitt {k} von {n} der Runde ({von} bis {bis}). Wähle nur Ereignisse aus diesem Abschnitt; die \
-übrigen Abschnitte wählt jemand anders. Der Stand am Ende der Runde hilft dir, Ausgänge richtig zu benennen."""
+übrigen Abschnitte wählt jemand anders. Der Stand bis zum Ende dieses Abschnitts hilft dir, Ausgänge richtig zu \
+benennen; was erst später vereinbart oder bekannt wird, gehört nicht in diesen Abschnitt."""
 
 
 def auswahl_hoechstens(ein: dict) -> int:
     """0.4.73: Zahl der Pflichtereignisse nach Dauer der Runde – 20 für 155 Minuten waren zu knapp (Kritisches fiel
-    schon aus der Auswahl)."""
-    minuten = _minuten(ein)
+    schon aus der Auswahl). 0.4.78: ab 3 h je angefangene Stunde fünf mehr, höchstens 45."""
+    return auswahl_hoechstens_fuer(_minuten(ein))
+
+
+def auswahl_hoechstens_fuer(minuten: float) -> int:
+    if minuten > 300:
+        return 45
+    if minuten > 240:
+        return 40
+    if minuten > 180:
+        return 35
     return 30 if minuten > 120 else AUSWAHL_HOECHSTENS if minuten > 60 else 12
 
 
-def auswahl_abschnitte(notizen: str, minuten: float, hoechstens: int) -> list[dict]:
+_STAND_ZEIT = re.compile(r"\[(\d{1,2}(?::\d{2}){1,2})\]")
+
+
+def stand_bis(stand: list[str], bis_s: float) -> list[str]:
+    """0.4.78: Der Stand, wie er bis zu einem Zeitpunkt galt. Jede Angabe trägt den Zeitpunkt ihrer Änderung („… (seit
+    [4:54:25])“); Teile einer Zeile (durch „;“ getrennt), deren Zeitpunkt danach liegt, fallen weg. Angaben ohne
+    Zeitpunkt bleiben – über sie lässt sich nichts sagen."""
+    aus = []
+    for zeile in stand or []:
+        teile = []
+        for teil in str(zeile).split(";"):
+            zeiten = [zeit_lesen(z) for z in _STAND_ZEIT.findall(teil)]
+            if any(z is not None and z > bis_s + 60 for z in zeiten):
+                continue
+            teile.append(teil.strip())
+        rest = "; ".join(t for t in teile if t)
+        if rest and not re.fullmatch(r"[^:]{1,60}:", rest):  # nur noch „Name:“ übrig – weglassen
+            aus.append(rest)
+    return aus
+
+
+# 0.4.78: Teile im Kapitel. Eine lange Runde bleibt ein Kapitel; findet sich ein natürlicher Einschnitt (Zeitsprung,
+# Orts- und Szenenwechsel, Ende eines Erzählstrangs, Pause), bekommt jeder Teil eine Überschrift, eigene
+# Pflichtereignisse und eigenen Platz (nur, wenn es inhaltlich Sinn ergibt).
+# Kein Einschnitt → keine Teile. Der Server prüft Lage, Mindestdauer und das Zitat aus den Notizen.
+TEILE_AB_MIN = 240  # ab so vielen Minuten Spielzeit wird ein Einschnitt gesucht
+TEILE_ZWEI_AB_MIN = 420  # ab so vielen Minuten sind zwei Einschnitte möglich
+TEILE_FENSTER = (0.3, 0.7)  # Einschnitte nur in diesem Anteil der Runde
+TEIL_MIN_MIN = 60  # jeder Teil dauert mindestens so viele Minuten
+EINSCHNITT_NAEHE_S = 600.0  # die zitierte Notiz liegt höchstens so weit vom genannten Zeitpunkt
+_EINSCHNITT_ARTEN = {"zeitsprung": "zeitsprung", "time_skip": "zeitsprung", "ortswechsel": "ortswechsel",
+                     "scene_change": "ortswechsel", "strangende": "strangende", "end_of_thread": "strangende",
+                     "pause": "pause", "break": "pause"}
+SYSTEM_EINSCHNITT = """Du gliederst die Szenennotizen einer langen Pen-&-Paper-Runde. Gesucht ist ein natürlicher \
+Einschnitt, an dem die Geschichte selbst einen Schnitt macht – nur zwischen {von} und {bis}, höchstens {anzahl}:
+- ein Zeitsprung in der Spielwelt („am nächsten Abend“, „eine Woche später“),
+- ein Wechsel von Ort und Szene, nach dem etwas Neues beginnt,
+- das Ende eines Erzählstrangs, oder eine lange Pause am Tisch.
+Kein Einschnitt mitten in einer Szene, einem Kampf oder einem Gespräch. Gibt es keinen klaren Einschnitt, liefere eine \
+leere Liste – lieber keiner als ein erzwungener.
+Je Einschnitt: zeit (Zeitstempel der ersten Notiz nach dem Einschnitt), art ("zeitsprung", "ortswechsel", "strangende" \
+oder "pause"), zitat (diese Notiz, wörtlich, höchstens 20 Wörter), titel (Überschrift für den Teil ab hier, 2 bis 5 \
+Wörter, ohne Nummer). Dazu titel_anfang: die Überschrift für den Teil davor. Überschriften im Ton der Kampagne, ohne \
+Namen der Menschen am Tisch, keine Regeln, nichts erfinden.
+Antworte nur mit JSON: {"titel_anfang": "…", "einschnitte": [{"zeit": "h:mm:ss", "art": "…", "zitat": "…", \
+"titel": "…"}]}. Sprache: {sprache}."""
+
+
+PFLICHT_VORSPANN = ("\n\nDiese Ereignisse müssen im Kapitel vorkommen, jedes mit genau diesem Ausgang, in dieser "
+                    "Reihenfolge; sie wurden an der Abschrift geprüft – widerspricht ihnen eine Notiz, gilt das Ereignis. "
+                    "Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne Versuche) höchstens in einem Halbsatz:\n")
+TEIL_ANFANG = """
+- Dies ist Teil {k} von {n} eines Kapitels; die übrigen Teile schreibt jemand anders. Erzähle nur diesen Teil, ohne \
+Vorgriff auf Späteres."""
+TEIL_FORTSETZUNG = """
+- Dies ist Teil {k} von {n} desselben Kapitels und setzt den Teil davor nahtlos fort: keine Einleitung, keine \
+Beschreibung der Welt, keine Vorstellung der Figuren, kein Rückblick auf früher Erzähltes. Die Überschrift des Teils \
+setzt jemand anders; „title“ gibst du trotzdem an."""
+TEIL_OHNE_SCHLUSS = """
+- Kein Schlusswort für den ganzen Abend – die Runde geht im nächsten Teil weiter."""
+
+
+TEIL_DAUER_VORGABE = 150  # Minuten: jeder Teil bekommt Platz und Pflichtereignisse wie eine Runde dieser Länge
+
+
+def teil_grenzen(teil: dict, lang: bool = True) -> tuple[int, int]:
+    """Platz eines Teils (Cloud 900–1500, lokal 600–1200) – ein Teil liest sich wie ein normaler Abend."""
+    w = woerter_fuer(TEIL_DAUER_VORGABE, lang).split("–")
+    return int(w[0]), int(w[-1])
+
+
+def teil_hoechstens(teil: dict) -> int:
+    """Pflichtereignisse eines Teils: wie bei einem normalen Abend (30)."""
+    return auswahl_hoechstens_fuer(TEIL_DAUER_VORGABE)
+
+
+def _ueberschrift(t) -> str:
+    t = regelreste(klartext(t if isinstance(t, str) else ""))
+    t = re.sub(r"^(?:Teil|Part|Kapitel|Chapter)\s+\d+\s*[:.–-]\s*", "", t, flags=re.I).strip(" „“\"'.")
+    return t[:80] if 0 < len(t.split()) <= 8 else ""
+
+
+def einschnitte_lesen(d: dict, notizen: str, dauer_s: float, hoechstens: int, sprache: str = "de") -> list[dict]:
+    """Antwort der Suche nach Einschnitten → Teile [{von, bis, titel}] (Sekunden) oder [] (keine Teile). Ein Einschnitt
+    zählt nur, wenn er im Fenster liegt, die Teile lang genug bleiben und das Zitat als Notiz nahe dem Zeitpunkt steht;
+    der Schnitt fällt auf die erste Notiz ab diesem Zeitpunkt."""
+    zeilen = [(_zeit_vorn(z), _normwoerter(z)) for z in (notizen or "").splitlines() if z.strip()]
+    zeilen = [(t, n) for t, n in zeilen if t is not None]
+    unten, oben = dauer_s * TEILE_FENSTER[0], dauer_s * TEILE_FENSTER[1]
+    kandidaten = []
+    for e in d.get("einschnitte") or d.get("cuts") or []:
+        if not isinstance(e, dict):
+            continue
+        zeit = zeit_lesen(e.get("zeit") if e.get("zeit") is not None else e.get("time"))
+        art = _EINSCHNITT_ARTEN.get(str(e.get("art") or e.get("kind") or "").strip().lower())
+        zitat = klartext(e.get("zitat") or e.get("quote") or "") if isinstance(e.get("zitat") or e.get("quote"), str) else ""
+        if zeit is None or not art or not zitat or not (unten <= zeit <= oben):
+            continue
+        belegt = [t for t, n in zeilen if zitat_belegt(zitat, n) and abs(t - zeit) <= EINSCHNITT_NAEHE_S]
+        if not belegt:
+            continue
+        schnitt = next((t for t, _n in zeilen if t >= min(belegt)), None)
+        if schnitt is None:
+            continue
+        kandidaten.append((schnitt, _ueberschrift(e.get("titel") or e.get("title"))))
+    kandidaten.sort()
+    gewaehlt: list[tuple[float, str]] = []
+    for schnitt, titel in kandidaten:
+        if len(gewaehlt) >= hoechstens:
+            break
+        davor = gewaehlt[-1][0] if gewaehlt else 0.0
+        if schnitt - davor >= TEIL_MIN_MIN * 60 and dauer_s - schnitt >= TEIL_MIN_MIN * 60:
+            gewaehlt.append((schnitt, titel))
+    if not gewaehlt:
+        return []
+    ersatz = "Part {n}" if sprache == "en" else "Teil {n}"
+    titel = [_ueberschrift(d.get("titel_anfang") or d.get("first_title"))] + [t for _s, t in gewaehlt]
+    grenzen = [0.0] + [s for s, _t in gewaehlt] + [dauer_s]
+    return [{"von": grenzen[i], "bis": grenzen[i + 1], "titel": titel[i] or ersatz.format(n=i + 1)}
+            for i in range(len(titel))]
+
+
+def teil_notizen(notizen: str, von: float, bis: float) -> str:
+    """Die Notizen eines Teils (Zeitstempel ab von, vor bis); Zeilen ohne Zeitstempel bleiben bei der Zeile davor."""
+    aus, drin = [], False
+    for z in (notizen or "").splitlines():
+        if not z.strip():
+            continue
+        t = _zeit_vorn(z)
+        if t is not None:
+            drin = von <= t < bis
+        if drin:
+            aus.append(z)
+    return "\n".join(aus)
+
+
+def teile_verorten(text: str, anfaenge: list[str], titel: list[str]) -> list[dict]:
+    """Nach Nachbesserung, Kürzung und Filter: In welchem Absatz beginnt jeder Teil? anfaenge = erster Absatz jedes
+    Teils, wie er geschrieben wurde. Gesucht wird der Anfang (sechs Wörter), sonst der Absatz mit den meisten gemeinsamen
+    Wortstämmen. Lässt sich ein Teil nicht wiederfinden, gibt es keine Teile – lieber ohne Überschrift als an falscher
+    Stelle. Liefert [{title, firstParagraph}]."""
+    teile = absaetze(text)
+    if len(anfaenge) < 2 or len(anfaenge) != len(titel) or len(teile) < len(anfaenge):
+        return []
+    norm = [_normwoerter(t) for t in teile]
+    aus = [{"title": titel[0], "firstParagraph": 0}]
+    letzter = 0
+    for anfang, t in zip(anfaenge[1:], titel[1:]):
+        w = re.findall(r"\w+", anfang.casefold())[:6]
+        kopf = " " + " ".join(w) + " "
+        wo = next((i for i in range(letzter + 1, len(teile)) if norm[i].startswith(kopf)), None)
+        if wo is None:  # ein ganzer Satz des Anfangs steht noch da (der Filter hat davor etwas gestrichen)
+            saetze = [_normwoerter(x) for x in _SATZENDE.split(anfang)[:3] if len(x.split()) >= 5]
+            wo = next((i for i in range(letzter + 1, len(teile)) if any(x in norm[i] for x in saetze)), None)
+        if wo is None:
+            s = _staemme(anfang)
+            beste = max(((len(s & _staemme(teile[i])) / len(s), -i) for i in range(letzter + 1, len(teile))),
+                        default=(0.0, None)) if s else (0.0, None)
+            wo = -beste[1] if beste[0] >= 0.5 else None
+        if wo is None:
+            return []
+        aus.append({"title": t, "firstParagraph": wo})
+        letzter = wo
+    return aus
+
+
+def auswahl_abschnitte(notizen: str, minuten: float, hoechstens: int, start: float = 0.0) -> list[dict]:
     """0.4.76: Notizen in gleich lange Zeitabschnitte (etwa AUSWAHL_ABSCHNITT_MIN Minuten) mit je einem Anteil am
     Kontingent. Zeilen ohne Zeitstempel bleiben beim Abschnitt davor; leere Abschnitte fallen weg, ihr Anteil geht an
-    die übrigen. Kurze Runden: ein Abschnitt."""
+    die übrigen. Kurze Runden: ein Abschnitt. start (0.4.78): Beginn in Sekunden, wenn nur ein Teil der Runde kommt."""
     zeilen = [z for z in (notizen or "").splitlines() if z.strip()]
     if minuten <= AUSWAHL_ABSCHNITT_AB:
-        return [{"k": 1, "n": 1, "von": 0.0, "bis": minuten * 60, "notizen": "\n".join(zeilen), "anteil": hoechstens}]
+        return [{"k": 1, "n": 1, "von": start, "bis": start + minuten * 60, "notizen": "\n".join(zeilen),
+                 "anteil": hoechstens}]
     n = max(2, math.ceil(minuten / AUSWAHL_ABSCHNITT_MIN))
     breite = minuten * 60 / n
     stuecke: list[list[str]] = [[] for _ in range(n)]
@@ -783,7 +974,7 @@ def auswahl_abschnitte(notizen: str, minuten: float, hoechstens: int) -> list[di
     for z in zeilen:
         t = _zeit_vorn(z)
         if t is not None:
-            k = min(n - 1, max(0, int(t // breite)))
+            k = min(n - 1, max(0, int((t - start) // breite)))
         stuecke[k].append(z)
     belegt = [i for i in range(n) if stuecke[i]]
     if not belegt:
@@ -791,7 +982,8 @@ def auswahl_abschnitte(notizen: str, minuten: float, hoechstens: int) -> list[di
     anteile = {i: hoechstens // len(belegt) for i in belegt}
     for i in belegt[:hoechstens % len(belegt)]:
         anteile[i] += 1
-    return [{"k": j + 1, "n": len(belegt), "von": i * breite, "bis": (i + 1) * breite, "notizen": "\n".join(stuecke[i]),
+    return [{"k": j + 1, "n": len(belegt), "von": start + i * breite, "bis": start + (i + 1) * breite,
+             "notizen": "\n".join(stuecke[i]),
              "anteil": anteile[i]} for j, i in enumerate(belegt) if anteile[i] > 0]
 
 SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
@@ -1123,7 +1315,28 @@ def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str =
             status = "ungeprueft"
         aus.append({"nr": nr, "status": status, "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
                     "zitat": zitat, "begruendung": begruendung})
+    if punkte:
+        reihenfolge_pruefen(aus, punkte)
     return aus
+
+
+REIHENFOLGE_ABSTAND_S = 1800.0  # so viel früher muss das andere Ereignis geschehen sein …
+REIHENFOLGE_ABSAETZE = 2  # … und so viele Absätze später erzählt werden, damit es als verlegt gilt
+
+
+def reihenfolge_pruefen(befund: list[dict], punkte: list[dict]) -> None:
+    """0.4.78: Steht ein erzähltes Ereignis deutlich vor einem anderen, das am Tisch eine halbe Stunde früher geschah
+    (mindestens zwei Absätze davor)? Dann bekommt es „reihenfolge“ = Nummer des anderen. Das ist nur ein Hinweis für die
+    Prüfansicht: Wer Erzählstränge nebeneinander erzählt, springt ein wenig; eine ganze verlegte Szene (eine Rettung
+    vor ihrem Anlass) fällt so auf. Nachgebessert wird deshalb nichts."""
+    erzaehlt = [(b, punkte[b["nr"] - 1]) for b in befund
+                if b["status"] == "erzaehlt" and b.get("absatz") is not None and b["nr"] <= len(punkte)
+                and punkte[b["nr"] - 1].get("zeit") is not None]
+    for b, p in erzaehlt:
+        spaeter = [(q_b["absatz"], q_b["nr"]) for q_b, q in erzaehlt
+                   if q["zeit"] <= p["zeit"] - REIHENFOLGE_ABSTAND_S and q_b["absatz"] >= b["absatz"] + REIHENFOLGE_ABSAETZE]
+        if spaeter:
+            b["reihenfolge"] = max(spaeter)[1]
 
 
 FEHLEND_HOECHSTENS = 5  # so viele fehlende Ereignisse darf die Vollständigkeitsprüfung nennen
@@ -1201,7 +1414,19 @@ def pflicht_eintragen(pruefung: dict, befund: list[dict], anzahl: int) -> None:
 # eindeutig gekennzeichnet hat. Für die App unverändert: Recap.review mit verdict, note und Belegstellen.
 UNKLAR_HINWEIS = {"de": "Die Aufnahme ist hier nicht eindeutig: ", "en": "The recording is ambiguous here: "}
 FEHLT_HINWEIS = {"de": "Nicht erzählt: ", "en": "Not told: "}
+REIHENFOLGE_HINWEIS = {"de": "Reihenfolge prüfen: „{a}“ ({za}) steht vor „{b}“ ({zb}), das am Tisch früher geschah.",
+                       "en": "Check the order: “{a}” ({za}) comes before “{b}” ({zb}), which happened earlier at the table."}
 UNKLAR_NAEHE_S = 300.0  # eine unklare Notiz ohne eigenes Ereignis gehört zum Absatz des zeitlich nächsten Ereignisses
+
+
+def hinweise_filtern(pruefung: dict) -> None:
+    """0.4.78: Die Texte der Prüfansicht gehen durch denselben Feinschliff wie das Kapitel (Regelreste, Versalien,
+    Tischsprache). Bleibt danach nichts übrig, bleibt der ursprüngliche Hinweis."""
+    from app import artefakte
+
+    for b in pruefung.get("paragraphs") or []:
+        if isinstance(b.get("note"), str) and b["note"]:
+            b["note"] = artefakte.feinschliff(regelreste(b["note"])) or b["note"]
 
 
 def pruefansicht_aus_pflicht(text: str, punkte: list[dict], befund: list[dict], unklar: list[dict], blick: list[dict],
@@ -1242,6 +1467,12 @@ def pruefansicht_aus_pflicht(text: str, punkte: list[dict], befund: list[dict], 
         for p, b in eintraege:
             if b["status"] == "fehlt" and verdict in ("supported",):
                 verdict, note = "partial", FEHLT_HINWEIS[sp] + p["ereignis"] + (f" – {p['ausgang']}" if p["ausgang"] else "")
+        for p, b in eintraege:
+            q_nr = b.get("reihenfolge")
+            if q_nr and verdict == "supported" and 1 <= q_nr <= len(punkte):
+                q = punkte[q_nr - 1]
+                verdict, note = "partial", REIHENFOLGE_HINWEIS[sp].format(
+                    a=p["ereignis"], za=_zeit(p["zeit"]), b=q["ereignis"], zb=_zeit(q["zeit"]))
         for p, b in eintraege:
             if p.get("unklar") and verdict in ("supported", "partial"):
                 grund = _UNKLAR.search(p.get("ausgang") or "")
@@ -1327,6 +1558,8 @@ def _kennwoerter(text: str) -> set[str]:
     return {w for w in _notizkern(text).split() if len(w) >= 6 and w not in _FUELL}
 
 
+KURZER_ENTWURF = 0.5  # 0.4.78: Entwurf unter diesem Anteil der Untergrenze → einmal neu anfordern
+ROHANTWORT_ZEICHEN = 20000  # so viel der Rohantwort eines zu kurzen Entwurfs bleibt für die Fehlersuche
 ABSATZ_HOECHSTENS = 220  # Wörter; längere Absätze werden an Satzgrenzen geteilt
 ABSATZ_ZIEL = 140
 _SATZENDE = re.compile(r"(?<=[.!?…])[»«“\"')]*\s+(?=[„\"»«(]?[A-ZÄÖÜ0-9])")
@@ -1477,25 +1710,76 @@ def _form(v) -> str:
 def recap_text(d: dict) -> str:
     """Den Recap-Text aus der Antwort holen – kleine Modelle halten sich nicht immer an den Feldnamen „text“:
     sie nennen ihn „recap“ oder „summary“, verschachteln ihn oder liefern Absätze als Liste."""
-    def als_text(v) -> str:
-        if isinstance(v, str):
-            return v.strip()
-        if isinstance(v, list) and v and all(isinstance(a, str) for a in v):
-            return "\n\n".join(a.strip() for a in v if a.strip())
+    t = _recap_haupttext(d)
+    if not t:
         return ""
+    # 0.4.78: Lange Runden gliedert das Modell manchmal selbst – Einleitung in „text“, die Abschnitte in einem eigenen
+    # Feld („abschnitte“: [{"titel": …, "text": …}]). Gelesen wurde nur „text“; vom Kapitel blieb die Einleitung
+    # (gemessen, ein Lauf von drei: 163 Wörter Entwurf bei gleich vielen Ausgabe-Tokens). Weitere lange Textfelder
+    # kommen darum in ihrer Reihenfolge dazu – außer sie wiederholen nur, was schon dasteht.
+    staemme = _staemme(t)
+    teile = [t]
+    for k, v in d.items():
+        if k in _KEIN_KAPITELTEXT or not (str(k).casefold() in _EXTRA_SCHLUESSEL
+                                          or (isinstance(v, list) and any(isinstance(a, dict) for a in v))):
+            continue
+        x = _als_text(v)
+        if not x or x == t or len(x.split()) < EXTRA_TEXT_WOERTER:
+            continue
+        s = _staemme(x)
+        if s and len(s & staemme) / len(s) >= EXTRA_TEXT_UEBERLAPPUNG:
+            continue
+        teile.append(x)
+        staemme |= s
+    return "\n\n".join(teile)
 
+
+_TEXTFELDER = ("text", "inhalt", "content", "absatz", "paragraph", "body", "zusammenfassung", "summary", "erzaehlung",
+               "story")
+_KEIN_KAPITELTEXT = {"title", "titel", "openThreads", "open_threads", "offeneFaeden", "offene_faeden"}
+_EXTRA_SCHLUESSEL = {*RECAP_SCHLUESSEL, "abschnitte", "teile", "sections", "chapters", "parts", "paragraphs",
+                     "absaetze", "kapitel", "szenen", "scenes", "fortsetzung", "continuation", "hauptteil", "main"}
+EXTRA_TEXT_WOERTER = 40  # kürzere Felder sind keine Kapitelteile
+EXTRA_TEXT_UEBERLAPPUNG = 0.6  # so viele Wortstämme schon im Kapitel: nur eine Wiederholung (z. B. Zusammenfassung)
+
+
+def _als_text(v) -> str:
+    """Ein Feld als Fließtext: Zeichenkette, Liste von Zeichenketten oder Liste von Abschnitten mit Textfeld."""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, list) and v:
+        teile = []
+        for a in v:
+            if isinstance(a, str):
+                teile.append(a.strip())
+            elif isinstance(a, dict):
+                teile.append(next((a[k].strip() for k in _TEXTFELDER if isinstance(a.get(k), str) and a[k].strip()), ""))
+        return "\n\n".join(x for x in teile if x)
+    return ""
+
+
+def _recap_haupttext(d: dict) -> str:
     for k in RECAP_SCHLUESSEL:
-        t = als_text(d.get(k))
+        t = _als_text(d.get(k))
         if t:
             return t
     for v in d.values():  # eine Ebene verschachtelt: {"recap": {"title": …, "text": …}}
         if isinstance(v, dict):
             for k in RECAP_SCHLUESSEL:
-                t = als_text(v.get(k))
+                t = _als_text(v.get(k))
                 if t:
                     return t
-    lang = [als_text(v) for v in d.values() if len(als_text(v)) >= 200]
+    lang = [_als_text(v) for k, v in d.items() if k not in _KEIN_KAPITELTEXT and len(_als_text(v)) >= 200]
     return lang[0] if len(lang) == 1 else ""
+
+
+_TITEL_DOPPELT = re.compile(r"^\s*((?:Kapitel|Chapter)\s+\d+)\s*[:.–-]\s*(?:(?:Kapitel|Chapter)\s+\d+\s*[:.–-]\s*)+",
+                            re.IGNORECASE)
+
+
+def titel_saeubern(titel: str) -> str:
+    """0.4.78: „Kapitel 1: Kapitel 1: Schatten“ → „Kapitel 1: Schatten“ (lokale Modelle setzen die Vorgabe doppelt)."""
+    return _TITEL_DOPPELT.sub(lambda m: m.group(1) + ": ", titel or "").strip()
 
 
 def _json(antwort: Antwort, retten: bool = False) -> dict:
@@ -1723,6 +2007,11 @@ class Ablauf:
     zweiter_blick_an: bool = True  # 0.4.74: kritische und unklare Ereignisse vor dem Schreiben an der Abschrift prüfen
     pruefansicht: str = "pflicht"  # 0.4.75: „pflicht“ (aus Pflichtprüfung und unklaren Stellen) oder „gegenpruefung“ (alt)
     letzter_zweiter_blick: list = field(default_factory=list)  # 0.4.74: je geprüftem Ereignis Urteil, Zitat, vorher/nachher
+    letzter_kurzer_entwurf: list = field(default_factory=list)  # 0.4.78: zu kurze Entwürfe mit Rohantwort (Fehlersuche)
+    letzte_grenzen: tuple | None = None  # 0.4.78: Längenvorgabe des Kapitels, wenn es aus Teilen besteht
+    letzte_teile: list = field(default_factory=list)  # 0.4.78: Teile im Kapitel [{title, firstParagraph}] (leer: keine)
+    letzte_einschnitte: dict = field(default_factory=dict)  # 0.4.78: Antwort der Suche nach Einschnitten (Probelauf)
+    _teile_anfang: tuple = ((), ())  # 0.4.78: erster Absatz und Überschrift je Teil, zum Wiederfinden am Ende
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1907,22 +2196,48 @@ class Ablauf:
             aus.append(f"Teil {i + 1} von {len(teile)}{von_bis}:\n{text}")
         return "\n\n".join(aus)
 
-    def recap(self, ein: dict, titel: str, grundlage: str) -> dict:
+    def grenzen(self, ein: dict) -> tuple[int, int]:
+        """Längenvorgabe (Wörter) des ganzen Kapitels; bei Teilen die Summe der Teile (0.4.78)."""
+        if self.letzte_grenzen:
+            return self.letzte_grenzen
+        return untergrenze(ein, self.notizen_zuerst), obergrenze(ein, self.notizen_zuerst)
+
+    def recap(self, ein: dict, titel: str, grundlage: str, grenzen: tuple[int, int] | None = None,
+              zusatz: str = "") -> dict:
         bibel = "\n".join(f"- [{e['typ']}] {e['name']}" + (f": {e['zusammenfassung'][:500]}"
                                                            if _erwaehnt(e["name"], grundlage) else "")
                           for e in ein["bibel"])
         nutzer = (f"{_kopf(ein)}\n\nBekannt aus früheren Sessions (Spielerwissen):\n{bibel or '(noch nichts)'}"
                   f"\n\n{titel}:\n{grundlage}")
+        unten, oben = grenzen or (untergrenze(ein, self.notizen_zuerst), obergrenze(ein, self.notizen_zuerst))
         if self.notizen_zuerst:  # 0.4.73: Länge vorab planen statt hinterher kürzen – Absatzzahl hält das Modell besser ein
-            unten, oben = untergrenze(ein, True), obergrenze(ein, True)
             laenge = (f"Etwa {max(4, round(oben / 130))} Absätze mit zusammen {unten} bis {oben} Wörtern – nicht mehr als "
                       f"{oben} –, je Absatz 80 bis 180 Wörter")
         else:
-            laenge = f"{woerter(ein)} Wörter, in Absätzen von je 80 bis 180 Wörtern"
+            laenge = f"{unten}–{oben} Wörter, in Absätzen von je 80 bis 180 Wörtern"
         system = (SYSTEM_RECAP.replace("{sprache}", _sprache(ein)).replace("{nummer}", str(ein["session_nummer"]))
                   .replace("{laenge}", laenge))
+        if zusatz:  # 0.4.78: Teile im Kapitel – als weitere Regel vor der Antwortform
+            system = system.replace("\nAntworte nur mit JSON", zusatz + "\nAntworte nur mit JSON", 1)
         self._schritt("recap")
-        d = self.zaehler.aufruf(self.klient, system, nutzer)
+        r: dict | None = None
+        for versuch in range(2):
+            # 0.4.78: Ein Entwurf weit unter der Untergrenze ist kein Kapitel (gemessen: nur die Einleitung, danach machte
+            # die Nachbesserung aus 30 fehlenden Ereignissen eine Aufzählung). Einmal neu anfordern, das Längere zählt.
+            extra = "" if not versuch else (
+                f"\n\nDein erster Entwurf hatte nur {len(r['text'].split())} Wörter. Schreib das ganze Kapitel mit "
+                f"{unten} bis {oben} Wörtern, alle Abschnitte in ihrer Reihenfolge, als Fließtext im Feld „text“.")
+            d = self.zaehler.aufruf(self.klient, system, nutzer + extra)
+            neu = self._recap_lesen(d)
+            if r is None or len(neu["text"].split()) > len(r["text"].split()):
+                r = neu
+            if len(r["text"].split()) >= unten * KURZER_ENTWURF or _minuten(ein) <= AUSWAHL_ABSCHNITT_AB:
+                break  # kurze Runden dürfen kurz sein; zusammenfallen kann ein Entwurf erst mit vielen Abschnitten
+            self.letzter_kurzer_entwurf.append({"woerter": len(neu["text"].split()), "untergrenze": unten,
+                                                "antwort": (self.zaehler.letzte_antwort or "")[:ROHANTWORT_ZEICHEN]})
+        return r
+
+    def _recap_lesen(self, d: dict) -> dict:
         text = recap_text(d)
         if not text:
             # Nur Schlüssel und Längen ins Protokoll – nie Inhalte
@@ -1934,7 +2249,8 @@ class Ablauf:
         if "\n\n" not in text and "\n" in text:  # Absätze nur mit einfachem Umbruch – für App und Prüfung trennen
             text = re.sub(r"\n+", "\n\n", text)
         text = absaetze_teilen(text)
-        return {"title": klartext(d.get("title") or d.get("titel"))[:300], "text": text, "openThreads": faeden}
+        return {"title": titel_saeubern(klartext(d.get("title") or d.get("titel"))[:300]), "text": text,
+                "openThreads": faeden}
 
     def vollstaendigkeit(self, ein: dict, titel: str, grundlage: str, text: str) -> list[dict]:
         """Was fehlt im Recap, obwohl es in der Grundlage steht? Liefert [{zeit, notiz, belegt}]; nur belegte Punkte
@@ -1992,11 +2308,14 @@ class Ablauf:
             return None
         return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
 
-    def auswahl(self, ein: dict, notizen: str) -> list[dict]:
-        """0.4.65: die entscheidenden Ereignisse mit Ausgang, bevor das Kapitel geschrieben wird."""
-        stand = "\n".join(f"- {s}" for s in self.letzter_stand) or "(kein Stand)"
-        hoechstens = auswahl_hoechstens(ein)
-        abschnitte = auswahl_abschnitte(notizen, _minuten(ein), hoechstens)
+    def auswahl(self, ein: dict, notizen: str, hoechstens: int | None = None, von: float = 0.0,
+                bis: float | None = None) -> list[dict]:
+        """0.4.65: die entscheidenden Ereignisse mit Ausgang, bevor das Kapitel geschrieben wird. 0.4.78: auch für einen
+        Teil der Runde (von/bis in Sekunden); jeder Abschnitt sieht den Stand nur bis zu seinem Ende."""
+        ende = _minuten(ein) * 60
+        bis = ende if bis is None else bis
+        hoechstens = hoechstens or auswahl_hoechstens(ein)
+        abschnitte = auswahl_abschnitte(notizen, (bis - von) / 60, hoechstens, start=von)
         self._schritt("recap")
         aus, gesehen = [], set()
         for a in abschnitte:
@@ -2004,8 +2323,12 @@ class Ablauf:
                                              .replace("{von}", _zeit(a["von"])).replace("{bis}", _zeit(a["bis"])))
             system = (SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(a["anteil"]))
                       .replace("{abschnitt}", zusatz))
+            am_ende = a["bis"] >= ende - 60
+            stand = "\n".join(f"- {s}" for s in (self.letzter_stand if am_ende
+                                                  else stand_bis(self.letzter_stand, a["bis"]))) or "(kein Stand)"
+            stand_titel = ("Stand am Ende der Runde" if am_ende else f"Stand bis {_zeit(a['bis'])}")
             nutzer = (f"{_kopf(ein)}\n\nSzenennotizen{' dieses Abschnitts' if a['n'] > 1 else ' der Runde'}:\n"
-                      f"{a['notizen']}\n\nStand am Ende der Runde (mit dem Zeitpunkt der Änderung):\n{stand}")
+                      f"{a['notizen']}\n\n{stand_titel} (mit dem Zeitpunkt der Änderung):\n{stand}")
             for e in auswahl_lesen(self.zaehler.aufruf(self.notiz_klient or self.klient, system, nutzer), a["anteil"]):
                 if e["ereignis"].casefold() not in gesehen:
                     gesehen.add(e["ereignis"].casefold())
@@ -2015,6 +2338,20 @@ class Ablauf:
             if _UNKLAR.search(e["ereignis"] + " " + e["ausgang"]):
                 e["unklar"] = True
         return aus
+
+    def einschnitte(self, ein: dict, notizen: str) -> list[dict]:
+        """0.4.78: Natürliche Einschnitte einer langen Runde → Teile [{von, bis, titel}] oder [] (dann keine Teile)."""
+        dauer = _minuten(ein) * 60
+        if dauer < TEILE_AB_MIN * 60 or not notizen.strip():
+            return []
+        anzahl = 2 if dauer >= TEILE_ZWEI_AB_MIN * 60 else 1
+        system = (SYSTEM_EINSCHNITT.replace("{sprache}", _sprache(ein)).replace("{anzahl}", str(anzahl))
+                  .replace("{von}", _zeit(dauer * TEILE_FENSTER[0])).replace("{bis}", _zeit(dauer * TEILE_FENSTER[1])))
+        self._schritt("recap")
+        d = self.zaehler.aufruf(self.notiz_klient or self.klient, system, f"{_kopf(ein)}\n\nSzenennotizen:\n{notizen}")
+        teile = einschnitte_lesen(d, notizen, dauer, anzahl, "en" if ein.get("sprache") == "en" else "de")
+        self.letzte_einschnitte = {"antwort": d, "teile": teile}
+        return teile
 
     def zweiter_blick(self, ein: dict, punkte: list[dict]) -> list[dict]:
         """0.4.74: Kritische und unklare Ereignisse der Auswahl gegen die Abschrift rund um ihren Zeitpunkt halten.
@@ -2117,7 +2454,9 @@ class Ablauf:
             neu[nr] = t
         if not neu:
             return None
-        return "\n\n".join(neu.get(i, t) for i, t in enumerate(teile))
+        # 0.4.78: Ein Absatz bleibt beim Umschreiben ein Absatz – wird er dabei sehr lang (viele fehlende Ereignisse an
+        # einer Stelle), wird er an Satzgrenzen geteilt wie jeder andere, statt als Block im Kapitel zu stehen.
+        return absaetze_teilen("\n\n".join(neu.get(i, t) for i, t in enumerate(teile)))
 
     def pflicht(self, ein: dict, punkte: list[dict], r: dict) -> list[dict]:
         """Kapitel gegen die Pflichtpunkte prüfen, einmal nachbessern, noch einmal prüfen. Liefert den letzten Befund."""
@@ -2135,12 +2474,11 @@ class Ablauf:
         """0.4.68: Kapitel weit über der Längenvorgabe kürzen. Übernommen nur, wenn alle bisher erzählten Pflichtpunkte
         erzählt bleiben, kein neuer Widerspruch dazukommt und kein Name fehlt. Liefert den neuen Befund oder None."""
         n = len(r["text"].split())
-        grenze = obergrenze(ein, True)
+        unten, grenze = self.grenzen(ein)
         self.letzte_kuerzung = {"woerter": n, "grenze": grenze, "angenommen": False}
         if n <= grenze * KUERZEN_AB:
             self.letzte_kuerzung["grund"] = "nicht zu lang"
             return None
-        unten = untergrenze(ein, True)
         nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
         system = (SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein)).replace("{ziel}", str(grenze))
                   .replace("{unten}", str(unten)))
@@ -2361,11 +2699,49 @@ class Ablauf:
             return "Transkript", self.letztes_transkript
         return titel, grundlage
 
+    def _recap_in_teilen(self, ein: dict, notizen: str, teile: list[dict]) -> dict:
+        """0.4.78: Ein Kapitel aus Teilen. Jeder Teil wird für sich geschrieben – mit seinen Notizen, dem Stand bis zu
+        seinem Ende, seinen Pflichtereignissen und eigenem Platz; ab Teil 2 als Fortsetzung mit dem letzten Absatz davor
+        zum Anknüpfen. Titel des Kapitels aus Teil 1, offene Fäden aus dem letzten Teil."""
+        stuecke, anfaenge, faeden, titel = [], [], [], ""
+        summe = [0, 0]
+        n = len(teile)
+        for i, t in enumerate(teile):
+            unten, oben = teil_grenzen(t)
+            summe[0] += unten
+            summe[1] += oben
+            letzter = i == n - 1
+            zeilen = self.letzter_stand if letzter else stand_bis(self.letzter_stand, t["bis"])
+            stand = (f"\n\n{'Stand am Ende der Runde' if letzter else 'Stand bis ' + _zeit(t['bis'])} (Zustände, Besitz, "
+                     f"Beziehungen, Abmachungen – mit dem Zeitpunkt der Änderung):\n"
+                     + "\n".join(f"- {s}" for s in zeilen)) if zeilen else ""
+            pflicht = (PFLICHT_VORSPANN + auswahl_text(t["auswahl"])) if t.get("auswahl") else ""
+            davor = (f"\n\nSo endet der Teil davor (nur zum Anknüpfen, nicht wiederholen):\n{absaetze(stuecke[-1])[-1]}"
+                     if stuecke else "")
+            zusatz = (TEIL_ANFANG if i == 0 else TEIL_FORTSETZUNG).replace("{k}", str(i + 1)).replace("{n}", str(n))
+            if not letzter:
+                zusatz += TEIL_OHNE_SCHLUSS
+            r = self.recap(ein, f"Szenennotizen von Teil {i + 1} von {n} ({_zeit(t['von'])}–{_zeit(t['bis'])}) in "
+                                "Zeitabschnitten (jeder Abschnitt gehört in diesen Teil, in dieser Reihenfolge, mit etwa "
+                                "gleich viel Raum; lieber knapper erzählen als ein Ereignis weglassen)",
+                           self.gegliedert(teil_notizen(notizen, t["von"], t["bis"])) + stand + pflicht + davor,
+                           grenzen=(unten, oben), zusatz=zusatz)
+            if i == 0:
+                titel = r["title"]
+            faeden = r["openThreads"]
+            stuecke.append(r["text"])
+            anfaenge.append(absaetze(r["text"])[0] if absaetze(r["text"]) else "")
+        self.letzte_grenzen = (summe[0], summe[1])
+        self._teile_anfang = (anfaenge, [t["titel"] for t in teile])
+        return {"title": titel, "text": "\n\n".join(stuecke), "openThreads": faeden}
+
     def ausfuehren(self, recap_ein: dict, vorschlag_ein: dict,
                    fortschritt: Callable[[float], None] = lambda _p: None, gegenpruefen: bool = False) -> dict:
         """Das ganze Ergebnis. Die Grundlage (Transkript bzw. Notizen) ist für beide gleich; die Notizen entstehen
         aus der Recap-Eingabe, die nichts Geheimes enthält. Die Gegenprüfung sieht nur, was der Recap sah."""
         titel, grundlage = self.grundlage(recap_ein, fortschritt)
+        self.letzte_grenzen, self.letzte_teile, self._teile_anfang = None, [], ((), ())
+        self.letzter_kurzer_entwurf, self.letzte_einschnitte = [], {}
         verlauf = ""
         if titel.startswith("Szenennotizen"):
             # Die Notizen passen fast immer in den Kontext (grundlage() verdichtet so lange). Dann bekommt der Recap
@@ -2382,9 +2758,22 @@ class Ablauf:
             stand = ("\n\nStand am Ende der Runde (Zustände, Besitz, Beziehungen, Abmachungen – mit dem Zeitpunkt der "
                      "Änderung):\n" + "\n".join(f"- {s}" for s in self.letzter_stand)) if self.letzter_stand else ""
             pflicht = ""
+            teile: list[dict] = []
             if self.notizen_zuerst:
                 try:
-                    self.letzte_auswahl = self.auswahl(recap_ein, grundlage)
+                    teile = self.einschnitte(recap_ein, grundlage)
+                except SprachmodellFehler as e:
+                    log.warning("Suche nach Einschnitten übersprungen: %s", e)
+                    self.warnungen.append({"schritt": "einschnitte", "fehler": str(e),
+                                           "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
+                try:
+                    if teile:  # 0.4.78: je Teil eigene Pflichtereignisse
+                        for t in teile:
+                            t["auswahl"] = self.auswahl(recap_ein, teil_notizen(grundlage, t["von"], t["bis"]),
+                                                        teil_hoechstens(t), t["von"], t["bis"])
+                        self.letzte_auswahl = [e for t in teile for e in t["auswahl"]]
+                    else:
+                        self.letzte_auswahl = self.auswahl(recap_ein, grundlage)
                 except SprachmodellFehler as e:
                     log.warning("Auswahl übersprungen: %s", e)
                     self.warnungen.append({"schritt": "auswahl", "fehler": str(e),
@@ -2397,13 +2786,13 @@ class Ablauf:
                         self.warnungen.append({"schritt": "zweiter_blick", "fehler": str(e),
                                                "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
                 if self.letzte_auswahl:
-                    pflicht = ("\n\nDiese Ereignisse müssen im Kapitel vorkommen, jedes mit genau diesem Ausgang, in "
-                               "dieser Reihenfolge; sie wurden an der Abschrift geprüft – widerspricht ihnen eine "
-                               "Notiz, gilt das Ereignis. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne "
-                               "Versuche) höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
-            r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
-                                      "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
-                                      "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand + pflicht)
+                    pflicht = PFLICHT_VORSPANN + auswahl_text(self.letzte_auswahl)
+            if teile:
+                r = self._recap_in_teilen(recap_ein, grundlage, teile)
+            else:
+                r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
+                                          "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper "
+                                          "erzählen als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand + pflicht)
         else:
             r = self.recap(recap_ein, titel, grundlage)
         self.letztes_kapitel1 = r["text"]
@@ -2453,6 +2842,12 @@ class Ablauf:
         if pruefung is not None:
             hinweise_eintragen(pruefung, self.bereinigt, recap_ein.get("sprache"))
             pflicht_eintragen(pruefung, pflicht_rest, len(absaetze(r["text"])))
+            hinweise_filtern(pruefung)
+        r["title"] = titel_saeubern(r.get("title") or "")
+        if self._teile_anfang[0]:  # 0.4.78: wo jeder Teil nach allen Schritten beginnt
+            self.letzte_teile = teile_verorten(r["text"], list(self._teile_anfang[0]), list(self._teile_anfang[1]))
+            if self.letzte_teile:
+                r["parts"] = self.letzte_teile
         fortschritt(0.8)
         v = [artefakte.vorschlag(x) for x in self.vorschlaege(vorschlag_ein, *self._vorschlag_grundlage(titel, grundlage))]
         fortschritt(1.0)
