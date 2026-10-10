@@ -774,6 +774,47 @@ im Absatz bleibt, wie es ist. Steht das Ereignis mit genau diesem Ausgang doch s
 unverändert zurück. Gleicher Ton, Vergangenheit, Figuren nach ihren Charakteren, ein Absatz ohne Leerzeilen, \
 reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
 Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
+# 0.4.74, Weg „Notizen zuerst“: Zweiter Blick in die Abschrift. Die schweren Fehler entstanden beim Zuhören an
+# mehrdeutigen oder verstümmelten Stellen (Anrede ohne Namen, Würfelgespräch, namenlose Person); jede spätere Prüfung las
+# nur die Notizen und damit denselben Fehler. Darum werden die kritischen und die unklaren Ereignisse der Auswahl vor dem
+# Schreiben noch einmal gegen den Wortlaut der Abschrift rund um ihren Zeitpunkt gehalten. Berichtigt wird nur mit einem
+# Zitat, das der Server in der Abschrift wiederfindet; sonst bleibt es „unklar“ und das Kapitel dort vage.
+SYSTEM_ZWEITER_BLICK = """Du prüfst einzelne Ereignisse einer Pen-&-Paper-Session gegen den Wortlaut der Abschrift \
+(automatisch erkannt, mit Fehlern). Die Spielleitung spricht alle Nebenfiguren und redet die Spieler oft mit „du“ an – \
+„du“ meint dann die Figur des Spielers, der gerade gehandelt hat oder angesprochen wird; Spieler sprechen von ihrer \
+Figur in der Ich-Form. Zu jedem Ereignis steht der Ausschnitt der Abschrift rund um seinen Zeitpunkt.
+Für jedes Ereignis: urteil "stimmt" (Ereignis und Ausgang stehen so im Wortlaut, mit denselben Personen in derselben \
+Rolle), "berichtigt" (der Wortlaut sagt etwas anderes: andere Person, andere Richtung, anderer Ausgang, Person ohne \
+Namen) oder "unklar" (der Wortlaut lässt mehrere Lesarten zu oder enthält die Stelle nicht).
+Bei "berichtigt": ereignis und ausgang neu – ein Satz, nur was der Wortlaut hergibt, nichts erfinden; eine Person, die \
+im Wortlaut keinen Namen hat, bleibt ohne Namen – und zitat: die Zeile oder Zeilen der Abschrift, die es belegen, \
+wörtlich abgeschrieben, höchstens 30 Wörter. Bei "unklar": grund in einem kurzen Satz (was offen bleibt). Rate nie; im \
+Zweifel "unklar". Keine Regeln, Würfe oder Punkte.
+Antworte nur mit JSON: {"ereignisse": [{"nr": 1, "urteil": "…", "ereignis": "…", "ausgang": "…", "zitat": "…", \
+"grund": "…"}]}. Sprache: {sprache}."""
+ZWEITER_BLICK_FENSTER_S = 90.0  # Abschrift ± so viele Sekunden um den Zeitpunkt des Ereignisses
+ZWEITER_BLICK_HOECHSTENS = 12  # so viele Ereignisse je Kapitel (alle unklaren, dann die kritischen)
+ZWEITER_BLICK_ZEICHEN = 5000  # höchstens so viel Abschrift je Ereignis
+ZWEITER_BLICK_JE_AUFRUF = 6  # mehr Ereignisse: mehrere Aufrufe, damit die Antwort nicht abbricht
+_URTEIL_BLICK = {"stimmt": "stimmt", "ok": "stimmt", "correct": "stimmt", "confirmed": "stimmt", "berichtigt": "berichtigt",
+                 "korrigiert": "berichtigt", "corrected": "berichtigt", "unklar": "unklar", "unclear": "unklar"}
+
+
+def _fenster(zeilen: list[tuple[float, str]], zeit: float, sekunden: float = ZWEITER_BLICK_FENSTER_S,
+             zeichen: int = ZWEITER_BLICK_ZEICHEN) -> str:
+    """Zeilen der Abschrift um einen Zeitpunkt, von der Mitte her auf höchstens `zeichen` begrenzt."""
+    nah = [(abs(t - zeit), i) for i, (t, _z) in enumerate(zeilen) if abs(t - zeit) <= sekunden]
+    if not nah:
+        return ""
+    gewaehlt, summe = set(), 0
+    for _d, i in sorted(nah):
+        if summe + len(zeilen[i][1]) + 1 > zeichen and gewaehlt:
+            break
+        gewaehlt.add(i)
+        summe += len(zeilen[i][1]) + 1
+    return "\n".join(zeilen[i][1] for i in sorted(gewaehlt))
+
+
 # 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
 # danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
 # lange Fassung: gekürzt wird nur, wenn keine Information verloren geht.
@@ -1518,6 +1559,8 @@ class Ablauf:
     letztes_lang: str = ""  # 0.4.68: Kapitel vor einer angenommenen Kürzung
     notiz_klient: Klient | None = None  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl (sonst klient)
     letzte_unklar: list = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus Notizen und Auswahl
+    zweiter_blick_an: bool = True  # 0.4.74: kritische und unklare Ereignisse vor dem Schreiben an der Abschrift prüfen
+    letzter_zweiter_blick: list = field(default_factory=list)  # 0.4.74: je geprüftem Ereignis Urteil, Zitat, vorher/nachher
 
     def _schritt(self, name: str) -> None:
         try:
@@ -1800,6 +1843,64 @@ class Ablauf:
             if _UNKLAR.search(e["ereignis"] + " " + e["ausgang"]):
                 e["unklar"] = True
         return aus
+
+    def zweiter_blick(self, ein: dict, punkte: list[dict]) -> list[dict]:
+        """0.4.74: Kritische und unklare Ereignisse der Auswahl gegen die Abschrift rund um ihren Zeitpunkt halten.
+        Ändert `punkte` an Ort und Stelle (berichtigt oder als unklar markiert) und liefert das Protokoll."""
+        zeilen = [(_zeit_vorn(z), z) for z in transkript_zeilen(ein.get("transkript") or [])]
+        zeilen = [(t, z) for t, z in zeilen if t is not None]
+        kandidaten = [i for i, p in enumerate(punkte) if p.get("zeit") is not None and (p.get("unklar") or p["rang"] == "kritisch")]
+        kandidaten.sort(key=lambda i: (not punkte[i].get("unklar"), punkte[i]["zeit"]))
+        kandidaten = sorted(kandidaten[:ZWEITER_BLICK_HOECHSTENS])
+        fenster = {i: _fenster(zeilen, punkte[i]["zeit"]) for i in kandidaten}
+        kandidaten = [i for i in kandidaten if fenster[i].strip()]
+        if not kandidaten:
+            return []
+        self._schritt("review")
+        protokoll: list[dict] = []
+        for start in range(0, len(kandidaten), ZWEITER_BLICK_JE_AUFRUF):
+            gruppe = kandidaten[start:start + ZWEITER_BLICK_JE_AUFRUF]
+            bloecke = []
+            for nr, i in enumerate(gruppe, 1):
+                p = punkte[i]
+                bloecke.append(f"Ereignis {nr} [{_zeit(p['zeit'])}]: {p['ereignis']}"
+                               + (f" – Ausgang: {p['ausgang']}" if p["ausgang"] else "")
+                               + f"\nAbschrift dazu:\n{fenster[i]}")
+            d = self.zaehler.aufruf(self.klient, SYSTEM_ZWEITER_BLICK.replace("{sprache}", _sprache(ein)),
+                                    f"{_kopf(ein)}\n\n" + "\n\n---\n\n".join(bloecke))
+            antworten = {}
+            for a in d.get("ereignisse") or d.get("events") or []:
+                if isinstance(a, dict):
+                    try:
+                        antworten.setdefault(int(a.get("nr") or 0), a)
+                    except (TypeError, ValueError):
+                        continue
+            for nr, i in enumerate(gruppe, 1):
+                p, a = punkte[i], antworten.get(nr) or {}
+                urteil = _URTEIL_BLICK.get(str(a.get("urteil") or a.get("verdict") or "").strip().lower(), "unklar")
+                zitat = klartext(a.get("zitat") or a.get("quote") or "")[:300] if isinstance(a.get("zitat") or a.get("quote"), str) else ""
+                grund = klartext(a.get("grund") or a.get("reason") or "")[:300]
+                eintrag = {"nr": i + 1, "zeit": p["zeit"], "zeit_text": _zeit(p["zeit"]), "urteil": urteil,
+                           "vorher": f"{p['ereignis']}" + (f" – {p['ausgang']}" if p["ausgang"] else ""),
+                           "nachher": "", "zitat": "", "grund": grund}
+                if urteil == "berichtigt":
+                    neu_e = regelreste(klartext(a.get("ereignis") or a.get("event") or ""))[:300]
+                    neu_a = regelreste(klartext(a.get("ausgang") or a.get("outcome") or ""))[:300]
+                    if neu_e and zitat and zitat_belegt(zitat, _normwoerter(fenster[i])):
+                        p["ereignis"], p["ausgang"], p["berichtigt"] = neu_e, neu_a, True
+                        eintrag.update(nachher=f"{neu_e}" + (f" – {neu_a}" if neu_a else ""), zitat=zitat)
+                    else:  # Berichtigung ohne auffindbaren Beleg: dann lieber unklar als neu falsch
+                        urteil = eintrag["urteil"] = "unklar"
+                        eintrag["grund"] = grund or "Beleg in der Abschrift nicht gefunden."
+                if urteil == "unklar" and not p.get("unklar"):
+                    p["unklar"] = True
+                    p["ausgang"] = (p["ausgang"] + " " if p["ausgang"] else "") + f"(unklar: {eintrag['grund'] or 'wer'})"
+                    self.letzte_unklar.append({"zeit": p["zeit"], "zeit_text": _zeit(p["zeit"]),
+                                               "notiz": f"{p['ereignis']} – {eintrag['grund'] or 'unklar, wer'}",
+                                               "quelle": "zweiter_blick"})
+                protokoll.append(eintrag)
+        self.letzte_unklar.sort(key=lambda u: (u.get("zeit") is None, u.get("zeit") or 0.0))
+        return protokoll
 
     def pflicht_pruefen(self, ein: dict, punkte: list[dict], text: str) -> list[dict]:
         teile = absaetze(text)
@@ -2105,10 +2206,18 @@ class Ablauf:
                     log.warning("Auswahl übersprungen: %s", e)
                     self.warnungen.append({"schritt": "auswahl", "fehler": str(e),
                                            "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
+                if self.letzte_auswahl and self.zweiter_blick_an:
+                    try:
+                        self.letzter_zweiter_blick = self.zweiter_blick(recap_ein, self.letzte_auswahl)
+                    except SprachmodellFehler as e:
+                        log.warning("Zweiter Blick übersprungen: %s", e)
+                        self.warnungen.append({"schritt": "zweiter_blick", "fehler": str(e),
+                                               "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
                 if self.letzte_auswahl:
                     pflicht = ("\n\nDiese Ereignisse müssen im Kapitel vorkommen, jedes mit genau diesem Ausgang, in "
-                               "dieser Reihenfolge. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne Versuche) "
-                               "höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
+                               "dieser Reihenfolge; sie wurden an der Abschrift geprüft – widerspricht ihnen eine "
+                               "Notiz, gilt das Ereignis. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne "
+                               "Versuche) höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
                                       "als ein Ereignis weglassen)", self.gegliedert(grundlage) + stand + pflicht)

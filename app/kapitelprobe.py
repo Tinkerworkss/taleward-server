@@ -73,6 +73,7 @@ class Probe:
     korrekturen: list[dict] = field(default_factory=list)  # 0.4.69: Durchgänge „Korrektur per Hinweis“ (korrektur.json)
     korrektur_laeuft: bool = False
     unklar: list[dict] = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus den Notizen (unklar.json)
+    zweiter_blick: list[dict] = field(default_factory=list)  # 0.4.74: Ereignisse gegen die Abschrift (zweiter-blick.json)
 
 
 def aktueller_text(p: Probe) -> str:
@@ -189,8 +190,8 @@ def datei(probe_id: str, name: str) -> Path | None:
 
 
 DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
-           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "transkript.txt",
-           "ergebnis.json")
+           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "zweiter-blick.json",
+           "transkript.txt", "ergebnis.json")
 
 
 def zip_bytes(probe_id: str) -> bytes | None:
@@ -298,7 +299,8 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
 
 def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
     from app.sprachmodell import Ablauf, SprachmodellFehler
-    from app.zusammenfassung import api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an
+    from app.zusammenfassung import (api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an,
+                                     zweiter_blick_an)
 
     t0 = time.monotonic()
     try:
@@ -317,12 +319,12 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
                 p.schritt = name
                 _speichern(p)
 
+            with session_factory()() as db:
+                gegen, blick = gegenpruefen_an(db), zweiter_blick_an(db)
             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
                             nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
                             notizen_zuerst=p.weg == "notizen",  # 0.4.63: hier je Probelauf wählbar
-                            notiz_klient=api_klient_notizen(k))
-            with session_factory()() as db:
-                gegen = gegenpruefen_an(db)
+                            notiz_klient=api_klient_notizen(k), zweiter_blick_an=blick)
             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
             p.titel, p.text, p.offene_faeden = d["title"], d["text"], list(d["openThreads"])
             p.vorschlaege = d["proposals"]
@@ -338,6 +340,7 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
                 p.entwurf = ablauf.letztes_kapitel1
             p.lang = ablauf.letztes_lang
             p.unklar = list(ablauf.letzte_unklar)
+            p.zweiter_blick = list(ablauf.letzter_zweiter_blick)
             with session_factory()() as db:
                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
                                 model=klient.modell, tokens_in=p.tokens_ein, tokens_out=p.tokens_aus,
@@ -385,9 +388,13 @@ def _dateien_schreiben(p: Probe) -> None:
                 (o / "lang.txt").write_text(p.lang + "\n", encoding="utf-8")
             if p.unklar:
                 (o / "unklar.json").write_text(json.dumps(p.unklar, ensure_ascii=False, indent=2), encoding="utf-8")
+            if p.zweiter_blick:
+                (o / "zweiter-blick.json").write_text(json.dumps(p.zweiter_blick, ensure_ascii=False, indent=2),
+                                                      encoding="utf-8")
         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
-                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar")},
+                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar",
+                                                                  "zweiter_blick")},
                                                      ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         log.warning("Probelauf %s: Dateien konnten nicht geschrieben werden", p.id)

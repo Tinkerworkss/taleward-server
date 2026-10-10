@@ -83,6 +83,15 @@
   <ul>{% for u in p.unklar %}<li>{% if u.zeit_text %}<span class="leise">[{{ u.zeit_text }}]</span> {% endif %}{{ u.notiz }}</li>{% endfor %}</ul>
 </div>
 {% endif %}
+{% if p.zweiter_blick %}
+<div class="karte">
+  <h2>{{ _("Zweiter Blick in die Abschrift ({n})", n=p.zweiter_blick|length) }}</h2>
+  <p class="leise">{% for st in ["stimmt", "berichtigt", "unklar"] %}{% set n = p.zweiter_blick|selectattr("urteil", "equalto", st)|list|length %}{{ _(st) }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  <details{% if p.zweiter_blick|selectattr("urteil", "ne", "stimmt")|list %} open{% endif %}><summary>{{ _("Einzelheiten") }}</summary>
+    <ol>{% for z in p.zweiter_blick %}<li><span class="leise">[{{ z.zeit_text }}]</span> {{ z.vorher }}<br><span class="{% if z.urteil == 'stimmt' %}leise{% else %}marke-status marke-status--warten{% endif %}">{{ _(z.urteil) }}</span>{% if z.nachher %} → {{ z.nachher }}{% endif %}{% if z.zitat %} · „{{ z.zitat }}“{% endif %}{% if z.grund %} · {{ z.grund }}{% endif %}</li>{% endfor %}</ol>
+  </details>
+</div>
+{% endif %}
 {% if p.pflicht and p.pflicht.vorher %}
 <div class="karte">
   <h2>{{ _("Pflichtereignisse ({n})", n=p.auswahl|length) }}</h2>

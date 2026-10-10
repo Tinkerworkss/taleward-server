@@ -208,6 +208,16 @@ def gegenpruefen_an(db: Session) -> bool:
     return meta_lesen(db, K_GEGENPRUEFEN) != "aus"
 
 
+K_ZWEITER_BLICK = "pruefung.zweiter_blick"
+
+
+def zweiter_blick_an(db: Session) -> bool:
+    """0.4.74, Verwaltung → Zusammenfassung: kritische Ereignisse vor dem Schreiben an der Abschrift prüfen (Standard an)."""
+    from app.einstellungen import meta_lesen
+
+    return meta_lesen(db, K_ZWEITER_BLICK) != "aus"
+
+
 def attrappe(e: Eingabe) -> Ergebnis:
     """Platzhalter ohne Sprachmodell – erzeugt je eine Vorschlagsart, damit die App alles testen kann."""
     en = e.sprache == "en"
@@ -325,7 +335,8 @@ def zusammenfasser(db: Session):
             # Abschnitt, dann das Kapitel“ (in der Messung auf zwei Systemen deutlich besser); Rückweg in der Verwaltung
             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
                             vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
-                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k))
+                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k),
+                            zweiter_blick_an=zweiter_blick_an(db_))
             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
                                   gegenpruefen=gegenpruefen_an(db_))
             return ergebnis_aus(d, d.get("costCents", klient.kosten_cent(d["tokensIn"], d["tokensOut"]))), "external"

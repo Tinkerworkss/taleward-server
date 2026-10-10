@@ -122,6 +122,12 @@ EN: dict[str, str] = {
     "ungeprüft": "unchecked",
     "nachgebessert": "revised",
     "Einzelheiten": "Details",
+    "Zweiter Blick in die Abschrift ({n})": "Second look at the transcript ({n})",
+    "stimmt": "confirmed",
+    "berichtigt": "corrected",
+    "Entscheidende Ereignisse vor dem Schreiben an der Abschrift prüfen": "Check decisive events against the transcript before writing",
+    "Gilt für den Weg „Erst Notizen“: Die wichtigsten Ereignisse werden noch einmal gegen den Wortlaut der Abschrift gehalten, bevor das Kapitel entsteht. Was dabei nicht eindeutig ist, bleibt im Kapitel vage und wird der Spielleitung gezeigt. Kostet etwa 3 Cent je Kapitel.":
+        "Applies to the notes-first approach: the most important events are checked once more against the wording of the transcript before the chapter is written. Whatever remains ambiguous stays vague in the chapter and is shown to the game master. Costs about 3 cents per chapter.",
     "Erst Notizen je Abschnitt, dann das Kapitel (empfohlen)": "Notes per section first, then the chapter (recommended)",
     "Ganze Abschrift auf einmal (früherer Weg)": "Whole transcript at once (previous approach)",
     "Der empfohlene Weg liest die Runde Abschnitt für Abschnitt, führt mit, wer wo ist und was sich geändert hat, und schreibt erst dann das Kapitel. In Testrunden fehlte dabei deutlich weniger und es gab weniger falsche Angaben. Er dauert etwas länger und kostet über die Cloud etwa 30 Cent je Kapitel. Gilt für die Cloud-API; ein lokales Modell arbeitet wie bisher.":
