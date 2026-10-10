@@ -1,0 +1,582 @@
+From 2875a641c102f691170220fdf016df9055bf3619 Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 09:52:14 +0200
+Subject: [PATCH] Weg Notizen zuerst: zweiter Blick in die Abschrift fuer
+ entscheidende Ereignisse (Server 0.4.74)
+
+Vor dem Schreiben werden die kritischen und die unklaren Ereignisse der Auswahl
+gegen den Wortlaut der Abschrift rund um ihren Zeitpunkt gehalten (ein bis zwei
+Aufrufe, etwa 3 Cent). Berichtigt wird nur mit einem Zitat, das der Server in
+der Abschrift wiederfindet; sonst gilt das Ereignis als unklar und das Kapitel
+bleibt dort vage. Schalter in der Verwaltung (Standard an), Protokoll im
+Probelauf und in zweiter-blick.json.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/kapitelprobe.py                           |  21 ++-
+ app/sprachmodell.py                           | 113 +++++++++++-
+ app/verwaltung/i18n.py                        |   6 +
+ app/verwaltung/router.py                      |   7 +-
+ app/verwaltung/templates/probelauf.html       |   9 +
+ app/verwaltung/templates/zusammenfassung.html |   2 +
+ app/zusammenfassung.py                        |  13 +-
+ pyproject.toml                                |   2 +-
+ tests/test_aktualisierung.py                  |   2 +-
+ tests/test_assistent.py                       |   2 +-
+ tests/test_modellablage.py                    |   2 +-
+ tests/test_worker_app.py                      |   2 +-
+ tests/test_zweiter_blick.py                   | 173 ++++++++++++++++++
+ uv.lock                                       |   2 +-
+ 14 files changed, 339 insertions(+), 17 deletions(-)
+ create mode 100644 tests/test_zweiter_blick.py
+
+diff --git a/app/kapitelprobe.py b/app/kapitelprobe.py
+index 032603d..15bbb83 100644
+--- a/app/kapitelprobe.py
++++ b/app/kapitelprobe.py
+@@ -74,4 +74,5 @@ class Probe:
+     korrektur_laeuft: bool = False
+     unklar: list[dict] = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus den Notizen (unklar.json)
++    zweiter_blick: list[dict] = field(default_factory=list)  # 0.4.74: Ereignisse gegen die Abschrift (zweiter-blick.json)
+ 
+ 
+@@ -190,6 +191,6 @@ def datei(probe_id: str, name: str) -> Path | None:
+ 
+ DATEIEN = ("recap.txt", "vorschlaege.json", "pruefung.json", "notizen.txt", "stand.txt", "auswahl.txt", "pflicht.json",
+-           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "transkript.txt",
+-           "ergebnis.json")
++           "entwurf.txt", "lang.txt", "korrektur.json", "recap-korrigiert.txt", "unklar.json", "zweiter-blick.json",
++           "transkript.txt", "ergebnis.json")
+ 
+ 
+@@ -299,5 +300,6 @@ def _rechnen(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str
+ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_id: str, session_id: str) -> None:
+     from app.sprachmodell import Ablauf, SprachmodellFehler
+-    from app.zusammenfassung import api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an
++    from app.zusammenfassung import (api_klient, api_klient_notizen, api_klient_vorschlaege, attrappe, gegenpruefen_an,
++                                     zweiter_blick_an)
+ 
+     t0 = time.monotonic()
+@@ -318,10 +320,10 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+                 _speichern(p)
+ 
++            with session_factory()() as db:
++                gegen, blick = gegenpruefen_an(db), zweiter_blick_an(db)
+             ablauf = Ablauf(klient, schritt=schritt, vorschlag_klient=api_klient_vorschlaege(k),
+                             nachbesserung=k.art != "api",  # 0.4.62: wie im echten Ablauf
+                             notizen_zuerst=p.weg == "notizen",  # 0.4.63: hier je Probelauf wählbar
+-                            notiz_klient=api_klient_notizen(k))
+-            with session_factory()() as db:
+-                gegen = gegenpruefen_an(db)
++                            notiz_klient=api_klient_notizen(k), zweiter_blick_an=blick)
+             d = ablauf.ausfuehren(recap_ein, vorschlag_ein, lambda _p: None, gegenpruefen=gegen)
+             p.titel, p.text, p.offene_faeden = d["title"], d["text"], list(d["openThreads"])
+@@ -339,4 +341,5 @@ def _rechnen_jetzt(p: Probe, k, recap_ein: dict, vorschlag_ein: dict, campaign_i
+             p.lang = ablauf.letztes_lang
+             p.unklar = list(ablauf.letzte_unklar)
++            p.zweiter_blick = list(ablauf.letzter_zweiter_blick)
+             with session_factory()() as db:
+                 db.add(UsageLog(campaign_id=campaign_id, session_id=session_id, kind="probe", engine="external",
+@@ -386,7 +389,11 @@ def _dateien_schreiben(p: Probe) -> None:
+             if p.unklar:
+                 (o / "unklar.json").write_text(json.dumps(p.unklar, ensure_ascii=False, indent=2), encoding="utf-8")
++            if p.zweiter_blick:
++                (o / "zweiter-blick.json").write_text(json.dumps(p.zweiter_blick, ensure_ascii=False, indent=2),
++                                                      encoding="utf-8")
+         (o / "ergebnis.json").write_text(json.dumps({k: v for k, v in p.__dict__.items()
+                                                       if k not in ("text", "vorschlaege", "pruefung", "besitzer", "notizen", "auswahl",
+-                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar")},
++                                                                  "pflicht", "entwurf", "lang", "korrekturen", "unklar",
++                                                                  "zweiter_blick")},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+     except OSError:
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index e734940..890c5bf 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -775,4 +775,45 @@ unverändert zurück. Gleicher Ton, Vergangenheit, Figuren nach ihren Charaktere
+ reiner Text ohne Markdown. Keine Regeln, Würfe oder Punkte; die Spielleitung ist keine Figur. Erfinde nichts.
+ Antworte nur mit JSON: {"absaetze": [{"nr": 2, "text": "…"}]}. Sprache: {sprache}."""
++# 0.4.74, Weg „Notizen zuerst“: Zweiter Blick in die Abschrift. Die schweren Fehler entstanden beim Zuhören an
++# mehrdeutigen oder verstümmelten Stellen (Anrede ohne Namen, Würfelgespräch, namenlose Person); jede spätere Prüfung las
++# nur die Notizen und damit denselben Fehler. Darum werden die kritischen und die unklaren Ereignisse der Auswahl vor dem
++# Schreiben noch einmal gegen den Wortlaut der Abschrift rund um ihren Zeitpunkt gehalten. Berichtigt wird nur mit einem
++# Zitat, das der Server in der Abschrift wiederfindet; sonst bleibt es „unklar“ und das Kapitel dort vage.
++SYSTEM_ZWEITER_BLICK = """Du prüfst einzelne Ereignisse einer Pen-&-Paper-Session gegen den Wortlaut der Abschrift \
++(automatisch erkannt, mit Fehlern). Die Spielleitung spricht alle Nebenfiguren und redet die Spieler oft mit „du“ an – \
++„du“ meint dann die Figur des Spielers, der gerade gehandelt hat oder angesprochen wird; Spieler sprechen von ihrer \
++Figur in der Ich-Form. Zu jedem Ereignis steht der Ausschnitt der Abschrift rund um seinen Zeitpunkt.
++Für jedes Ereignis: urteil "stimmt" (Ereignis und Ausgang stehen so im Wortlaut, mit denselben Personen in derselben \
++Rolle), "berichtigt" (der Wortlaut sagt etwas anderes: andere Person, andere Richtung, anderer Ausgang, Person ohne \
++Namen) oder "unklar" (der Wortlaut lässt mehrere Lesarten zu oder enthält die Stelle nicht).
++Bei "berichtigt": ereignis und ausgang neu – ein Satz, nur was der Wortlaut hergibt, nichts erfinden; eine Person, die \
++im Wortlaut keinen Namen hat, bleibt ohne Namen – und zitat: die Zeile oder Zeilen der Abschrift, die es belegen, \
++wörtlich abgeschrieben, höchstens 30 Wörter. Bei "unklar": grund in einem kurzen Satz (was offen bleibt). Rate nie; im \
++Zweifel "unklar". Keine Regeln, Würfe oder Punkte.
++Antworte nur mit JSON: {"ereignisse": [{"nr": 1, "urteil": "…", "ereignis": "…", "ausgang": "…", "zitat": "…", \
++"grund": "…"}]}. Sprache: {sprache}."""
++ZWEITER_BLICK_FENSTER_S = 90.0  # Abschrift ± so viele Sekunden um den Zeitpunkt des Ereignisses
++ZWEITER_BLICK_HOECHSTENS = 12  # so viele Ereignisse je Kapitel (alle unklaren, dann die kritischen)
++ZWEITER_BLICK_ZEICHEN = 5000  # höchstens so viel Abschrift je Ereignis
++ZWEITER_BLICK_JE_AUFRUF = 6  # mehr Ereignisse: mehrere Aufrufe, damit die Antwort nicht abbricht
++_URTEIL_BLICK = {"stimmt": "stimmt", "ok": "stimmt", "correct": "stimmt", "confirmed": "stimmt", "berichtigt": "berichtigt",
++                 "korrigiert": "berichtigt", "corrected": "berichtigt", "unklar": "unklar", "unclear": "unklar"}
++
++
++def _fenster(zeilen: list[tuple[float, str]], zeit: float, sekunden: float = ZWEITER_BLICK_FENSTER_S,
++             zeichen: int = ZWEITER_BLICK_ZEICHEN) -> str:
++    """Zeilen der Abschrift um einen Zeitpunkt, von der Mitte her auf höchstens `zeichen` begrenzt."""
++    nah = [(abs(t - zeit), i) for i, (t, _z) in enumerate(zeilen) if abs(t - zeit) <= sekunden]
++    if not nah:
++        return ""
++    gewaehlt, summe = set(), 0
++    for _d, i in sorted(nah):
++        if summe + len(zeilen[i][1]) + 1 > zeichen and gewaehlt:
++            break
++        gewaehlt.add(i)
++        summe += len(zeilen[i][1]) + 1
++    return "\n".join(zeilen[i][1] for i in sorted(gewaehlt))
++
++
+ # 0.4.68, Weg „Notizen zuerst“: Ein Kapitel weit über der Längenvorgabe wird gekürzt – aber nur übernommen, wenn
+ # danach jedes Pflichtereignis noch erzählt ist, kein neuer Widerspruch entsteht und kein Name fehlt. Sonst bleibt die
+@@ -1519,4 +1560,6 @@ class Ablauf:
+     notiz_klient: Klient | None = None  # 0.4.73: eigenes Modell für Notizen, Stand und Auswahl (sonst klient)
+     letzte_unklar: list = field(default_factory=list)  # 0.4.73: Stellen „(unklar, wer)“ aus Notizen und Auswahl
++    zweiter_blick_an: bool = True  # 0.4.74: kritische und unklare Ereignisse vor dem Schreiben an der Abschrift prüfen
++    letzter_zweiter_blick: list = field(default_factory=list)  # 0.4.74: je geprüftem Ereignis Urteil, Zitat, vorher/nachher
+ 
+     def _schritt(self, name: str) -> None:
+@@ -1802,4 +1845,62 @@ class Ablauf:
+         return aus
+ 
++    def zweiter_blick(self, ein: dict, punkte: list[dict]) -> list[dict]:
++        """0.4.74: Kritische und unklare Ereignisse der Auswahl gegen die Abschrift rund um ihren Zeitpunkt halten.
++        Ändert `punkte` an Ort und Stelle (berichtigt oder als unklar markiert) und liefert das Protokoll."""
++        zeilen = [(_zeit_vorn(z), z) for z in transkript_zeilen(ein.get("transkript") or [])]
++        zeilen = [(t, z) for t, z in zeilen if t is not None]
++        kandidaten = [i for i, p in enumerate(punkte) if p.get("zeit") is not None and (p.get("unklar") or p["rang"] == "kritisch")]
++        kandidaten.sort(key=lambda i: (not punkte[i].get("unklar"), punkte[i]["zeit"]))
++        kandidaten = sorted(kandidaten[:ZWEITER_BLICK_HOECHSTENS])
++        fenster = {i: _fenster(zeilen, punkte[i]["zeit"]) for i in kandidaten}
++        kandidaten = [i for i in kandidaten if fenster[i].strip()]
++        if not kandidaten:
++            return []
++        self._schritt("review")
++        protokoll: list[dict] = []
++        for start in range(0, len(kandidaten), ZWEITER_BLICK_JE_AUFRUF):
++            gruppe = kandidaten[start:start + ZWEITER_BLICK_JE_AUFRUF]
++            bloecke = []
++            for nr, i in enumerate(gruppe, 1):
++                p = punkte[i]
++                bloecke.append(f"Ereignis {nr} [{_zeit(p['zeit'])}]: {p['ereignis']}"
++                               + (f" – Ausgang: {p['ausgang']}" if p["ausgang"] else "")
++                               + f"\nAbschrift dazu:\n{fenster[i]}")
++            d = self.zaehler.aufruf(self.klient, SYSTEM_ZWEITER_BLICK.replace("{sprache}", _sprache(ein)),
++                                    f"{_kopf(ein)}\n\n" + "\n\n---\n\n".join(bloecke))
++            antworten = {}
++            for a in d.get("ereignisse") or d.get("events") or []:
++                if isinstance(a, dict):
++                    try:
++                        antworten.setdefault(int(a.get("nr") or 0), a)
++                    except (TypeError, ValueError):
++                        continue
++            for nr, i in enumerate(gruppe, 1):
++                p, a = punkte[i], antworten.get(nr) or {}
++                urteil = _URTEIL_BLICK.get(str(a.get("urteil") or a.get("verdict") or "").strip().lower(), "unklar")
++                zitat = klartext(a.get("zitat") or a.get("quote") or "")[:300] if isinstance(a.get("zitat") or a.get("quote"), str) else ""
++                grund = klartext(a.get("grund") or a.get("reason") or "")[:300]
++                eintrag = {"nr": i + 1, "zeit": p["zeit"], "zeit_text": _zeit(p["zeit"]), "urteil": urteil,
++                           "vorher": f"{p['ereignis']}" + (f" – {p['ausgang']}" if p["ausgang"] else ""),
++                           "nachher": "", "zitat": "", "grund": grund}
++                if urteil == "berichtigt":
++                    neu_e = regelreste(klartext(a.get("ereignis") or a.get("event") or ""))[:300]
++                    neu_a = regelreste(klartext(a.get("ausgang") or a.get("outcome") or ""))[:300]
++                    if neu_e and zitat and zitat_belegt(zitat, _normwoerter(fenster[i])):
++                        p["ereignis"], p["ausgang"], p["berichtigt"] = neu_e, neu_a, True
++                        eintrag.update(nachher=f"{neu_e}" + (f" – {neu_a}" if neu_a else ""), zitat=zitat)
++                    else:  # Berichtigung ohne auffindbaren Beleg: dann lieber unklar als neu falsch
++                        urteil = eintrag["urteil"] = "unklar"
++                        eintrag["grund"] = grund or "Beleg in der Abschrift nicht gefunden."
++                if urteil == "unklar" and not p.get("unklar"):
++                    p["unklar"] = True
++                    p["ausgang"] = (p["ausgang"] + " " if p["ausgang"] else "") + f"(unklar: {eintrag['grund'] or 'wer'})"
++                    self.letzte_unklar.append({"zeit": p["zeit"], "zeit_text": _zeit(p["zeit"]),
++                                               "notiz": f"{p['ereignis']} – {eintrag['grund'] or 'unklar, wer'}",
++                                               "quelle": "zweiter_blick"})
++                protokoll.append(eintrag)
++        self.letzte_unklar.sort(key=lambda u: (u.get("zeit") is None, u.get("zeit") or 0.0))
++        return protokoll
++
+     def pflicht_pruefen(self, ein: dict, punkte: list[dict], text: str) -> list[dict]:
+         teile = absaetze(text)
+@@ -2106,8 +2207,16 @@ class Ablauf:
+                     self.warnungen.append({"schritt": "auswahl", "fehler": str(e),
+                                            "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
++                if self.letzte_auswahl and self.zweiter_blick_an:
++                    try:
++                        self.letzter_zweiter_blick = self.zweiter_blick(recap_ein, self.letzte_auswahl)
++                    except SprachmodellFehler as e:
++                        log.warning("Zweiter Blick übersprungen: %s", e)
++                        self.warnungen.append({"schritt": "zweiter_blick", "fehler": str(e),
++                                               "antwort": (self.zaehler.letzte_antwort or "")[:3000]})
+                 if self.letzte_auswahl:
+                     pflicht = ("\n\nDiese Ereignisse müssen im Kapitel vorkommen, jedes mit genau diesem Ausgang, in "
+-                               "dieser Reihenfolge. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne Versuche) "
+-                               "höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
++                               "dieser Reihenfolge; sie wurden an der Abschrift geprüft – widerspricht ihnen eine "
++                               "Notiz, gilt das Ereignis. Kleinigkeiten ohne Folgen (Essen, Kleidung, einzelne "
++                               "Versuche) höchstens in einem Halbsatz:\n" + auswahl_text(self.letzte_auswahl))
+             r = self.recap(recap_ein, "Szenennotizen der Runde in Zeitabschnitten (jeder Abschnitt gehört in den "
+                                       "Recap, in dieser Reihenfolge, mit etwa gleich viel Raum; lieber knapper erzählen "
+diff --git a/app/verwaltung/i18n.py b/app/verwaltung/i18n.py
+index 2bacdd8..66834f2 100644
+--- a/app/verwaltung/i18n.py
++++ b/app/verwaltung/i18n.py
+@@ -123,4 +123,10 @@ EN: dict[str, str] = {
+     "nachgebessert": "revised",
+     "Einzelheiten": "Details",
++    "Zweiter Blick in die Abschrift ({n})": "Second look at the transcript ({n})",
++    "stimmt": "confirmed",
++    "berichtigt": "corrected",
++    "Entscheidende Ereignisse vor dem Schreiben an der Abschrift prüfen": "Check decisive events against the transcript before writing",
++    "Gilt für den Weg „Erst Notizen“: Die wichtigsten Ereignisse werden noch einmal gegen den Wortlaut der Abschrift gehalten, bevor das Kapitel entsteht. Was dabei nicht eindeutig ist, bleibt im Kapitel vage und wird der Spielleitung gezeigt. Kostet etwa 3 Cent je Kapitel.":
++        "Applies to the notes-first approach: the most important events are checked once more against the wording of the transcript before the chapter is written. Whatever remains ambiguous stays vague in the chapter and is shown to the game master. Costs about 3 cents per chapter.",
+     "Erst Notizen je Abschnitt, dann das Kapitel (empfohlen)": "Notes per section first, then the chapter (recommended)",
+     "Ganze Abschrift auf einmal (früherer Weg)": "Whole transcript at once (previous approach)",
+diff --git a/app/verwaltung/router.py b/app/verwaltung/router.py
+index 932a4f9..6e6b7d1 100644
+--- a/app/verwaltung/router.py
++++ b/app/verwaltung/router.py
+@@ -698,5 +698,5 @@ def _llm_anzeige(db: Session) -> dict:
+     from app.sprachmodell import PREISE
+     from app import cloudanbieter, modellwahl, woerterbuch
+-    from app.zusammenfassung import gegenpruefen_an
++    from app.zusammenfassung import gegenpruefen_an, zweiter_blick_an
+ 
+     k = llm_konfig(db)
+@@ -710,4 +710,5 @@ def _llm_anzeige(db: Session) -> dict:
+              "worker": worker, "worker_online": any(kn["online"] and not kn["w"].paused and kn["w"].app_paused_since is None
+                                   for kn in worker), "gegenpruefen": gegenpruefen_an(db),
++             "zweiter_blick": zweiter_blick_an(db),
+              "wortlisten": {sp: woerterbuch.bereit(sp) for sp in ("de", "en")},
+              "anbieter": cloudanbieter.ANBIETER, "gewaehlt": k.anbieter_id, "stand": cloudanbieter.STAND,
+@@ -898,4 +899,5 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+                               lokal_kontext: str = Form("12288"), cent_ein: str = Form(""), cent_aus: str = Form(""),
+                               gegenpruefen_feld: str = Form(""), gegenpruefen: str = Form(""),
++                              zweiter_blick: str = Form(""),
+                               ausserhalb_eu: str = Form(""), weg: str = Form(""),
+                               user: User = Depends(verwalter), db: Session = Depends(get_db)):
+@@ -970,4 +972,7 @@ def zusammenfassung_speichern(request: Request, art: str = Form("aus"), anbieter
+ 
+         meta_schreiben(db, K_GEGENPRUEFEN, "an" if gegenpruefen else "aus")
++        from app.zusammenfassung import K_ZWEITER_BLICK
++
++        meta_schreiben(db, K_ZWEITER_BLICK, "an" if zweiter_blick else "aus")
+     if key_loeschen:
+         meta_schreiben(db, "llm.api_key", "")
+diff --git a/app/verwaltung/templates/probelauf.html b/app/verwaltung/templates/probelauf.html
+index 84171b1..8d84826 100644
+--- a/app/verwaltung/templates/probelauf.html
++++ b/app/verwaltung/templates/probelauf.html
+@@ -84,4 +84,13 @@
+ </div>
+ {% endif %}
++{% if p.zweiter_blick %}
++<div class="karte">
++  <h2>{{ _("Zweiter Blick in die Abschrift ({n})", n=p.zweiter_blick|length) }}</h2>
++  <p class="leise">{% for st in ["stimmt", "berichtigt", "unklar"] %}{% set n = p.zweiter_blick|selectattr("urteil", "equalto", st)|list|length %}{{ _(st) }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
++  <details{% if p.zweiter_blick|selectattr("urteil", "ne", "stimmt")|list %} open{% endif %}><summary>{{ _("Einzelheiten") }}</summary>
++    <ol>{% for z in p.zweiter_blick %}<li><span class="leise">[{{ z.zeit_text }}]</span> {{ z.vorher }}<br><span class="{% if z.urteil == 'stimmt' %}leise{% else %}marke-status marke-status--warten{% endif %}">{{ _(z.urteil) }}</span>{% if z.nachher %} → {{ z.nachher }}{% endif %}{% if z.zitat %} · „{{ z.zitat }}“{% endif %}{% if z.grund %} · {{ z.grund }}{% endif %}</li>{% endfor %}</ol>
++  </details>
++</div>
++{% endif %}
+ {% if p.pflicht and p.pflicht.vorher %}
+ <div class="karte">
+diff --git a/app/verwaltung/templates/zusammenfassung.html b/app/verwaltung/templates/zusammenfassung.html
+index 95d2e5b..31a9dab 100644
+--- a/app/verwaltung/templates/zusammenfassung.html
++++ b/app/verwaltung/templates/zusammenfassung.html
+@@ -102,4 +102,6 @@
+       <label class="haken"><input type="checkbox" name="gegenpruefen" value="1"{% if llm.gegenpruefen %} checked{% endif %}> {{ _("Recap gegenprüfen") }}</label>
+       <p class="hilfe">{{ _("Ein zweiter Durchgang des Sprachmodells prüft jeden Absatz gegen das Transkript, bessert Unbelegtes einmal nach und zeigt der Spielleitung vor der Freigabe, worauf sich jeder Absatz stützt. Kostet etwa ein Drittel mehr Rechenzeit.") }}</p>
++      <label class="haken"><input type="checkbox" name="zweiter_blick" value="1"{% if llm.zweiter_blick %} checked{% endif %}> {{ _("Entscheidende Ereignisse vor dem Schreiben an der Abschrift prüfen") }}</label>
++      <p class="hilfe">{{ _("Gilt für den Weg „Erst Notizen“: Die wichtigsten Ereignisse werden noch einmal gegen den Wortlaut der Abschrift gehalten, bevor das Kapitel entsteht. Was dabei nicht eindeutig ist, bleibt im Kapitel vage und wird der Spielleitung gezeigt. Kostet etwa 3 Cent je Kapitel.") }}</p>
+       <p class="hilfe">{{ _("Wortlisten für unsicher erkannte Namen:") }}
+         {% for sp, da in llm.wortlisten.items() %}{{ _("Deutsch") if sp == "de" else _("Englisch") }} {{ _("geladen") if da else _("wird geladen") }}{% if not loop.last %}, {% endif %}{% endfor %}.
+diff --git a/app/zusammenfassung.py b/app/zusammenfassung.py
+index 8a1ef3e..9570213 100644
+--- a/app/zusammenfassung.py
++++ b/app/zusammenfassung.py
+@@ -209,4 +209,14 @@ def gegenpruefen_an(db: Session) -> bool:
+ 
+ 
++K_ZWEITER_BLICK = "pruefung.zweiter_blick"
++
++
++def zweiter_blick_an(db: Session) -> bool:
++    """0.4.74, Verwaltung → Zusammenfassung: kritische Ereignisse vor dem Schreiben an der Abschrift prüfen (Standard an)."""
++    from app.einstellungen import meta_lesen
++
++    return meta_lesen(db, K_ZWEITER_BLICK) != "aus"
++
++
+ def attrappe(e: Eingabe) -> Ergebnis:
+     """Platzhalter ohne Sprachmodell – erzeugt je eine Vorschlagsart, damit die App alles testen kann."""
+@@ -326,5 +336,6 @@ def zusammenfasser(db: Session):
+             ablauf = Ablauf(klient, schritt=lambda name: schritt_setzen(db_, s.id, name),
+                             vorschlag_klient=api_klient_vorschlaege(k), nachbesserung=False,
+-                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k))
++                            notizen_zuerst=k.weg == "notizen", notiz_klient=api_klient_notizen(k),
++                            zweiter_blick_an=zweiter_blick_an(db_))
+             d = ablauf.ausfuehren(recap_eingabe(basis), vorschlag_eingabe(db_, s, basis),
+                                   gegenpruefen=gegenpruefen_an(db_))
+diff --git a/pyproject.toml b/pyproject.toml
+index 4fdb3f3..b672a51 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.73"
++version = "0.4.74"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 3846ddb..3b88bcb 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.73"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.74"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 1e38a19..b4cbbef 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.73"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.74"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index dcd2dbd..a7e9310 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.73"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.74"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 4f18cd0..1daa321 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.73"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.74"
+ 
+ 
+diff --git a/tests/test_zweiter_blick.py b/tests/test_zweiter_blick.py
+new file mode 100644
+index 0000000..556a0c2
+--- /dev/null
++++ b/tests/test_zweiter_blick.py
+@@ -0,0 +1,173 @@
++"""Server 0.4.74, Weg „Notizen zuerst“: Zweiter Blick in die Abschrift – kritische und unklare Ereignisse der Auswahl
++werden vor dem Schreiben gegen den Wortlaut rund um ihren Zeitpunkt gehalten. Berichtigt nur mit auffindbarem Zitat,
++sonst unklar (Kapitel bleibt vage)."""
++import json
++import re
++
++import httpx
++import pytest
++
++from app import sprachmodell as sm
++from tests.test_notizen_zuerst import _eingabe
++from tests.test_step2b import _kleine_teile, transkribiert  # noqa: F401
++from tests.test_verwaltung import admin  # noqa: F401
++
++pytestmark = pytest.mark.usefixtures("_kleine_teile")
++
++ZEILEN = [(float(s), f"[{s // 60}:{s % 60:02d}] {'Spielleitung' if (s // 20) % 2 else 'Mara'}: Zeile bei {s} Sekunden, "
++                      + ("dann packt dich Hanna an den Schultern." if s == 600 else "die Gruppe redet."))
++          for s in range(0, 1200, 20)]
++
++
++def test_fenster_um_den_zeitpunkt():
++    f = sm._fenster(ZEILEN, 600.0)
++    zeiten = [int(re.match(r"\[(\d+):(\d+)\]", z).group(1)) * 60 + int(re.match(r"\[(\d+):(\d+)\]", z).group(2))
++              for z in f.split("\n")]
++    assert min(zeiten) == 520 and max(zeiten) == 680 and "packt dich Hanna" in f
++    klein = sm._fenster(ZEILEN, 600.0, zeichen=200)
++    assert 0 < len(klein) <= 200 + 80 and "packt dich Hanna" in klein  # von der Mitte her begrenzt
++    assert sm._fenster(ZEILEN, 5000.0) == ""
++
++
++class Klient:
++    """Antwortet auf den zweiten Blick: 1 stimmt, 2 berichtigt mit echtem Zitat, 3 berichtigt mit erfundenem Zitat."""
++    modell = "medium"
++
++    def __init__(self):
++        self.aufrufe = []
++
++    def chat(self, system, nutzer):
++        self.aufrufe.append(nutzer)
++        return sm.Antwort(json.dumps({"ereignisse": [
++            {"nr": 1, "urteil": "stimmt"},
++            {"nr": 2, "urteil": "berichtigt", "ereignis": "Hanna packt Mara an den Schultern und hilft ihr nach oben.",
++             "ausgang": "Mara ist gerettet.", "zitat": "dann packt dich Hanna an den Schultern"},
++            {"nr": 3, "urteil": "berichtigt", "ereignis": "Kano stirbt.", "ausgang": "tot",
++             "zitat": "Kano fällt tot um"}]}, ensure_ascii=False), 1000, 100)
++
++
++def _punkte():
++    return [{"zeit": 100.0, "ereignis": "Die Gruppe bricht auf.", "ausgang": "", "rang": "kritisch"},
++            {"zeit": 600.0, "ereignis": "Mara packt Hanna an den Schultern und hilft ihr nach oben.",
++             "ausgang": "Hanna ist gerettet.", "rang": "kritisch"},
++            {"zeit": 900.0, "ereignis": "Kano wird verletzt.", "ausgang": "verletzt (unklar, wer)", "rang": "wichtig",
++             "unklar": True},
++            {"zeit": 1000.0, "ereignis": "Alle essen.", "ausgang": "", "rang": "wichtig"}]
++
++
++def test_zweiter_blick_berichtigt_nur_mit_beleg():
++    k = Klient()
++    a = sm.Ablauf(k, notiz_klient=sm.Ablauf(Klient()).klient)
++    ein = {"kampagne": "K", "session_nummer": 1, "personen": [], "transkript": [
++        {"start": t, "sprecher": z.split("] ")[1].split(":")[0], "text": z.split(": ", 1)[1]} for t, z in ZEILEN]}
++    punkte = _punkte()
++    protokoll = a.zweiter_blick(ein, punkte)
++    # nur kritische und unklare Ereignisse, mit dem Kapitel-Modell, in einem Aufruf
++    assert len(k.aufrufe) == 1 and "Ereignis 3" in k.aufrufe[0] and "Alle essen" not in k.aufrufe[0]
++    assert "Abschrift dazu:" in k.aufrufe[0] and "packt dich Hanna" in k.aufrufe[0]
++    assert [p["urteil"] for p in protokoll] == ["stimmt", "berichtigt", "unklar"]
++    assert punkte[1]["ereignis"].startswith("Hanna packt Mara") and punkte[1]["ausgang"] == "Mara ist gerettet."
++    assert punkte[1]["berichtigt"] is True and protokoll[1]["zitat"] == "dann packt dich Hanna an den Schultern"
++    assert protokoll[1]["vorher"].startswith("Mara packt Hanna") and protokoll[1]["nachher"].startswith("Hanna packt Mara")
++    # Berichtigung ohne Beleg: nicht übernommen, Ereignis bleibt unklar; war es schon unklar, bleibt die Marke einfach
++    assert punkte[2]["ereignis"] == "Kano wird verletzt." and punkte[2]["unklar"] is True
++    assert protokoll[2]["grund"] == "Beleg in der Abschrift nicht gefunden."
++    assert a.letzte_unklar == []  # Ereignis 3 war schon als unklar bekannt (aus den Notizen gezählt)
++
++
++def test_zweiter_blick_macht_unklar_und_meldet():
++    class Unklar(Klient):
++        def chat(self, system, nutzer):
++            return sm.Antwort(json.dumps({"ereignisse": [{"nr": 1, "urteil": "unklar", "grund": "Zwei Lesarten."},
++                                                          {"nr": 2, "urteil": "unsinn"}]}), 1, 1)
++
++    a = sm.Ablauf(Unklar())
++    ein = {"kampagne": "K", "session_nummer": 1, "personen": [], "transkript": [
++        {"start": t, "sprecher": z.split("] ")[1].split(":")[0], "text": z.split(": ", 1)[1]} for t, z in ZEILEN]}
++    punkte = _punkte()[:2]
++    protokoll = a.zweiter_blick(ein, punkte)
++    assert [p["urteil"] for p in protokoll] == ["unklar", "unklar"]
++    assert punkte[0]["unklar"] is True and punkte[0]["ausgang"] == "(unklar: Zwei Lesarten.)"
++    assert punkte[1]["ausgang"] == "Hanna ist gerettet. (unklar: wer)"
++    assert [u["quelle"] for u in a.letzte_unklar] == ["zweiter_blick", "zweiter_blick"]
++    assert a.letzte_unklar[0]["notiz"] == "Die Gruppe bricht auf. – Zwei Lesarten."
++
++
++class Anbieter:
++    def __init__(self):
++        self.aufrufe = []
++
++    def antwort(self, system: str, nutzer: str) -> dict:
++        if "Schreibe Szenennotizen" in system:
++            eigen = nutzer.split("des Transkripts:\n")[1]
++            zeiten = re.findall(r"^\[(\d+:\d{2}(?::\d{2})?)\]", eigen, re.M)
++            return {"notizen": [f"[{zeiten[0]}] Mara rettet Hanna aus dem Fluss."], "stand": ["Hanna: gerettet"]}
++        if system.startswith("Du bereitest das Kapitel"):
++            return {"ereignisse": [{"zeit": "1:00", "ereignis": "Mara rettet Hanna aus dem Fluss.",
++                                    "ausgang": "Hanna lebt.", "rang": "kritisch"}]}
++        if system.startswith("Du prüfst einzelne Ereignisse"):
++            return {"ereignisse": [{"nr": 1, "urteil": "berichtigt", "ereignis": "Hanna rettet Mara aus dem Fluss.",
++                                    "ausgang": "Mara lebt.", "zitat": "Zeile 1: Die Gruppe zieht weiter"}]}
++        if system.startswith("Du schreibst den Recap"):
++            return {"title": "Kapitel 1", "text": "Hanna zog Mara aus dem Fluss.", "openThreads": []}
++        if system.startswith("Du vergleichst das Kapitel"):
++            return {"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "Hanna zog Mara aus dem Fluss"}]}
++        if "Du prüfst den Recap" in system:
++            return {"absaetze": [{"nr": 1, "urteil": "belegt"}]}
++        if "Kampagnen-Bibel" in system:
++            return {"proposals": []}
++        return {}
++
++    def __call__(self, request: httpx.Request) -> httpx.Response:
++        body = json.loads(request.content)
++        system, nutzer = body["messages"][0]["content"], body["messages"][1]["content"]
++        self.aufrufe.append({"system": system, "nutzer": nutzer})
++        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(self.antwort(system, nutzer),
++                                                                                         ensure_ascii=False)}}],
++                                         "usage": {"prompt_tokens": 1000, "completion_tokens": 100}})
++
++
++def _ablauf(anbieter, **kw):
++    klient = sm.OpenAIKlient("https://llm.example/v1", "sk", "m", httpx.Client(transport=httpx.MockTransport(anbieter)))
++    return sm.Ablauf(klient, schritt=lambda _n: None, nachbesserung=False, notizen_zuerst=True, notiz_stueck=2000, **kw)
++
++
++def test_im_ablauf_vor_dem_schreiben(client, world, dbs, tmp_path):
++    recap_ein, vorschlag_ein = _eingabe(client, world, dbs, tmp_path)
++    anbieter = Anbieter()
++    a = _ablauf(anbieter)
++    a.ausfuehren(recap_ein, vorschlag_ein, gegenpruefen=True)
++    systeme = [x["system"][:30] for x in anbieter.aufrufe]
++    blick, recap = systeme.index("Du prüfst einzelne Ereignisse "), systeme.index("Du schreibst den Recap („Was b")
++    assert systeme.index("Du bereitest das Kapitel zu ei") < blick < recap
++    recap_aufruf = next(x for x in anbieter.aufrufe if x["system"].startswith("Du schreibst den Recap"))
++    assert "Hanna rettet Mara aus dem Fluss. – Ausgang: Mara lebt." in recap_aufruf["nutzer"]
++    assert "an der Abschrift geprüft" in recap_aufruf["nutzer"]
++    assert a.letzter_zweiter_blick[0]["urteil"] == "berichtigt" and a.letzte_auswahl[0]["berichtigt"] is True
++    # Schalter aus: kein Aufruf
++    anbieter2 = Anbieter()
++    _ablauf(anbieter2, zweiter_blick_an=False).ausfuehren(recap_ein, vorschlag_ein)
++    assert not any(x["system"].startswith("Du prüfst einzelne Ereignisse") for x in anbieter2.aufrufe)
++
++
++def test_schalter_in_der_verwaltung(client, dbs, admin):  # noqa: F811
++    from app.zusammenfassung import zweiter_blick_an
++
++    assert zweiter_blick_an(dbs) is True
++    seite = client.get("/verwaltung/zusammenfassung").text
++    assert 'name="zweiter_blick" value="1" checked' in seite
++    daten = {"csrf": admin, "art": "api", "anbieter": "mistral", "api_modell": "mistral-medium-latest",
++             "lokal_modell": "auto", "lokal_kontext": "12288", "api_key": "sk-abcdefghijklmnop1234",
++             "gegenpruefen_feld": "1", "gegenpruefen": "1"}
++    client.post("/verwaltung/zusammenfassung", data=daten)  # Haken fehlt → aus
++    dbs.expire_all()
++    assert zweiter_blick_an(dbs) is False
++    client.post("/verwaltung/zusammenfassung", data={**daten, "zweiter_blick": "1"})
++    dbs.expire_all()
++    assert zweiter_blick_an(dbs) is True
++
++
++def test_probelauf_dateien_0474():
++    from app import kapitelprobe
++
++    assert "zweiter-blick.json" in kapitelprobe.DATEIEN
+diff --git a/uv.lock b/uv.lock
+index 67ead26..2ea9b34 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.73"
++version = "0.4.74"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
