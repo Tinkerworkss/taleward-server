@@ -25,7 +25,7 @@ PUNKTE = [{"zeit": 60.0, "ereignis": "Mara lässt das Schwert zurück.", "ausgan
 
 def test_pflicht_zitat_wird_nachgerechnet():
     """„erzählt“ ohne auffindbares Zitat ist „fehlt“; ein falscher Absatz wird nach dem Zitat berichtigt;
-    „widerspricht“ ohne Zitat wird „unklar“ und löst keine Nachbesserung aus."""
+    „widerspricht“ ohne Zitat und ohne erkennbares Ereignis im Absatz gilt als ungeprüft (0.4.76, vorher „unklar“)."""
     d = {"punkte": [
         {"nr": 1, "status": "erzaehlt", "absatz": 2, "zitat": "ließ das Schwert Eisenwind zurück"},
         {"nr": 2, "status": "erzaehlt", "absatz": 2, "zitat": "Hanna verlor das Silber"},  # erfunden
@@ -33,7 +33,7 @@ def test_pflicht_zitat_wird_nachgerechnet():
     aus = sm.pflicht_lesen(d, 3, 2, KAPITEL)
     assert aus[0]["status"] == "erzaehlt" and aus[0]["absatz"] == 0  # Zitat steht in Absatz 1
     assert aus[1]["status"] == "fehlt" and aus[1]["zitat"] == "" and aus[1]["begruendung"] == sm.OHNE_ZITAT["de"]
-    assert aus[2]["status"] == "unklar"
+    assert aus[2]["status"] == "ungeprueft"
     # ohne Kapitel (ältere Aufrufer) bleibt alles wie vom Modell gemeldet
     assert [p["status"] for p in sm.pflicht_lesen(d, 3, 2)] == ["erzaehlt", "erzaehlt", "widerspricht"]
     assert "zitat" in sm.SYSTEM_PFLICHT and "findest du keine, ist der Status \"fehlt\"" in sm.SYSTEM_PFLICHT

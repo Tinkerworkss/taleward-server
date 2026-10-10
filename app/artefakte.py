@@ -32,6 +32,14 @@ _DU_FORM = re.compile(
     r"spürt|findet|bekommt|kriegt|lauft|fallt|liegt|sitzt|wacht|habt)"
     r"|(?:seid|habt|werdet|könnt|müsst|wollt|wisst|seht|hört) ihr"
     r"|seid|habt|werdet|könnt|müsst|dürft|sollt|wollt|wisst)\b", re.I)
+# 0.4.76: Zahlwörter wie Ziffern („verlor zwei Magiepunkte“); „ein“ nicht (ein Treffpunkt, ein Höhepunkt), und nur der
+# Plural „…punkte“, damit Alltagswörter im Singular stehen bleiben.
+ZAHLWORT = r"(?:zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)"
+# Alltagswörter auf „…punkte“, die nach einem Zahlwort keine Regel sind („drei Treffpunkte“, „zwei Standpunkte“)
+ALLTAGSPUNKTE = (r"(?!(?:Treff|Stand|Anhalts|Höhe|Wende|Zeit|Schwer|Kritik|Kern|Gesichts|Mittel|Brenn|Dreh|Angel"
+                 r"|Ausgangs|Berührungs|Tief|Sammel|Fix|Start|End|Halte|Plus|Minus|Streit|Knack|Aussichts|Blick|Bezugs"
+                 r"|Schnitt|Licht|Programm|Tages|Kontroll)punkte\b)")
+ZAHLWORT_PUNKTE = ZAHLWORT + r" " + ALLTAGSPUNKTE + r"\w*punkte\b"
 _REGEL = re.compile(
     r"\b(?:\w*[Ll]ebenspunkt\w*|\w*[Kk]armapunkt\w*|\w*[Aa]stralpunkt\w*|\w*[Zz]auberpunkt\w*|\w*[Ss]chadenspunkt\w*"
     r"|Trefferpunkt\w*|Erfahrungspunkt\w*|Abenteuerpunkt\w*|Schicksalspunkt\w*|LeP|KaP|AsP|QS ?\d|Qualitätsstufe\w*"
@@ -39,13 +47,14 @@ _REGEL = re.compile(
     r"|(?:plus|minus) (?:eins|zwei|drei|\d+) (?:auf|Schmerz)\w*"
     # 0.4.73, systemneutral: Zahl vor „…punkte“ („2 Magiepunkte“), „N Schaden“, Würfe als Fachwort („Schwimmwurf
     # scheiterte“, „Stabilitätswurf“) – nicht aber Alltagswörter wie Vorwurf, Entwurf, Steinwurf.
-    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b"
+    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b|" + ZAHLWORT_PUNKTE + r"|" + ZAHLWORT + r" Schaden\b"
     r"|(?!(?:Vorwurf|Entwurf|Auswurf|Einwurf|Überwurf|Umwurf|Abwurf|Rauswurf|Hinauswurf|Niederwurf|Steinwurf|Speerwurf"
     r"|Hammerwurf|Diskuswurf|Aufwurf|Anwurf|Bewurf|Verwurf|Wegwurf|Fehlwurf|Freiwurf|Münzwurf)\w*\b)[A-ZÄÖÜ]\w+wurf\w*"
     r"|\w*[Ww]urf (?:scheitert\w*|misslingt|misslang|misslungen|gelingt|gelang|gelungen|glückt\w*))\b")
 _UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)  # 0.4.73: Marke der Notizen
 # 0.4.73: „für 4 Trefferpunkte“, „um 2 Punkte“ – nur die Wendung fällt weg, der Satz bleibt („traf Charles in die Schulter“)
-_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+\d+\s*\w*[Pp]unkte?\b|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
+_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+(?:\d+\s*\w*[Pp]unkte?\b|" + ZAHLWORT_PUNKTE + r")"
+                          r"|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
 
 
 def regelphrase(satz: str) -> str:

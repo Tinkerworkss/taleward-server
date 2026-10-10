@@ -23,7 +23,7 @@ def test_fenster_um_den_zeitpunkt():
     f = sm._fenster(ZEILEN, 600.0)
     zeiten = [int(re.match(r"\[(\d+):(\d+)\]", z).group(1)) * 60 + int(re.match(r"\[(\d+):(\d+)\]", z).group(2))
               for z in f.split("\n")]
-    assert min(zeiten) == 520 and max(zeiten) == 680 and "packt dich Hanna" in f
+    assert min(zeiten) == 540 and max(zeiten) == 840 and "packt dich Hanna" in f  # 0.4.76: weiter nach vorn
     klein = sm._fenster(ZEILEN, 600.0, zeichen=200)
     assert 0 < len(klein) <= 200 + 80 and "packt dich Hanna" in klein  # von der Mitte her begrenzt
     assert sm._fenster(ZEILEN, 5000.0) == ""
