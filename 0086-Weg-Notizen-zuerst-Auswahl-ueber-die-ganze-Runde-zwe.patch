@@ -1,0 +1,583 @@
+From 33eb81d1f7314173e37baf086f7bd6eaca08c67e Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 12:05:45 +0200
+Subject: [PATCH] Weg Notizen zuerst: Auswahl ueber die ganze Runde, zweiter
+ Blick weiter nach vorn (Server 0.4.76)
+
+- Auswahl je Zeitabschnitt (etwa 45 min) mit eigenem Anteil am Kontingent; bei zu vielen
+  Ereignissen bleibt Kritisches vor Wichtigem
+- Zweiter Blick: Abschrift 60 s vor bis 240 s nach dem Ereignis
+- Pflichtpruefung: "widerspricht" ohne Zitat zaehlt, wenn der Absatz das Ereignis erkennbar
+  enthaelt; sonst ungeprueft. Pruefansicht markiert nur unklare Ereignisse aus Notizen und
+  zweitem Blick
+- Kuerzen: Namen nur aus Auswahl und bekannten Namen pruefen; zu kurz geraten einmal nachfordern
+- Regelreste: Zahlwoerter vor "...punkte" wie Ziffern
+- Absatz, der mit nackter Zahl beginnt, wieder an den vorigen haengen
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ app/artefakte.py             |  13 ++-
+ app/sprachmodell.py          | 170 ++++++++++++++++++++++++++++-------
+ pyproject.toml               |   2 +-
+ tests/test_aktualisierung.py |   2 +-
+ tests/test_assistent.py      |   2 +-
+ tests/test_hebel_0473.py     |   4 +-
+ tests/test_modellablage.py   |   2 +-
+ tests/test_reparatur_0476.py | 130 +++++++++++++++++++++++++++
+ tests/test_worker_app.py     |   2 +-
+ tests/test_zweiter_blick.py  |   2 +-
+ uv.lock                      |   2 +-
+ 11 files changed, 290 insertions(+), 41 deletions(-)
+ create mode 100644 tests/test_reparatur_0476.py
+
+diff --git a/app/artefakte.py b/app/artefakte.py
+index 7bb5586..d1de923 100644
+--- a/app/artefakte.py
++++ b/app/artefakte.py
+@@ -33,4 +33,12 @@ _DU_FORM = re.compile(
+     r"|(?:seid|habt|werdet|könnt|müsst|wollt|wisst|seht|hört) ihr"
+     r"|seid|habt|werdet|könnt|müsst|dürft|sollt|wollt|wisst)\b", re.I)
++# 0.4.76: Zahlwörter wie Ziffern („verlor zwei Magiepunkte“); „ein“ nicht (ein Treffpunkt, ein Höhepunkt), und nur der
++# Plural „…punkte“, damit Alltagswörter im Singular stehen bleiben.
++ZAHLWORT = r"(?:zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)"
++# Alltagswörter auf „…punkte“, die nach einem Zahlwort keine Regel sind („drei Treffpunkte“, „zwei Standpunkte“)
++ALLTAGSPUNKTE = (r"(?!(?:Treff|Stand|Anhalts|Höhe|Wende|Zeit|Schwer|Kritik|Kern|Gesichts|Mittel|Brenn|Dreh|Angel"
++                 r"|Ausgangs|Berührungs|Tief|Sammel|Fix|Start|End|Halte|Plus|Minus|Streit|Knack|Aussichts|Blick|Bezugs"
++                 r"|Schnitt|Licht|Programm|Tages|Kontroll)punkte\b)")
++ZAHLWORT_PUNKTE = ZAHLWORT + r" " + ALLTAGSPUNKTE + r"\w*punkte\b"
+ _REGEL = re.compile(
+     r"\b(?:\w*[Ll]ebenspunkt\w*|\w*[Kk]armapunkt\w*|\w*[Aa]stralpunkt\w*|\w*[Zz]auberpunkt\w*|\w*[Ss]chadenspunkt\w*"
+@@ -40,5 +48,5 @@ _REGEL = re.compile(
+     # 0.4.73, systemneutral: Zahl vor „…punkte“ („2 Magiepunkte“), „N Schaden“, Würfe als Fachwort („Schwimmwurf
+     # scheiterte“, „Stabilitätswurf“) – nicht aber Alltagswörter wie Vorwurf, Entwurf, Steinwurf.
+-    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b"
++    r"|\d+ ?\w*[Pp]unkte?\b|\d+ [Ss]chaden\b|" + ZAHLWORT_PUNKTE + r"|" + ZAHLWORT + r" Schaden\b"
+     r"|(?!(?:Vorwurf|Entwurf|Auswurf|Einwurf|Überwurf|Umwurf|Abwurf|Rauswurf|Hinauswurf|Niederwurf|Steinwurf|Speerwurf"
+     r"|Hammerwurf|Diskuswurf|Aufwurf|Anwurf|Bewurf|Verwurf|Wegwurf|Fehlwurf|Freiwurf|Münzwurf)\w*\b)[A-ZÄÖÜ]\w+wurf\w*"
+@@ -46,5 +54,6 @@ _REGEL = re.compile(
+ _UNKLAR = re.compile(r"\s*\((?:unklar|unsicher|unclear|uncertain)\b[^)]*\)", re.I)  # 0.4.73: Marke der Notizen
+ # 0.4.73: „für 4 Trefferpunkte“, „um 2 Punkte“ – nur die Wendung fällt weg, der Satz bleibt („traf Charles in die Schulter“)
+-_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+\d+\s*\w*[Pp]unkte?\b|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
++_REGELPHRASE = re.compile(r"\s+(?:für|um|mit|je|zu)\s+(?:\d+\s*\w*[Pp]unkte?\b|" + ZAHLWORT_PUNKTE + r")"
++                          r"|\s+\d+\s*\w*[Pp]unkte?\s+[Ss]chaden\b")
+ 
+ 
+diff --git a/app/sprachmodell.py b/app/sprachmodell.py
+index aa07771..a6d094d 100644
+--- a/app/sprachmodell.py
++++ b/app/sprachmodell.py
+@@ -17,4 +17,5 @@ from __future__ import annotations
+ import json
+ import logging
++import math
+ import re
+ import time
+@@ -469,9 +470,11 @@ def stuecke(zeilen: list[str], max_tokens: int) -> list[str]:
+ 
+ 
++from app.artefakte import ZAHLWORT_PUNKTE as _ZAHLWORT_PUNKTE  # noqa: E402  (0.4.76: Zahlwörter wie Ziffern)
++
+ _ZEIT_VORN = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]\s*")  # „[12:34] “, zur Not auch „12:34] “
+ _REGELN = re.compile(r"\b(?:Würfel\w*|würfel\w*|\w*[Pp]robe\b|\w*[Pp]roben\b|\w*attacke\b|Kampfrunde\w*|Qualitätsstufe"
+                      r"|QS\s?\d|Lebenspunkt\w*|Karmapunkt\w*|Astralpunkt\w*|Zauberpunkt\w*|Schadenspunkt\w*|LeP|KaP|AsP|ASP"
+                      r"|Initiative|erleichtert\w*|erschwert\w*|kritisch\w* (?:erfolgreich|Erfolg\w*|Patzer|Wurf\w*|Treffer|bei)|Patzer"
+-                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b|\d+ ?\w*[Pp]unkte?\b"
++                     r"|Wurf\b|Wurfs\b|Würfe\w*|[bB]20\b|\d+ Schaden\b|Schaden(?:spunkte)?\b|\d+ ?\w*[Pp]unkte?\b|" + _ZAHLWORT_PUNKTE +
+                      r"|\d+\s?[wW]\d+|[wW]20\b|\d-\d{1,2}-\d{1,2}|Schicksalsmarker"
+                      r"|Spielleitung (?:verlangt|fordert|erlaubt|bittet|kündigt|informiert|bestätigt|stellt fest|teilt mit)"
+@@ -482,4 +485,5 @@ _SPIELLEITUNG = re.compile(r"\b(?:Spielleitung|Spielleiter\w*|game master|GM)\b"
+ _REGELKLAMMER = re.compile(
+     r"\s*\((?=[^()]*(?:\b\d+\s*(?:von|/|auf|gegen|vs\.?)\s*\d+|\b\d+ ?\w*[Pp]unkte?\b|\b\d+ [Ss]chaden\b|\w+[Ww]urf\b"
++    r"|\b" + _ZAHLWORT_PUNKTE +
+     r"|\w*[Pp]robe\b))[^()]*\)")
+ UNKLAR = "(unklar, wer)"  # 0.4.73: Marke der Notizen für Stellen, an denen die Abschrift nicht eindeutig ist
+@@ -740,5 +744,6 @@ Wichtig ist, was einem Spieler vor der nächsten Runde Wissen nehmen würde, wen
+ - Visionen und Botschaften mit ihrem Inhalt; bestehende Beziehungen, die etwas bewirken („kennt ihn seit der Kindheit“).
+ - Wendepunkte der Lage (Katastrophen, Flucht, Ankunft an einem neuen Ort) und entscheidende Informationen.
+-Nicht: Essen, Kleidung, Kulisse, einzelne gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.
++Nicht: Essen, Kleidung, Kulisse, Begrüßungen und Vorstellungen, Bestellungen, Fahrten ohne Folgen, einzelne \
++gescheiterte Versuche, Regeln und Würfe, Witze, Smalltalk.{abschnitt}
+ Je Ereignis: zeit (Zeitstempel der Notiz), ereignis (ein Satz, mit Namen), ausgang (wie es ausgeht, genau wie am \
+ Tisch: verletzt ist nicht tot, angedroht ist nicht geschehen; widersprechen sich Notizen, gilt die spätere Notiz bzw. \
+@@ -748,4 +753,12 @@ Antworte nur mit JSON: {"ereignisse": [{"zeit": "m:ss", "ereignis": "…", "ausg
+ Sprache: {sprache}."""
+ AUSWAHL_HOECHSTENS = 20
++# 0.4.76: Die Auswahl über eine ganze lange Runde in einem Aufruf füllte ihr Kontingent in Zeitfolge und hörte auf – in
++# zwei von sechs Messläufen hatte die letzte Stunde kein einziges Pflichtereignis. Darum wählt das Modell je
++# Zeitabschnitt mit eigenem Anteil am Kontingent; der Stand am Ende der Runde geht jedem Abschnitt mit.
++AUSWAHL_ABSCHNITT_MIN = 45  # Minuten je Abschnitt, etwa
++AUSWAHL_ABSCHNITT_AB = 60  # erst Runden über so vielen Minuten werden geteilt
++AUSWAHL_ABSCHNITT = """
++Du bekommst nur Abschnitt {k} von {n} der Runde ({von} bis {bis}). Wähle nur Ereignisse aus diesem Abschnitt; die \
++übrigen Abschnitte wählt jemand anders. Der Stand am Ende der Runde hilft dir, Ausgänge richtig zu benennen."""
+ 
+ 
+@@ -756,4 +769,30 @@ def auswahl_hoechstens(ein: dict) -> int:
+     return 30 if minuten > 120 else AUSWAHL_HOECHSTENS if minuten > 60 else 12
+ 
++
++def auswahl_abschnitte(notizen: str, minuten: float, hoechstens: int) -> list[dict]:
++    """0.4.76: Notizen in gleich lange Zeitabschnitte (etwa AUSWAHL_ABSCHNITT_MIN Minuten) mit je einem Anteil am
++    Kontingent. Zeilen ohne Zeitstempel bleiben beim Abschnitt davor; leere Abschnitte fallen weg, ihr Anteil geht an
++    die übrigen. Kurze Runden: ein Abschnitt."""
++    zeilen = [z for z in (notizen or "").splitlines() if z.strip()]
++    if minuten <= AUSWAHL_ABSCHNITT_AB:
++        return [{"k": 1, "n": 1, "von": 0.0, "bis": minuten * 60, "notizen": "\n".join(zeilen), "anteil": hoechstens}]
++    n = max(2, math.ceil(minuten / AUSWAHL_ABSCHNITT_MIN))
++    breite = minuten * 60 / n
++    stuecke: list[list[str]] = [[] for _ in range(n)]
++    k = 0
++    for z in zeilen:
++        t = _zeit_vorn(z)
++        if t is not None:
++            k = min(n - 1, max(0, int(t // breite)))
++        stuecke[k].append(z)
++    belegt = [i for i in range(n) if stuecke[i]]
++    if not belegt:
++        return []
++    anteile = {i: hoechstens // len(belegt) for i in belegt}
++    for i in belegt[:hoechstens % len(belegt)]:
++        anteile[i] += 1
++    return [{"k": j + 1, "n": len(belegt), "von": i * breite, "bis": (i + 1) * breite, "notizen": "\n".join(stuecke[i]),
++             "anteil": anteile[i]} for j, i in enumerate(belegt) if anteile[i] > 0]
++
+ SYSTEM_PFLICHT = """Du vergleichst das Kapitel einer Pen-&-Paper-Session mit einer Liste von Ereignissen, die darin \
+ vorkommen müssen. Für jedes Ereignis: status "erzaehlt" (kommt mit diesem Ausgang vor), "fehlt" (kommt nicht vor, oder \
+@@ -793,7 +832,10 @@ Zweifel "unklar". Keine Regeln, Würfe oder Punkte.
+ Antworte nur mit JSON: {"ereignisse": [{"nr": 1, "urteil": "…", "ereignis": "…", "ausgang": "…", "zitat": "…", \
+ "grund": "…"}]}. Sprache: {sprache}."""
+-ZWEITER_BLICK_FENSTER_S = 90.0  # Abschrift ± so viele Sekunden um den Zeitpunkt des Ereignisses
++# 0.4.76: Der Ausgang kommt oft zwei, drei Minuten nach dem Ereignis („Schön, schön …“, dann das Messer) – das Fenster
++# reicht darum weiter nach vorn als zurück (vorher ± 90 s; ein Fehler wurde so 56 s hinter dem Fenster übersehen).
++ZWEITER_BLICK_DAVOR_S = 60.0  # Abschrift so viele Sekunden vor dem Zeitpunkt des Ereignisses …
++ZWEITER_BLICK_DANACH_S = 240.0  # … und so viele danach
+ ZWEITER_BLICK_HOECHSTENS = 12  # so viele Ereignisse je Kapitel (alle unklaren, dann die kritischen)
+-ZWEITER_BLICK_ZEICHEN = 5000  # höchstens so viel Abschrift je Ereignis
++ZWEITER_BLICK_ZEICHEN = 6000  # höchstens so viel Abschrift je Ereignis
+ ZWEITER_BLICK_JE_AUFRUF = 6  # mehr Ereignisse: mehrere Aufrufe, damit die Antwort nicht abbricht
+ _URTEIL_BLICK = {"stimmt": "stimmt", "ok": "stimmt", "correct": "stimmt", "confirmed": "stimmt", "berichtigt": "berichtigt",
+@@ -801,8 +843,10 @@ _URTEIL_BLICK = {"stimmt": "stimmt", "ok": "stimmt", "correct": "stimmt", "confi
+ 
+ 
+-def _fenster(zeilen: list[tuple[float, str]], zeit: float, sekunden: float = ZWEITER_BLICK_FENSTER_S,
+-             zeichen: int = ZWEITER_BLICK_ZEICHEN) -> str:
+-    """Zeilen der Abschrift um einen Zeitpunkt, von der Mitte her auf höchstens `zeichen` begrenzt."""
+-    nah = [(abs(t - zeit), i) for i, (t, _z) in enumerate(zeilen) if abs(t - zeit) <= sekunden]
++def _fenster(zeilen: list[tuple[float, str]], zeit: float, davor: float = ZWEITER_BLICK_DAVOR_S,
++             danach: float = ZWEITER_BLICK_DANACH_S, zeichen: int = ZWEITER_BLICK_ZEICHEN) -> str:
++    """Zeilen der Abschrift von `davor` Sekunden vor bis `danach` Sekunden nach einem Zeitpunkt; zu viel Text wird vom
++    Zeitpunkt her begrenzt (Abstand jeweils im Verhältnis zur Länge der Seite)."""
++    nah = [((zeit - t) / davor if t < zeit else (t - zeit) / danach, i) for i, (t, _z) in enumerate(zeilen)
++           if -davor <= t - zeit <= danach]
+     if not nah:
+         return ""
+@@ -855,7 +899,14 @@ def namen_im_text(text: str, extra: list[str] | tuple = ()) -> set[str]:
+ 
+ 
+-def _namen_fehlen(lang: str, kurz: str, extra: list[str]) -> list[str]:
++def _namen_fehlen(lang: str, kurz: str, extra: list[str], pflicht: str | None = None) -> list[str]:
++    """Namen des langen Textes, die im kurzen fehlen. pflicht (0.4.76): nur Namen zählen, die auch dort stehen (die
++    Pflichtereignisse) oder bekannte Namen sind – sonst blockierte jede Kulisse („Bar“, „Lady Luck“, „Brot“) das Kürzen."""
+     kurz_klein = kurz.casefold()
+-    return sorted(n for n in namen_im_text(lang, extra) if not re.search(rf"\b{re.escape(n)}", kurz_klein))
++    namen = namen_im_text(lang, extra)
++    if pflicht is not None:
++        bekannt = {w.casefold()[:5] for name in extra for w in re.findall(r"\w+", name or "") if len(w) >= 3}
++        pflicht_klein = pflicht.casefold()
++        namen = {n for n in namen if n in bekannt or re.search(rf"\b{re.escape(n)}", pflicht_klein)}
++    return sorted(n for n in namen if not re.search(rf"\b{re.escape(n)}", kurz_klein))
+ 
+ 
+@@ -992,5 +1043,8 @@ def auswahl_lesen(d: dict, hoechstens: int = AUSWAHL_HOECHSTENS) -> list[dict]:
+                     "ereignis": ereignis, "ausgang": regelreste(klartext(e.get("ausgang") or e.get("outcome") or ""))[:300],
+                     "rang": "kritisch" if rang in ("kritisch", "critical") else "wichtig"})
+-    aus = aus[:hoechstens]
++    if len(aus) > hoechstens:  # 0.4.76: zu viele – Kritisches bleibt, dann Wichtiges in der Reihenfolge des Modells
++        kritisch = [e for e in aus if e["rang"] == "kritisch"][:hoechstens]
++        wichtig = [e for e in aus if e["rang"] != "kritisch"][:hoechstens - len(kritisch)]
++        aus = kritisch + wichtig
+     return sorted(aus, key=lambda e: (e["zeit"] is None, e["zeit"] or 0.0))
+ 
+@@ -1001,5 +1055,20 @@ def auswahl_text(punkte: list[dict]) -> str:
+ 
+ 
+-def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str = "", sprache: str = "de") -> list[dict]:
++_STAMM_FUELL = {"wird", "wurde", "werden", "nach", "über", "eine", "einen", "einem", "einer", "sich", "auch", "dann",
++                "dass", "noch", "doch", "aber", "sind", "sein", "seine", "seinen", "ihre", "ihren", "nicht", "mehr", "will",
++                "hatte", "hatten", "haben", "gegen", "beim", "vom", "zum", "zur", "unter", "durch", "ausgang", "offen"}
++
++
++def _staemme(text: str) -> set[str]:
++    """Wortstämme (erste fünf Buchstaben) der Wörter ab vier Buchstaben, ohne Füllwörter – zum Wiederfinden eines
++    Ereignisses in einem Absatz, auch wenn das Kapitel anders formuliert."""
++    return {w[:5] for w in re.findall(r"\w+", (text or "").casefold()) if len(w) >= 4 and w not in _STAMM_FUELL}
++
++
++WIDERSPRUCH_STAEMME = 2  # 0.4.76: so viele Stämme des Ereignisses muss der Absatz enthalten, wenn das Zitat fehlt
++
++
++def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str = "", sprache: str = "de",
++                  punkte: list[dict] | None = None) -> list[dict]:
+     """Antwort der Pflichtprüfung → je Punkt {nr, status, absatz (0-basiert oder None), zitat, begruendung}. Fehlende
+     Punkte gelten als ungeprüft und lösen nichts aus.
+@@ -1008,5 +1077,10 @@ def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str =
+     über Bord“ als „verliert das Silber“ durchgehen lassen). Ohne auffindbares Zitat gilt der Punkt als „fehlt“; ein
+     „widerspricht“ ohne auffindbares Zitat wird „unklar“ (kein Umschreiben auf Zuruf, nur ein Hinweis). Steht das Zitat
+-    in einem anderen Absatz als angegeben, gilt der Absatz des Zitats."""
++    in einem anderen Absatz als angegeben, gilt der Absatz des Zitats.
++
++    0.4.76: „widerspricht“ ohne auffindbares Zitat bleibt „widerspricht“, wenn der angegebene Absatz das Ereignis
++    erkennbar enthält (mindestens WIDERSPRUCH_STAEMME Wortstämme aus Ereignis und Ausgang) – sonst blieb eine falsche
++    Person im Kapitel stehen, obwohl die Auswahl es richtig hatte. Gelingt das nicht, gilt der Punkt als ungeprüft (keine
++    Nachbesserung, keine Markierung); ein bloßes „unklar“ aus der Prüfung markiert ebenfalls nichts mehr."""
+     teile = absaetze(text) if text else []
+     norm = _normwoerter(text) if text else ""
+@@ -1041,5 +1115,11 @@ def pflicht_lesen(d: dict, anzahl_punkte: int, anzahl_absaetze: int, text: str =
+                 begruendung = begruendung or OHNE_ZITAT.get(sprache, OHNE_ZITAT["de"])
+             else:
+-                status, zitat = "unklar", ""
++                zitat = ""
++                p = punkte[nr - 1] if punkte and nr <= len(punkte) else None
++                if not (p and 0 <= absatz < len(teile) and len(_staemme(f"{p['ereignis']} {p.get('ausgang') or ''}")
++                                                              & _staemme(teile[absatz])) >= WIDERSPRUCH_STAEMME):
++                    status = "ungeprueft"
++        if status == "unklar":
++            status = "ungeprueft"
+         aus.append({"nr": nr, "status": status, "absatz": absatz if 0 <= absatz < anzahl_absaetze else None,
+                     "zitat": zitat, "begruendung": begruendung})
+@@ -1164,5 +1244,5 @@ def pruefansicht_aus_pflicht(text: str, punkte: list[dict], befund: list[dict],
+                 verdict, note = "partial", FEHLT_HINWEIS[sp] + p["ereignis"] + (f" – {p['ausgang']}" if p["ausgang"] else "")
+         for p, b in eintraege:
+-            if (p.get("unklar") or b["status"] == "unklar") and verdict in ("supported", "partial"):
++            if p.get("unklar") and verdict in ("supported", "partial"):
+                 grund = _UNKLAR.search(p.get("ausgang") or "")
+                 was = grund.group(0).strip(" ()") if grund else ""
+@@ -1253,4 +1333,7 @@ _SATZENDE = re.compile(r"(?<=[.!?…])[»«“\"')]*\s+(?=[„\"»«(]?[A-ZÄÖ
+ 
+ 
++_ZAHL_ANFANG = re.compile(r"\d{1,3}\.\s")
++
++
+ def absaetze_teilen(text: str) -> str:
+     """Absätze mit mehr als ABSATZ_HOECHSTENS Wörtern an Satzgrenzen in Stücke von etwa ABSATZ_ZIEL Wörtern teilen.
+@@ -1258,5 +1341,13 @@ def absaetze_teilen(text: str) -> str:
+     nur ein Urteil für alles. Kein Wort wird verändert, nur Leerzeilen kommen hinzu."""
+     aus = []
+-    for absatz in [a for a in re.split(r"\n\s*\n", text or "") if a.strip()]:
++    roh: list[str] = []
++    for absatz in [a.strip() for a in re.split(r"\n\s*\n", text or "") if a.strip()]:
++        # 0.4.76: Ein Absatz, der mit einer nackten Zahl beginnt („22. Die Gruppe …“), ist ein Umbruch mitten im Satz
++        # („… der Vorfall von⏎⏎22. Die Gruppe“) – wieder anhängen, wenn der Absatz davor keinen Satzschluss hat.
++        if roh and _ZAHL_ANFANG.match(absatz) and not re.search(r"[.!?…:“”\"»«)]$", roh[-1]):
++            roh[-1] += " " + absatz
++        else:
++            roh.append(absatz)
++    for absatz in roh:
+         if len(absatz.split()) <= ABSATZ_HOECHSTENS:
+             aus.append(absatz.strip())
+@@ -1905,10 +1996,20 @@ class Ablauf:
+         """0.4.65: die entscheidenden Ereignisse mit Ausgang, bevor das Kapitel geschrieben wird."""
+         stand = "\n".join(f"- {s}" for s in self.letzter_stand) or "(kein Stand)"
+-        nutzer = (f"{_kopf(ein)}\n\nSzenennotizen der Runde:\n{notizen}\n\nStand am Ende der Runde (mit dem Zeitpunkt "
+-                  f"der Änderung):\n{stand}")
+         hoechstens = auswahl_hoechstens(ein)
+-        system = SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(hoechstens))
++        abschnitte = auswahl_abschnitte(notizen, _minuten(ein), hoechstens)
+         self._schritt("recap")
+-        aus = auswahl_lesen(self.zaehler.aufruf(self.notiz_klient or self.klient, system, nutzer), hoechstens)
++        aus, gesehen = [], set()
++        for a in abschnitte:
++            zusatz = "" if a["n"] == 1 else (AUSWAHL_ABSCHNITT.replace("{k}", str(a["k"])).replace("{n}", str(a["n"]))
++                                             .replace("{von}", _zeit(a["von"])).replace("{bis}", _zeit(a["bis"])))
++            system = (SYSTEM_AUSWAHL.replace("{sprache}", _sprache(ein)).replace("{hoechstens}", str(a["anteil"]))
++                      .replace("{abschnitt}", zusatz))
++            nutzer = (f"{_kopf(ein)}\n\nSzenennotizen{' dieses Abschnitts' if a['n'] > 1 else ' der Runde'}:\n"
++                      f"{a['notizen']}\n\nStand am Ende der Runde (mit dem Zeitpunkt der Änderung):\n{stand}")
++            for e in auswahl_lesen(self.zaehler.aufruf(self.notiz_klient or self.klient, system, nutzer), a["anteil"]):
++                if e["ereignis"].casefold() not in gesehen:
++                    gesehen.add(e["ereignis"].casefold())
++                    aus.append(e)
++        aus.sort(key=lambda e: (e["zeit"] is None, e["zeit"] or 0.0))
+         for e in aus:
+             if _UNKLAR.search(e["ereignis"] + " " + e["ausgang"]):
+@@ -1982,5 +2083,5 @@ class Ablauf:
+         self._schritt("review")
+         return pflicht_lesen(self.zaehler.aufruf(self.klient, SYSTEM_PFLICHT.replace("{sprache}", _sprache(ein)), nutzer),
+-                             len(punkte), len(teile), text, "en" if ein.get("sprache") == "en" else "de")
++                             len(punkte), len(teile), text, "en" if ein.get("sprache") == "en" else "de", punkte)
+ 
+     def pflicht_nachbessern(self, ein: dict, punkte: list[dict], befund: list[dict], text: str) -> str | None:
+@@ -2040,14 +2141,23 @@ class Ablauf:
+             self.letzte_kuerzung["grund"] = "nicht zu lang"
+             return None
++        unten = untergrenze(ein, True)
+         nutzer = (f"Ereignisse, die vorkommen müssen:\n{auswahl_text(punkte)}\n\nKapitel:\n{r['text']}")
++        system = (SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein)).replace("{ziel}", str(grenze))
++                  .replace("{unten}", str(unten)))
+         self._schritt("revision")
+-        d = self.zaehler.aufruf(self.klient, SYSTEM_KUERZEN.replace("{sprache}", _sprache(ein))
+-                                .replace("{ziel}", str(grenze)).replace("{unten}", str(untergrenze(ein, True))), nutzer)
+-        t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
+-        if "\n\n" not in t and "\n" in t:
+-            t = re.sub(r"\n+", "\n\n", t)
+-        t = absaetze_teilen(t) if t else ""
+-        m = len(t.split())
+-        self.letzte_kuerzung["woerter_neu"] = m
++        t, m = "", 0
++        for versuch in range(2):  # 0.4.76: zu kurz geraten → einmal nachfordern, mit der Zahl
++            zusatz = "" if not versuch else (f"\n\nDeine erste Kürzung hatte nur {m} Wörter. Schreib mindestens {unten} "
++                                             f"Wörter; streiche nur Ausschmückung.")
++            d = self.zaehler.aufruf(self.klient, system, nutzer + zusatz)
++            t = klartext(d.get("text") if isinstance(d.get("text"), str) else "")
++            if "\n\n" not in t and "\n" in t:
++                t = re.sub(r"\n+", "\n\n", t)
++            t = absaetze_teilen(t) if t else ""
++            m = len(t.split())
++            self.letzte_kuerzung["woerter_neu"] = m
++            if not t or m >= grenze * 0.5:
++                break
++            self.letzte_kuerzung["zu_kurz"] = m
+         if not t or m > n * (1 - KUERZEN_MINDESTENS) or m < grenze * 0.5:
+             self.letzte_kuerzung["grund"] = "Länge passt nicht"
+@@ -2055,5 +2165,5 @@ class Ablauf:
+         extra = [p.get("charakter") or "" for p in ein.get("personen") or []] + \
+                 [e.get("name") or "" for e in ein.get("bibel") or []]
+-        fehlen = _namen_fehlen(r["text"], t, extra)
++        fehlen = _namen_fehlen(r["text"], t, extra, auswahl_text(punkte))
+         if fehlen:
+             self.letzte_kuerzung["grund"] = "Namen fehlen: " + ", ".join(fehlen[:10])
+diff --git a/pyproject.toml b/pyproject.toml
+index 701b433..581657a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-server"
+-version = "0.4.75"
++version = "0.4.76"
+ description = "Taleward – Server für Recaps und Kampagnenbibel von Rollenspielrunden"
+ license = "AGPL-3.0-only"
+diff --git a/tests/test_aktualisierung.py b/tests/test_aktualisierung.py
+index 863e5d4..2d39d8b 100644
+--- a/tests/test_aktualisierung.py
++++ b/tests/test_aktualisierung.py
+@@ -154,5 +154,5 @@ def test_neue_serverfassung_wird_gemeldet(client, dbs, admin, gh, monkeypatch):
+     aktualisierung.pruefen(dbs, gh)
+     aktualisierung.pruefen(dbs, gh)
+-    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.75"})]  # nur einmal
++    assert gemeldet == [("server_update", {"wichtig": False, "version": "0.5.0", "jetzt": "0.4.76"})]  # nur einmal
+     seite = client.get("/verwaltung/updates").text
+     assert "Update verfügbar" in seite and "git pull" in seite
+diff --git a/tests/test_assistent.py b/tests/test_assistent.py
+index 03f7c19..25f58db 100644
+--- a/tests/test_assistent.py
++++ b/tests/test_assistent.py
+@@ -135,5 +135,5 @@ def test_assistent_lokaler_server(client, dbs, admin, schluessel_ok):  # noqa: F
+     h = {"Authorization": f"Bearer {r.json()['token']}"}
+     assert wc.post("/worker/v1/pair", json={"code": code, "name": "zweiter"}).status_code == 404  # nur einmal
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.75"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": "hf_abcdefghijklmnop", "models": {}, "serverVersion": "0.4.76"}
+     assert wc.post("/worker/v1/jobs/claim", json={"waitSeconds": 0}, headers=h).status_code == 204
+     seite = client.get("/verwaltung/assistent/betrieb").text
+diff --git a/tests/test_hebel_0473.py b/tests/test_hebel_0473.py
+index 3706ea6..e07179b 100644
+--- a/tests/test_hebel_0473.py
++++ b/tests/test_hebel_0473.py
+@@ -26,5 +26,5 @@ PUNKTE = [{"zeit": 60.0, "ereignis": "Mara lässt das Schwert zurück.", "ausgan
+ def test_pflicht_zitat_wird_nachgerechnet():
+     """„erzählt“ ohne auffindbares Zitat ist „fehlt“; ein falscher Absatz wird nach dem Zitat berichtigt;
+-    „widerspricht“ ohne Zitat wird „unklar“ und löst keine Nachbesserung aus."""
++    „widerspricht“ ohne Zitat und ohne erkennbares Ereignis im Absatz gilt als ungeprüft (0.4.76, vorher „unklar“)."""
+     d = {"punkte": [
+         {"nr": 1, "status": "erzaehlt", "absatz": 2, "zitat": "ließ das Schwert Eisenwind zurück"},
+@@ -34,5 +34,5 @@ def test_pflicht_zitat_wird_nachgerechnet():
+     assert aus[0]["status"] == "erzaehlt" and aus[0]["absatz"] == 0  # Zitat steht in Absatz 1
+     assert aus[1]["status"] == "fehlt" and aus[1]["zitat"] == "" and aus[1]["begruendung"] == sm.OHNE_ZITAT["de"]
+-    assert aus[2]["status"] == "unklar"
++    assert aus[2]["status"] == "ungeprueft"
+     # ohne Kapitel (ältere Aufrufer) bleibt alles wie vom Modell gemeldet
+     assert [p["status"] for p in sm.pflicht_lesen(d, 3, 2)] == ["erzaehlt", "erzaehlt", "widerspricht"]
+diff --git a/tests/test_modellablage.py b/tests/test_modellablage.py
+index 50a4b19..0e8fb7a 100644
+--- a/tests/test_modellablage.py
++++ b/tests/test_modellablage.py
+@@ -84,5 +84,5 @@ def test_worker_laden_vom_server_ohne_hf(client, dbs, hf_zugang, tmp_path, monke
+     assert wc.get("/worker/v1/config", headers=h).json()["hfToken"] == "hf_gut"  # Übergang: noch nicht auf dem Server
+     modellablage.holen(dbs, klient=hf_transport())
+-    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.75"}
++    assert wc.get("/worker/v1/config", headers=h).json() == {"hfToken": None, "models": {REPO: SHA}, "serverVersion": "0.4.76"}
+     assert wc.get("/worker/v1/models", params={"repo": REPO}).status_code == 401  # nur mit Worker-Token
+     r = wc.get("/worker/v1/models/file", params={"repo": REPO, "fassung": SHA, "pfad": "../../geheimnis.txt"},
+diff --git a/tests/test_reparatur_0476.py b/tests/test_reparatur_0476.py
+new file mode 100644
+index 0000000..cfd99c9
+--- /dev/null
++++ b/tests/test_reparatur_0476.py
+@@ -0,0 +1,130 @@
++"""Server 0.4.76, Weg „Notizen zuerst“: Auswahl über die ganze Runde, zweiter Blick weiter nach vorn, „widerspricht“
++ohne Zitat verorten, Kürzen ohne Kulissen-Namen, Zahlwörter als Regelrest, kein Absatz mit nackter Zahl am Anfang."""
++import json
++import re
++
++from app import artefakte
++from app import sprachmodell as sm
++
++
++def _notizen(minuten: int, je: int = 5) -> str:
++    return "\n".join(f"[{m // 60}:{m % 60:02d}:00] Ereignis bei Minute {m}." for m in range(0, minuten, je))
++
++
++def test_abschnitte_teilen_kontingent():
++    a = sm.auswahl_abschnitte(_notizen(155), 155.0, 30)
++    assert [x["anteil"] for x in a] == [8, 8, 7, 7] and sum(x["anteil"] for x in a) == 30
++    assert a[0]["von"] == 0.0 and abs(a[-1]["bis"] - 155 * 60) < 1e-6
++    # jede Notiz in genau einem Abschnitt, in der Reihenfolge der Zeit
++    zeilen = [z for x in a for z in x["notizen"].splitlines()]
++    assert zeilen == _notizen(155).splitlines()
++    assert "Minute 150" in a[-1]["notizen"] and "Minute 150" not in a[0]["notizen"]
++    # kurze Runde: ein Abschnitt; Zeilen ohne Zeit bleiben beim Abschnitt davor; leere Abschnitte geben ihren Anteil ab
++    assert len(sm.auswahl_abschnitte(_notizen(50), 50.0, 12)) == 1
++    b = sm.auswahl_abschnitte("[0:01:00] Anfang.\nohne Zeit\n[2:30:00] Ende.", 155.0, 30)
++    assert [x["anteil"] for x in b] == [15, 15] and b[0]["notizen"].endswith("ohne Zeit")
++
++
++def test_auswahl_lesen_behaelt_kritisches():
++    d = {"ereignisse": [{"zeit": f"{i}:00", "ereignis": f"E{i}", "ausgang": "", "rang": "wichtig"} for i in range(1, 6)]
++         + [{"zeit": "59:00", "ereignis": "Tod am Ende", "ausgang": "tot", "rang": "kritisch"}]}
++    aus = sm.auswahl_lesen(d, 3)
++    assert [e["ereignis"] for e in aus] == ["E1", "E2", "Tod am Ende"]
++
++
++class Klient:
++    modell = "medium"
++
++    def __init__(self):
++        self.aufrufe = []
++
++    def chat(self, system, nutzer):
++        self.aufrufe.append((system, nutzer))
++        zeiten = re.findall(r"^\[(\d+:\d{2}:\d{2})\]", nutzer, re.M)
++        anteil = int(re.search(r"höchstens (\d+)", system).group(1))
++        return sm.Antwort(json.dumps({"ereignisse": [
++            {"zeit": z, "ereignis": f"Ereignis {z}", "ausgang": "", "rang": "wichtig"} for z in zeiten[:anteil + 3]]}), 1, 1)
++
++
++def test_auswahl_ueber_die_ganze_runde():
++    k = Klient()
++    a = sm.Ablauf(k)
++    ein = {"kampagne": "K", "session_nummer": 1, "personen": [],
++           "transkript": [{"start": float(s), "sprecher": "A", "text": "x"} for s in range(0, 155 * 60 + 1, 60)]}
++    aus = a.auswahl(ein, _notizen(155))
++    assert len(k.aufrufe) == 4
++    assert "Abschnitt 4 von 4 der Runde (1:56:15 bis 2:35:00)" in k.aufrufe[3][0]
++    assert "Minute 150" in k.aufrufe[3][1] and "Minute 0." not in k.aufrufe[3][1]
++    assert "Stand am Ende der Runde" in k.aufrufe[3][1]
++    assert len(aus) == 30 and aus[-1]["zeit"] >= 116 * 60  # das letzte Drittel hat Ereignisse
++    assert [e["zeit"] for e in aus] == sorted(e["zeit"] for e in aus)
++    assert "{abschnitt}" not in k.aufrufe[0][0] and "Begrüßungen" in sm.SYSTEM_AUSWAHL
++
++
++def test_widerspricht_ohne_zitat_verorten():
++    kapitel = "Mara floh aus der Stadt.\n\nAm Tor schossen Tilo und Bren auf die Wächter, einer brach zusammen."
++    punkte = [{"zeit": 1.0, "ereignis": "Mara flieht.", "ausgang": "", "rang": "wichtig"},
++              {"zeit": 2.0, "ereignis": "Tilo schießt auf den Wächter am Tor.", "ausgang": "Wächter bricht zusammen",
++               "rang": "kritisch"}]
++    d = {"punkte": [{"nr": 1, "status": "widerspricht", "absatz": 1, "zitat": "erfunden und nicht da"},
++                    {"nr": 2, "status": "widerspricht", "absatz": 2, "zitat": "Tilo schoss allein",
++                     "begruendung": "Nur Tilo schoss."}]}
++    aus = sm.pflicht_lesen(d, 2, 2, kapitel, "de", punkte)
++    assert aus[0]["status"] == "ungeprueft"  # Absatz enthält das Ereignis nicht erkennbar
++    assert aus[1]["status"] == "widerspricht" and aus[1]["absatz"] == 1 and aus[1]["zitat"] == ""
++    # ein „unklar“ der Prüfung markiert nichts mehr
++    assert sm.pflicht_lesen({"punkte": [{"nr": 1, "status": "unklar", "absatz": 1}]}, 1, 2, kapitel)[0]["status"] == "ungeprueft"
++    p = sm.pruefansicht_aus_pflicht(kapitel, punkte, aus, [], [], "m", False)
++    assert p["paragraphs"][1]["verdict"] == "contradicted" and p["paragraphs"][1]["note"] == "Nur Tilo schoss."
++    befund = [{"nr": 2, "status": "unklar", "absatz": 1, "zitat": "", "begruendung": ""}]
++    assert sm.pruefansicht_aus_pflicht(kapitel, punkte, befund, [], [], "m", False)["paragraphs"][1]["verdict"] == "supported"
++
++
++def test_kuerzen_namen_nur_aus_der_auswahl():
++    lang = "Sie kamen mit der Lady Luck an und tranken in der Stumbling Tiger Bar. Dann traf Mara den Fürsten Al Rahim."
++    kurz = "Mara traf den Fürsten Al Rahim."
++    assert sm._namen_fehlen(lang, kurz, ["Mara"])  # alter Weg: Kulisse blockiert
++    assert sm._namen_fehlen(lang, kurz, ["Mara"], "1. [1:00] Mara trifft Al Rahim.") == []
++    assert sm._namen_fehlen(lang, "Sie trafen jemanden.", ["Mara"], "1. [1:00] Mara trifft Al Rahim.") == ["mara", "rahim"]
++
++
++def test_kuerzen_zu_kurz_einmal_nachfordern():
++    class K:
++        modell = "m"
++
++        def __init__(self):
++            self.n = 0
++            self.nutzer = []
++
++        def chat(self, system, nutzer):
++            self.n += 1
++            self.nutzer.append(nutzer)
++            if "Ereignisse, die vorkommen müssen" in nutzer and "Kapitel:\n" in nutzer:
++                laenge = 200 if self.n == 1 else 1200
++                return sm.Antwort(json.dumps({"text": " ".join(["Mara ging."] * (laenge // 2))}), 1, 1)
++            return sm.Antwort(json.dumps({"punkte": [{"nr": 1, "status": "erzaehlt", "absatz": 1, "zitat": "Mara ging"}]}), 1, 1)
++
++    k = K()
++    a = sm.Ablauf(k)
++    ein = {"kampagne": "K", "session_nummer": 1, "personen": [{"charakter": "Mara"}],
++           "transkript": [{"start": 155 * 60.0, "sprecher": "A", "text": "x"}]}
++    r = {"text": " ".join(["Mara ging."] * 1100)}
++    befund = [{"nr": 1, "status": "erzaehlt", "absatz": 0, "zitat": "Mara ging", "begruendung": ""}]
++    neu = a.kuerzen(ein, [{"zeit": 1.0, "ereignis": "Mara geht.", "ausgang": "", "rang": "kritisch"}], r, befund)
++    assert "nur 200 Wörter" in k.nutzer[1] and a.letzte_kuerzung["zu_kurz"] == 200
++    assert neu is not None and a.letzte_kuerzung["angenommen"] is True and a.letzte_kuerzung["woerter_neu"] == 1200
++
++
++def test_zahlwoerter_als_regelrest():
++    s = ("Die Scheibe fühlte sich eiskalt an, und Rika verlor unwillkürlich zwei Magiepunkte, während er zitterte.")
++    assert artefakte.regelteil(s, artefakte._REGEL) == "Die Scheibe fühlte sich eiskalt an, während er zitterte."
++    assert artefakte.regelteil("Der Wächter traf ihn für drei Trefferpunkte am Arm.", artefakte._REGEL) == \
++        "Der Wächter traf ihn am Arm."
++    for alltag in ("Es gab drei Treffpunkte in der Stadt.", "Sie hatten zwei Standpunkte.", "Ein Höhepunkt des Abends."):
++        assert artefakte.regelteil(alltag, artefakte._REGEL) == alltag
++    assert sm.regelreste("Rika erschrak (zwei Magiepunkte) und ließ los.") == "Rika erschrak und ließ los."
++
++
++def test_absatz_mit_nackter_zahl():
++    t = sm.absaetze_teilen("Er dachte an Hafenstadt\n\n22. Die Gruppe fuhr los.\n\nDas war gut.\n\n3. Ein neuer Tag.")
++    assert t == "Er dachte an Hafenstadt 22. Die Gruppe fuhr los.\n\nDas war gut.\n\n3. Ein neuer Tag."
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index 1ef08b1..63e469d 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -113,5 +113,5 @@ def test_serverfassung_beim_koppeln(client, dbs):
+     dbs.commit()
+     r = client.post("/worker/v1/pair", json={"code": code, "name": "spiele-pc"})
+-    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.75"
++    assert r.status_code == 201 and r.json()["serverVersion"] == "0.4.76"
+ 
+ 
+diff --git a/tests/test_zweiter_blick.py b/tests/test_zweiter_blick.py
+index c933feb..55426df 100644
+--- a/tests/test_zweiter_blick.py
++++ b/tests/test_zweiter_blick.py
+@@ -24,5 +24,5 @@ def test_fenster_um_den_zeitpunkt():
+     zeiten = [int(re.match(r"\[(\d+):(\d+)\]", z).group(1)) * 60 + int(re.match(r"\[(\d+):(\d+)\]", z).group(2))
+               for z in f.split("\n")]
+-    assert min(zeiten) == 520 and max(zeiten) == 680 and "packt dich Hanna" in f
++    assert min(zeiten) == 540 and max(zeiten) == 840 and "packt dich Hanna" in f  # 0.4.76: weiter nach vorn
+     klein = sm._fenster(ZEILEN, 600.0, zeichen=200)
+     assert 0 < len(klein) <= 200 + 80 and "packt dich Hanna" in klein  # von der Mitte her begrenzt
+diff --git a/uv.lock b/uv.lock
+index 47043b4..cf16628 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1987,5 +1987,5 @@ wheels = [
+ [[package]]
+ name = "taleward-server"
+-version = "0.4.75"
++version = "0.4.76"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
